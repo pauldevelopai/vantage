@@ -95,9 +95,14 @@ class SceneAnalyzer:
     def _analyze_with_openai(self, frame: np.ndarray, prompt: str) -> Dict[str, Any]:
         """Analyze using OpenAI Vision API with South African context"""
         try:
-            # Import SA context
+            # Import SA context and learning system
             from alibi.vision.south_african_context import enhance_prompt_for_sa_context
-            
+            from alibi.continuous_learning import get_learning_system
+
+            # Get learned context
+            learning_system = get_learning_system()
+            learned_context = learning_system.get_enhanced_prompt_context()
+
             # Encode frame to base64
             _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
             base64_image = base64.b64encode(buffer).decode('utf-8')
@@ -119,21 +124,33 @@ Cultural Sensitivity:
 - Describe what you see without judgment
 - Use correct regional terminology
 
-Describe this camera frame in ONE clear sentence.
-Be specific about:
-- What objects/people you see
-- What they are doing
-- Any safety concerns
-- Regional context if relevant
+Describe this camera frame in 2-3 clear sentences.
+
+For PEOPLE, always describe:
+- How many people
+- What they're wearing (colors, clothing type)
+- What they're doing (walking, sitting, standing, working, etc.)
+- Their approximate position in frame (foreground, background, left, right)
+- Any interactions or activities
+
+For OBJECTS and SCENE:
+- Notable objects visible
+- Location/setting if identifiable
+- Any safety concerns or unusual activity
 
 Examples:
-- "Minibus taxi loading passengers at taxi rank"
-- "Person braaiing in backyard"
-- "Security guard at boom gate of estate"
-- "Street vendor selling goods on sidewalk"
-- "Empty RDP house courtyard, no activity"
+- "One person in blue shirt and jeans standing in center of frame, appears to be looking at phone. Residential setting with burglar bars visible on windows in background."
+- "Two people wearing work uniforms in foreground, appear to be having conversation. One holding clipboard. Industrial/commercial setting."
+- "Three people sitting at table in outdoor area, appear to be eating/braaiing. Casual residential backyard setting."
+- "Person in security guard uniform standing at boom gate, holding radio. Estate entrance visible."
+- "Empty office space, no people visible. Desk and computer equipment present."
 
-Keep it factual, brief, and contextually aware."""
+Be descriptive, factual, and include visual details about people."""
+
+                # Add learned context if available
+                if learned_context:
+                    system_prompt += f"\n\n{learned_context}"
+
             elif prompt == "detect_activity":
                 system_prompt = "Describe any human activity you see. If no humans, say 'No human activity detected'."
             elif prompt == "count_people":

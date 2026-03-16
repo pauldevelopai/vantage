@@ -11,12 +11,14 @@ NEW FEATURES:
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Body
 from fastapi.responses import HTMLResponse
-from typing import Optional
 import cv2
 import numpy as np
 import base64
 from datetime import datetime
 import uuid
+
+from dataclasses import asdict
+from typing import Optional, List
 
 from alibi.auth import User, get_current_user
 from alibi.intelligence_store import IntelligenceStore, RedFlag
@@ -30,6 +32,11 @@ from alibi.known_persons import KnownPerson, KnownPersonsStore, get_known_person
 from alibi.continuous_learning import get_learning_system
 
 router = APIRouter(prefix="/camera", tags=["Enhanced Mobile Camera"])
+
+# Alert deduplication: track last auto-alert to avoid spamming
+_last_auto_alert_time: Optional[datetime] = None
+_last_auto_alert_level: Optional[str] = None
+AUTO_ALERT_COOLDOWN_SECONDS = 30
 
 # Global instances
 _gatekeeper = None
@@ -268,6 +275,20 @@ async def analyze_frame_secure(
     except Exception as e:
         print(f"Failed to store analysis: {e}")
 
+    # AUTO-ALERT: Create persistent alert for dangerous detections
+    alert_created = False
+    if threat_level in ("warning", "critical"):
+        alert_created = _maybe_create_auto_alert(
+            threat_level=threat_level,
+            threat_message=threat_message,
+            ai_description=ai_description_text,
+            snapshot_path=getattr(analysis_entry, 'snapshot_path', None) if 'analysis_entry' in dir() else None,
+            analysis_id=analysis_entry.analysis_id if 'analysis_entry' in dir() else None,
+            username=current_user.username,
+            timestamp=timestamp,
+            ai_activities=ai_activities,
+        )
+
     # Build response
     return {
         "timestamp": timestamp.isoformat(),
@@ -293,8 +314,70 @@ async def analyze_frame_secure(
             "activities": ai_activities
         },
         "scores": result.get("scores", {}),
-        "eligible_for_training": result.get("eligible", False)
+        "eligible_for_training": result.get("eligible", False),
+        "alert_created": alert_created
     }
+
+
+def _maybe_create_auto_alert(
+    threat_level: str,
+    threat_message: str,
+    ai_description: str,
+    snapshot_path: Optional[str],
+    analysis_id: Optional[str],
+    username: str,
+    timestamp: datetime,
+    ai_activities: list,
+) -> bool:
+    """Create a persistent RedFlag alert if cooldown has elapsed. Returns True if alert was created."""
+    global _last_auto_alert_time, _last_auto_alert_level
+
+    # Dedup: skip if same threat level within cooldown window
+    if _last_auto_alert_time and _last_auto_alert_level == threat_level:
+        elapsed = (timestamp - _last_auto_alert_time).total_seconds()
+        if elapsed < AUTO_ALERT_COOLDOWN_SECONDS:
+            return False
+
+    try:
+        severity_map = {"warning": "high", "critical": "critical"}
+        category = "suspicious_activity"
+        if "weapon" in threat_message.lower():
+            category = "suspicious_person"
+
+        flag = RedFlag(
+            flag_id=f"auto_{uuid.uuid4().hex[:12]}",
+            timestamp=timestamp.isoformat(),
+            created_by=f"system/{username}",
+            severity=severity_map.get(threat_level, "high"),
+            category=category,
+            description=f"[AUTO] {threat_message} — {ai_description}",
+            snapshot_url=snapshot_path,
+            analysis_id=analysis_id,
+            location="mobile_camera",
+            tags=["auto_alert", f"threat_{threat_level}"] + [a.lower() for a in ai_activities[:5]],
+            metadata={
+                "threat_level": threat_level,
+                "threat_message": threat_message,
+                "ai_description": ai_description,
+                "source": "camera_auto_alert",
+            },
+            resolved=False,
+            resolved_by=None,
+            resolved_at=None,
+            resolution_notes=None,
+        )
+
+        store = IntelligenceStore()
+        store.add_red_flag(flag)
+
+        _last_auto_alert_time = timestamp
+        _last_auto_alert_level = threat_level
+        print(f"[AutoAlert] Created {threat_level} alert: {threat_message}")
+        return True
+
+    except Exception as e:
+        print(f"[AutoAlert] Failed to create alert: {e}")
+        return False
 
 
 @router.post("/red-flag")
@@ -367,6 +450,18 @@ async def create_red_flag(
         "flag_id": red_flag.flag_id,
         "message": "Red flag created successfully"
     }
+
+
+@router.get("/alerts")
+async def get_camera_alerts(
+    limit: int = 20,
+    current_user: User = Depends(get_current_user)
+):
+    """Get recent camera alerts (auto-generated and manual red flags)."""
+    store = IntelligenceStore()
+    flags = store.get_red_flags(limit=limit)
+    # Return most recent first, as list of dicts
+    return [asdict(f) for f in reversed(flags[-limit:])]
 
 
 @router.post("/tag-person")
@@ -876,13 +971,139 @@ SECURE_CAMERA_HTML = """
             gap: 10px;
             margin-top: 20px;
         }
+
+        /* === ALERT SYSTEM === */
+        #alert-banner {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            padding: 12px 16px;
+            background: #dc2626;
+            color: white;
+            font-weight: 600;
+            font-size: 14px;
+            animation: alertPulse 1s infinite;
+            cursor: pointer;
+        }
+        #alert-banner .alert-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            max-width: 640px;
+            margin: 0 auto;
+        }
+        #alert-banner .alert-text { flex: 1; }
+        #alert-banner .alert-dismiss {
+            background: rgba(255,255,255,0.2);
+            border: none;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            margin-left: 12px;
+        }
+        @keyframes alertPulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.85; }
+        }
+
+        #alert-badge {
+            display: none;
+            position: fixed;
+            top: 60px;
+            right: 16px;
+            z-index: 999;
+            background: #dc2626;
+            color: white;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            font-size: 14px;
+            font-weight: bold;
+            line-height: 32px;
+            text-align: center;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(220,38,38,0.5);
+        }
+
+        #alert-history {
+            display: none;
+            position: fixed;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            width: 340px;
+            max-width: 90vw;
+            background: #111;
+            border-left: 2px solid #333;
+            z-index: 1001;
+            overflow-y: auto;
+            padding: 16px;
+        }
+        #alert-history h3 {
+            font-size: 16px;
+            margin-bottom: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        #alert-history .close-btn {
+            background: #333;
+            border: none;
+            color: white;
+            padding: 4px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .alert-item {
+            background: #1a1a1a;
+            border-left: 3px solid #ef4444;
+            padding: 10px 12px;
+            margin-bottom: 8px;
+            border-radius: 0 6px 6px 0;
+            font-size: 13px;
+        }
+        .alert-item.severity-critical { border-left-color: #dc2626; }
+        .alert-item.severity-high { border-left-color: #ef4444; }
+        .alert-item .alert-time {
+            font-size: 11px;
+            color: #888;
+            margin-bottom: 4px;
+        }
+        .alert-item .alert-desc { line-height: 1.4; }
     </style>
 </head>
 <body>
+    <!-- Alert Banner (fixed top, hidden by default) -->
+    <div id="alert-banner" onclick="toggleAlertHistory()">
+        <div class="alert-content">
+            <span class="alert-text" id="alert-banner-text">ALERT</span>
+            <button class="alert-dismiss" onclick="event.stopPropagation(); dismissBanner()">Dismiss</button>
+        </div>
+    </div>
+
+    <!-- Alert count badge -->
+    <div id="alert-badge" onclick="toggleAlertHistory()">0</div>
+
+    <!-- Alert History Panel -->
+    <div id="alert-history">
+        <h3>
+            Alerts
+            <button class="close-btn" onclick="toggleAlertHistory()">Close</button>
+        </h3>
+        <div id="alert-list">
+            <p style="color:#666; font-size:13px;">No alerts yet</p>
+        </div>
+    </div>
+
     <div class="header">
         <h1>🔒 ALIBI SECURITY CAMERA</h1>
     </div>
-    
+
     <div class="video-container">
         <div class="threat-overlay">
             <div class="threat-indicator threat-safe" id="threat-indicator">
@@ -1338,6 +1559,144 @@ SECURE_CAMERA_HTML = """
         document.getElementById('tag-person-btn').addEventListener('click', openTagPersonModal);
 
         console.log('All event listeners set up');
+
+        // === ALERT SYSTEM ===
+        const alerts = [];
+        let alertHistoryOpen = false;
+        let bannerVisible = false;
+
+        // Create alert sound using Web Audio API
+        let audioCtx = null;
+        function playAlertSound(level) {
+            try {
+                if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.type = 'square';
+
+                if (level === 'critical') {
+                    // Urgent double beep
+                    osc.frequency.value = 880;
+                    gain.gain.value = 0.3;
+                    osc.start();
+                    gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gain.gain.setValueAtTime(0, audioCtx.currentTime + 0.15);
+                    gain.gain.setValueAtTime(0.3, audioCtx.currentTime + 0.25);
+                    gain.gain.setValueAtTime(0, audioCtx.currentTime + 0.4);
+                    osc.stop(audioCtx.currentTime + 0.5);
+                } else {
+                    // Single warning beep
+                    osc.frequency.value = 660;
+                    gain.gain.value = 0.2;
+                    osc.start();
+                    gain.gain.setValueAtTime(0, audioCtx.currentTime + 0.2);
+                    osc.stop(audioCtx.currentTime + 0.3);
+                }
+            } catch (e) {
+                console.warn('Audio alert failed:', e);
+            }
+        }
+
+        function showAlertBanner(level, message) {
+            const banner = document.getElementById('alert-banner');
+            const text = document.getElementById('alert-banner-text');
+            const icon = level === 'critical' ? '🚨' : '🔴';
+            text.textContent = `${icon} ${message}`;
+            banner.style.background = level === 'critical' ? '#dc2626' : '#ef4444';
+            banner.style.display = 'block';
+            bannerVisible = true;
+        }
+
+        function dismissBanner() {
+            document.getElementById('alert-banner').style.display = 'none';
+            bannerVisible = false;
+        }
+
+        function addAlert(level, message, timestamp) {
+            const alert = { level, message, timestamp, id: Date.now() };
+            alerts.unshift(alert);
+            if (alerts.length > 50) alerts.pop();
+
+            // Update badge
+            const badge = document.getElementById('alert-badge');
+            badge.textContent = alerts.length;
+            badge.style.display = 'block';
+
+            // Update history list if open
+            renderAlertHistory();
+
+            // Show banner and play sound
+            showAlertBanner(level, message);
+            playAlertSound(level);
+        }
+
+        function renderAlertHistory() {
+            const list = document.getElementById('alert-list');
+            if (alerts.length === 0) {
+                list.innerHTML = '<p style="color:#666; font-size:13px;">No alerts yet</p>';
+                return;
+            }
+            list.innerHTML = alerts.slice(0, 20).map(a => {
+                const time = new Date(a.timestamp).toLocaleTimeString();
+                const sevClass = a.level === 'critical' ? 'severity-critical' : 'severity-high';
+                const icon = a.level === 'critical' ? '🚨' : '🔴';
+                return `<div class="alert-item ${sevClass}">
+                    <div class="alert-time">${icon} ${time}</div>
+                    <div class="alert-desc">${a.message}</div>
+                </div>`;
+            }).join('');
+        }
+
+        function toggleAlertHistory() {
+            const panel = document.getElementById('alert-history');
+            alertHistoryOpen = !alertHistoryOpen;
+            panel.style.display = alertHistoryOpen ? 'block' : 'none';
+            if (alertHistoryOpen) renderAlertHistory();
+        }
+
+        // Hook into updateThreatDisplay to trigger alerts
+        const _origUpdateThreat = updateThreatDisplay;
+        updateThreatDisplay = function(result) {
+            _origUpdateThreat(result);
+
+            // If alert was created by backend, add to local alert list
+            if (result.alert_created && result.threat && (result.threat.level === 'warning' || result.threat.level === 'critical')) {
+                const desc = result.ai_description ? result.ai_description.description : result.threat.message;
+                addAlert(result.threat.level, `${result.threat.message} — ${desc}`, result.timestamp);
+            }
+        };
+
+        // Load existing alerts on startup
+        (async function loadExistingAlerts() {
+            try {
+                const resp = await fetch('/camera/alerts', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (resp.ok) {
+                    const existing = await resp.json();
+                    existing.slice(0, 10).forEach(a => {
+                        if (a.tags && a.tags.includes('auto_alert')) {
+                            alerts.push({
+                                level: a.severity === 'critical' ? 'critical' : 'warning',
+                                message: a.description.replace('[AUTO] ', ''),
+                                timestamp: a.timestamp,
+                                id: Date.now() + Math.random()
+                            });
+                        }
+                    });
+                    if (alerts.length > 0) {
+                        const badge = document.getElementById('alert-badge');
+                        badge.textContent = alerts.length;
+                        badge.style.display = 'block';
+                        renderAlertHistory();
+                    }
+                }
+            } catch (e) {
+                console.warn('Failed to load existing alerts:', e);
+            }
+        })();
     </script>
 </body>
 </html>
