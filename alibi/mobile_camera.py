@@ -168,9 +168,9 @@ MOBILE_LOGIN_HTML = """
         </form>
         
         <div class="demo-creds">
-            <strong>Demo Credentials:</strong><br>
+            <strong>Credentials:</strong><br>
             Username: <code>admin</code><br>
-            Password: <code>kBSZL_oQmLye3JvwG1KCAg</code>
+            Password: <code>admin123</code>
         </div>
     </div>
     
@@ -205,8 +205,8 @@ MOBILE_LOGIN_HTML = """
                     localStorage.setItem('alibi_token', data.access_token);
                     localStorage.setItem('alibi_user', JSON.stringify(data.user));
                     
-                    // Redirect to mobile home
-                    window.location.href = '/mobile';
+                    // Redirect to enhanced security camera
+                    window.location.href = '/camera/secure-stream';
                 } else {
                     const error = await response.json();
                     errorDiv.textContent = error.detail || 'Login failed';

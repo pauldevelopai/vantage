@@ -25,7 +25,13 @@ export function LoginPage() {
 
       if (!response.ok) {
         const data = await response.json();
-        throw new Error(data.detail || 'Login failed');
+        const detail = data.detail;
+        const message = typeof detail === 'string'
+          ? detail
+          : Array.isArray(detail)
+            ? detail.map((e: any) => e.msg || String(e)).join(', ')
+            : 'Login failed';
+        throw new Error(message);
       }
 
       const data = await response.json();
@@ -121,12 +127,13 @@ export function LoginPage() {
           </div>
 
           <div className="text-sm text-gray-600 bg-gray-50 rounded p-4">
-            <p className="font-medium mb-2">Demo Credentials:</p>
+            <p className="font-medium mb-2">Default Users:</p>
             <ul className="space-y-1 text-xs">
-              <li><strong>operator1</strong> / operator1 (Operator role)</li>
-              <li><strong>supervisor1</strong> / supervisor1 (Supervisor role)</li>
-              <li><strong>admin</strong> / admin (Admin role)</li>
+              <li><strong>operator1</strong> (Operator role)</li>
+              <li><strong>supervisor1</strong> (Supervisor role)</li>
+              <li><strong>admin</strong> (Admin role)</li>
             </ul>
+            <p className="text-xs text-gray-500 mt-2">Passwords were generated at first startup. Check <code>alibi/data/.initial_passwords.txt</code></p>
           </div>
         </form>
       </div>

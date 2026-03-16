@@ -26,6 +26,8 @@ from alibi.rules.events import RuleEvaluator
 from alibi.vision.simulate import IncidentManager
 from alibi.vision.scene_analyzer import SceneAnalyzer
 from alibi.camera_analysis_store import CameraAnalysis, get_camera_analysis_store
+from alibi.known_persons import KnownPerson, KnownPersonsStore, get_known_persons_store
+from alibi.continuous_learning import get_learning_system
 
 router = APIRouter(prefix="/camera", tags=["Enhanced Mobile Camera"])
 
@@ -74,10 +76,12 @@ def get_security_components():
     return _gatekeeper, _tracker, _rule_evaluator, _incident_manager, _intelligence_store
 
 
-def assess_threat_level(detections, zone_hits, triggered_rules):
+def assess_threat_level(detections, zone_hits, triggered_rules, ai_activities=None):
     """
-    Assess threat level based on detections and rules.
-    
+    Assess threat level based on detections, rules, AND behavior.
+
+    Unknown person != automatic threat. Threat depends on WHAT they're doing.
+
     Returns:
         (level: str, color: str, message: str)
         level: "safe", "caution", "warning", "critical"
@@ -85,48 +89,64 @@ def assess_threat_level(detections, zone_hits, triggered_rules):
     # Start with safe
     level = "safe"
     color = "#10b981"  # Green
-    message = "No threats detected"
-    
-    # Check for security-relevant objects
-    security_objects = ["person", "backpack", "handbag", "suitcase", "knife", "gun"]
-    detected_security = [d for d in detections if d.get("class") in security_objects]
-    
-    # Check rules triggered
-    if triggered_rules:
-        for track_id, rules in triggered_rules.items():
-            # Loitering or unattended object
-            if any("loitering" in r or "unattended" in r for r in rules):
-                level = "caution"
-                color = "#f59e0b"  # Orange
-                message = "Suspicious activity detected"
-            
-            # Restricted zone or rapid movement
-            if any("restricted" in r or "rapid" in r or "aggression" in r for r in rules):
-                level = "warning"
-                color = "#ef4444"  # Red
-                message = "Security breach detected"
-            
-            # Crowd or panic
-            if any("crowd" in r or "panic" in r for r in rules):
-                level = "critical"
-                color = "#dc2626"  # Dark red
-                message = "Critical situation - multiple people"
-    
-    # Check for weapons or suspicious objects
-    suspicious = [d for d in detections if d.get("class") in ["knife", "gun", "weapon"]]
-    if suspicious:
+    message = "Scene is clear"
+
+    if ai_activities is None:
+        ai_activities = []
+
+    # Check for WEAPONS - highest priority
+    suspicious_objects = [d for d in detections if d.class_name in ["knife", "gun", "weapon"]]
+    if suspicious_objects:
         level = "critical"
         color = "#dc2626"
         message = "⚠️ WEAPON DETECTED"
-    
-    # Multiple people in frame
-    people = [d for d in detections if d.get("class") == "person"]
-    if len(people) >= 3:
+        return level, color, message
+
+    # Check BEHAVIOR-BASED rules (these indicate actual threat)
+    if triggered_rules:
+        for track_id, rules in triggered_rules.items():
+            # Aggressive or rapid movement
+            if any("aggression" in r or "rapid" in r for r in rules):
+                level = "warning"
+                color = "#ef4444"
+                message = "Aggressive movement detected"
+
+            # Restricted zone breach (actual security violation)
+            if any("restricted" in r for r in rules):
+                level = "warning"
+                color = "#ef4444"
+                message = "Restricted zone breach"
+
+            # Panic or crowd surge (actual emergency)
+            if any("panic" in r or "crowd" in r for r in rules):
+                level = "critical"
+                color = "#dc2626"
+                message = "Emergency situation - crowd/panic"
+
+            # Loitering might be suspicious but not necessarily a threat
+            if any("loitering" in r for r in rules):
+                if level == "safe":
+                    level = "caution"
+                    color = "#f59e0b"
+                    message = "Loitering detected"
+
+    # Check AI-detected activities for suspicious behavior
+    suspicious_activities = ["fighting", "running", "arguing", "breaking", "climbing"]
+    detected_suspicious = [act for act in ai_activities if act.lower() in suspicious_activities]
+
+    if detected_suspicious:
         if level == "safe":
             level = "caution"
             color = "#f59e0b"
-            message = f"{len(people)} people detected"
-    
+            message = f"Suspicious activity: {', '.join(detected_suspicious)}"
+
+    # Count people BUT don't automatically flag as threat
+    # Multiple people is NORMAL and expected - not a threat by itself
+    people = [d for d in detections if d.class_name == "person"]
+    if len(people) > 0 and level == "safe":
+        # Just informational, not a threat
+        message = f"Monitoring {len(people)} person" + ("" if len(people) == 1 else "s")
+
     return level, color, message
 
 
@@ -163,82 +183,104 @@ async def analyze_frame_secure(
     # Update tracker (if eligible)
     tracks = {}
     triggered_rules = {}
-    
+
     if result["eligible"]:
         # Run tracking
         from ultralytics import YOLO
         model = YOLO("yolov8n.pt")
         yolo_results = model.track(frame, persist=True, conf=0.5, verbose=False)
         tracks = tracker.update(yolo_results, zones_config=None, timestamp=timestamp)
-        
+
         # Evaluate rules
         triggered_rules = rule_evaluator.evaluate(tracks)
-        
+
         # Update incidents
         frame_number = int(timestamp.timestamp())
         incident_manager.update(tracks, frame_number, timestamp)
-    
-    # Assess threat level
-    detections = result.get("detections", [])
-    threat_level, threat_color, threat_message = assess_threat_level(
-        detections,
-        result.get("zone_hits", []),
-        triggered_rules
-    )
-    
-    # Get AI description of what camera is seeing (with timeout and fallback)
+
+    # Get AI description of what camera is seeing FIRST (to get activities for threat assessment)
     ai_description_text = "Analysis in progress..."
     ai_confidence = 0.0
     ai_objects = []
     ai_activities = []
-    
+
     try:
         scene_analyzer = SceneAnalyzer(mode="auto")
-        # Add timeout to prevent hanging
-        import asyncio
-        from concurrent.futures import TimeoutError
-        
-        # Try to get AI analysis with 5 second timeout
+        # Try to get AI analysis
         ai_analysis = scene_analyzer.analyze_frame(frame)
-        ai_description_text = ai_analysis.description
-        ai_confidence = ai_analysis.confidence
-        ai_objects = ai_analysis.objects_detected
-        ai_activities = ai_analysis.activities
-        
-        # Store analysis for history (only if successful)
+
+        # SceneAnalyzer returns a dictionary
+        ai_description_text = ai_analysis.get("description", "Analysis unavailable")
+        ai_confidence = ai_analysis.get("confidence", 0.0)
+        ai_objects = ai_analysis.get("detected_objects", [])
+        ai_activities = ai_analysis.get("detected_activities", [])
+    except Exception as e:
+        # Fallback if AI analysis fails
+        print(f"AI analysis failed: {e}")
+        detections = result.get("detections", [])
+        detected_classes = [d.class_name for d in detections]
+        ai_description_text = f"Detected: {', '.join(detected_classes) if detected_classes else 'No objects'}. AI analysis temporarily unavailable."
+        ai_confidence = 0.5
+
+    # NOW assess threat level with AI activities
+    detections = result.get("detections", [])
+    threat_level, threat_color, threat_message = assess_threat_level(
+        detections,
+        result.get("zone_hits", []),
+        triggered_rules,
+        ai_activities  # Pass activities to threat assessment
+    )
+
+    # CONTINUOUS LEARNING: Get additional threat intelligence
+    learning_system = get_learning_system()
+    threat_enhancement = learning_system.get_threat_assessment_enhancement(ai_description_text)
+
+    # Store analysis for history
+    try:
         analysis_store = get_camera_analysis_store()
+        username = current_user.username if current_user else "unknown"
+
         analysis_entry = CameraAnalysis(
             analysis_id=str(uuid.uuid4()),
-            timestamp=timestamp,
-            camera_id="mobile_camera",
+            timestamp=timestamp.isoformat(),
+            user=username,
+            camera_source="mobile_camera",
             description=ai_description_text,
             confidence=ai_confidence,
             detected_objects=ai_objects,
             detected_activities=ai_activities,
             safety_concern=threat_level in ["warning", "critical"],
-            safety_details=threat_message if threat_level in ["warning", "critical"] else None,
-            analysis_method=ai_analysis.backend_used
+            method="openai_vision",  # Hardcode since ai_analysis not in scope
+            metadata={
+                "threat_level": threat_level,
+                "threat_message": threat_message if threat_level in ["warning", "critical"] else None,
+                "detections_count": len(detections),
+                "tracks_count": len(tracks)
+            }
         )
-        analysis_store.save_analysis(analysis_entry, frame)
+
+        # Save snapshot and add paths to analysis
+        snapshot_path, thumbnail_path = analysis_store.save_snapshot(frame, analysis_entry.analysis_id)
+        analysis_entry.snapshot_path = snapshot_path
+        analysis_entry.thumbnail_path = thumbnail_path
+
+        analysis_store.add_analysis(analysis_entry)
     except Exception as e:
-        # Fallback if AI analysis fails
-        print(f"AI analysis failed: {e}")
-        detected_classes = [d.get("class") for d in detections]
-        ai_description_text = f"Detected: {', '.join(detected_classes) if detected_classes else 'No objects'}. AI analysis temporarily unavailable."
-        ai_confidence = 0.5
-    
+        print(f"Failed to store analysis: {e}")
+
     # Build response
     return {
         "timestamp": timestamp.isoformat(),
         "detections": {
-            "objects": [{"class": d.get("class"), "confidence": d.get("confidence")} for d in detections],
+            "objects": [{"class": d.class_name, "confidence": d.confidence} for d in detections],
             "count": len(detections),
             "security_relevant": result.get("security_relevant", False)
         },
         "threat": {
             "level": threat_level,
             "color": threat_color,
-            "message": threat_message
+            "message": threat_message,
+            "learned_enhancement": threat_enhancement  # Add learned intelligence
         },
         "tracking": {
             "active_tracks": len(tracks),
@@ -309,13 +351,195 @@ async def create_red_flag(
     )
     
     intelligence_store.add_red_flag(red_flag)
-    
+
+    # CONTINUOUS LEARNING: Learn from this red flag
+    learning_system = get_learning_system()
+    learning_system.learn_from_red_flag(
+        category=red_flag.category,
+        description=red_flag.description,
+        severity=red_flag.severity
+    )
+
     print(f"✅ Red flag created: {red_flag.flag_id} by {current_user.username}")
-    
+
     return {
         "success": True,
         "flag_id": red_flag.flag_id,
         "message": "Red flag created successfully"
+    }
+
+
+@router.post("/tag-person")
+async def tag_person(
+    data: dict = Body(...),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Tag a person as known with identity information.
+
+    Allows marking people as "good" (trusted) or "bad" (watch/unauthorized).
+    """
+    persons_store = get_known_persons_store()
+
+    # Save snapshot if provided
+    reference_image_path = None
+    snapshot_data = data.get("snapshot")
+    if snapshot_data and snapshot_data.startswith("data:image"):
+        try:
+            # Extract base64 data
+            from pathlib import Path
+
+            header, encoded = snapshot_data.split(",", 1)
+            image_data = base64.b64decode(encoded)
+
+            # Save to known_persons directory
+            persons_dir = Path("alibi/data/known_persons")
+            persons_dir.mkdir(parents=True, exist_ok=True)
+
+            person_id = str(uuid.uuid4())
+            snapshot_filename = f"{person_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.jpg"
+            snapshot_path_full = persons_dir / snapshot_filename
+
+            with open(snapshot_path_full, "wb") as f:
+                f.write(image_data)
+
+            reference_image_path = str(snapshot_path_full)
+            print(f"✅ Saved person reference image: {reference_image_path}")
+        except Exception as e:
+            print(f"⚠️  Failed to save person reference image: {e}")
+            reference_image_path = None
+
+    # Create KnownPerson
+    person_id = str(uuid.uuid4())
+    trust_level = data.get("trust_level", "neutral")  # "trusted", "neutral", "watch"
+
+    # Map "good"/"bad" to trust levels
+    if data.get("is_good") == True or trust_level == "good":
+        trust_level = "trusted"
+        is_authorized = True
+    elif data.get("is_bad") == True or trust_level == "bad":
+        trust_level = "watch"
+        is_authorized = False
+    else:
+        is_authorized = data.get("is_authorized", True)
+
+    person = KnownPerson(
+        person_id=person_id,
+        name=data.get("name", "Unknown Person"),
+        role=data.get("role", "visitor"),  # "resident", "visitor", "staff", "family", "security", "delivery", "other"
+        description=data.get("description", ""),
+        added_by=current_user.username,
+        added_at=datetime.utcnow().isoformat(),
+        reference_image_path=reference_image_path,
+        notes=data.get("notes", ""),
+        is_authorized=is_authorized,
+        trust_level=trust_level
+    )
+
+    persons_store.add_person(person)
+
+    # CONTINUOUS LEARNING: Learn from this person tagging
+    learning_system = get_learning_system()
+    learning_system.learn_from_person_tag(
+        person_name=person.name,
+        person_role=person.role,
+        description=person.description,
+        trust_level=trust_level
+    )
+
+    return {
+        "success": True,
+        "person_id": person.person_id,
+        "message": f"Person '{person.name}' tagged as {trust_level}"
+    }
+
+
+@router.get("/known-persons")
+async def get_known_persons(
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get all known persons.
+    """
+    persons_store = get_known_persons_store()
+    persons = persons_store.get_all_persons()
+
+    return {
+        "persons": [p.to_dict() for p in persons],
+        "count": len(persons)
+    }
+
+
+@router.get("/known-persons/{person_id}")
+async def get_person(
+    person_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get a specific person by ID.
+    """
+    persons_store = get_known_persons_store()
+    person = persons_store.get_person(person_id)
+
+    if not person:
+        raise HTTPException(status_code=404, detail="Person not found")
+
+    return person.to_dict()
+
+
+@router.put("/known-persons/{person_id}")
+async def update_person(
+    person_id: str,
+    data: dict = Body(...),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Update a person's information (e.g., change trust level, mark as good/bad).
+    """
+    persons_store = get_known_persons_store()
+
+    # Map "good"/"bad" to trust levels
+    updates = data.copy()
+    if "is_good" in updates:
+        if updates["is_good"]:
+            updates["trust_level"] = "trusted"
+            updates["is_authorized"] = True
+        del updates["is_good"]
+
+    if "is_bad" in updates:
+        if updates["is_bad"]:
+            updates["trust_level"] = "watch"
+            updates["is_authorized"] = False
+        del updates["is_bad"]
+
+    success = persons_store.update_person(person_id, updates)
+
+    if not success:
+        raise HTTPException(status_code=404, detail="Person not found")
+
+    return {
+        "success": True,
+        "message": "Person updated successfully"
+    }
+
+
+@router.delete("/known-persons/{person_id}")
+async def remove_person(
+    person_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Remove a person (soft delete - marks as unauthorized).
+    """
+    persons_store = get_known_persons_store()
+    success = persons_store.remove_person(person_id)
+
+    if not success:
+        raise HTTPException(status_code=404, detail="Person not found")
+
+    return {
+        "success": True,
+        "message": "Person removed successfully"
     }
 
 
@@ -510,7 +734,7 @@ SECURE_CAMERA_HTML = """
             transition: all 0.3s;
         }
         
-        #pause-btn, #red-flag-btn {
+        #pause-btn, #red-flag-btn, #tag-person-btn {
             display: none;
         }
         
@@ -540,10 +764,62 @@ SECURE_CAMERA_HTML = """
             font-size: 18px;
             animation: glow 2s infinite;
         }
-        
+
         @keyframes glow {
             0%, 100% { box-shadow: 0 0 5px #dc2626; }
             50% { box-shadow: 0 0 20px #dc2626; }
+        }
+
+        .tag-person-btn {
+            background: #3b82f6;
+            color: white;
+            font-size: 16px;
+        }
+
+        .trust-buttons {
+            display: flex;
+            gap: 10px;
+            margin: 15px 0;
+        }
+
+        .trust-btn {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid transparent;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .trust-btn.selected {
+            border-color: white;
+            transform: scale(1.05);
+        }
+
+        .trust-good {
+            background: #10b981;
+            color: white;
+        }
+
+        .trust-neutral {
+            background: #6b7280;
+            color: white;
+        }
+
+        .trust-bad {
+            background: #ef4444;
+            color: white;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #374151;
+            border-radius: 8px;
+            background: #111827;
+            color: white;
+            font-size: 14px;
         }
         
         .modal {
@@ -639,6 +915,7 @@ SECURE_CAMERA_HTML = """
     <div class="controls">
         <button class="btn-primary" id="start-btn">▶️ Start Camera</button>
         <button class="btn-secondary" id="pause-btn">⏸ Pause</button>
+        <button class="tag-person-btn" id="tag-person-btn">👤 Tag Person</button>
         <button class="red-flag-btn" id="red-flag-btn">🚩 RED FLAG</button>
     </div>
     
@@ -675,33 +952,99 @@ SECURE_CAMERA_HTML = """
             </div>
         </div>
     </div>
-    
+
+    <!-- Tag Person Modal -->
+    <div class="modal" id="tag-person-modal">
+        <div class="modal-content">
+            <h3>👤 Tag Person</h3>
+
+            <div class="form-group">
+                <label>Trust Level</label>
+                <div class="trust-buttons">
+                    <button class="trust-btn trust-good selected" onclick="selectTrustLevel('good')" id="trust-good">
+                        ✅ Good
+                    </button>
+                    <button class="trust-btn trust-neutral" onclick="selectTrustLevel('neutral')" id="trust-neutral">
+                        ➖ Neutral
+                    </button>
+                    <button class="trust-btn trust-bad" onclick="selectTrustLevel('bad')" id="trust-bad">
+                        ⚠️ Bad
+                    </button>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Name</label>
+                <input type="text" id="person-name" placeholder="Enter person's name">
+            </div>
+
+            <div class="form-group">
+                <label>Role</label>
+                <select id="person-role">
+                    <option value="visitor">Visitor</option>
+                    <option value="resident">Resident</option>
+                    <option value="staff">Staff</option>
+                    <option value="family">Family</option>
+                    <option value="security">Security</option>
+                    <option value="delivery">Delivery</option>
+                    <option value="other">Other</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Description (Physical appearance)</label>
+                <textarea id="person-description" rows="3" placeholder="E.g., Wearing blue shirt, tall, glasses..."></textarea>
+            </div>
+
+            <div class="form-group">
+                <label>Notes (Optional)</label>
+                <textarea id="person-notes" rows="2" placeholder="Additional information..."></textarea>
+            </div>
+
+            <div class="modal-actions">
+                <button class="btn-secondary" onclick="closeTagPersonModal()">Cancel</button>
+                <button class="btn-primary" onclick="submitTagPerson()">Tag Person</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         const video = document.getElementById('video');
         const token = localStorage.getItem('alibi_token');
         let stream = null;
         let isPaused = false;
         let lastSnapshot = null;
+        let selectedTrustLevel = 'good';  // Default trust level
         
         if (!token) {
             window.location.href = '/camera/login';
         }
         
         async function startCamera() {
+            console.log('startCamera function called');
+
             try {
+                console.log('Requesting camera access...');
                 stream = await navigator.mediaDevices.getUserMedia({
                     video: { facingMode: 'environment', width: 640, height: 480 }
                 });
+                console.log('Camera access granted, stream:', stream);
+
                 video.srcObject = stream;
-                
-                // Hide start button, show pause button
+                console.log('Video srcObject set');
+
+                // Hide start button, show pause and action buttons
                 document.getElementById('start-btn').style.display = 'none';
                 document.getElementById('pause-btn').style.display = 'block';
+                document.getElementById('tag-person-btn').style.display = 'block';
                 document.getElementById('red-flag-btn').style.display = 'block';
-                
+                console.log('Buttons updated');
+
                 // Start analysis loop
-                setInterval(analyzeFrame, 2000);  // Every 2 seconds
+                setInterval(analyzeFrame, 4000);  // Every 4 seconds (reduced frequency)
+                console.log('Analysis loop started');
             } catch (error) {
+                console.error('Camera error:', error);
                 alert('Camera access denied: ' + error.message);
             }
         }
@@ -711,17 +1054,15 @@ SECURE_CAMERA_HTML = """
         
         async function analyzeFrame() {
             if (isPaused || !stream || isAnalyzing) return;
-            
+
             isAnalyzing = true;
-            
-            // Show analyzing state
+
+            // Get references (but don't change text - keep previous description visible)
             const aiText = document.getElementById('ai-text');
             const aiDescription = document.getElementById('ai-description');
-            aiText.textContent = 'Analyzing...';
-            aiText.style.fontStyle = 'italic';
-            aiText.style.color = 'white';
+            // Add subtle visual feedback that analysis is happening
             aiDescription.classList.add('analyzing');
-            
+
             // Capture frame
             const canvas = document.createElement('canvas');
             canvas.width = video.videoWidth;
@@ -729,7 +1070,7 @@ SECURE_CAMERA_HTML = """
             const ctx = canvas.getContext('2d');
             ctx.drawImage(video, 0, 0);
             
-            // Set timeout to prevent hanging (10 seconds)
+            // Set timeout to prevent hanging (25 seconds)
             analysisTimeout = setTimeout(() => {
                 if (isAnalyzing) {
                     document.getElementById('ai-description').classList.remove('analyzing');
@@ -737,7 +1078,7 @@ SECURE_CAMERA_HTML = """
                     aiText.style.color = '#f59e0b';
                     isAnalyzing = false;
                 }
-            }, 10000);
+            }, 25000);
             
             // Convert to blob
             canvas.toBlob(async (blob) => {
@@ -746,7 +1087,7 @@ SECURE_CAMERA_HTML = """
                 
                 try {
                     const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 8000);
+                    const timeoutId = setTimeout(() => controller.abort(), 20000);
                     
                     const response = await fetch('/camera/analyze-secure', {
                         method: 'POST',
@@ -889,17 +1230,114 @@ SECURE_CAMERA_HTML = """
                 alert('Failed to create red flag: ' + error.message);
             }
         }
-        
+
+        // Tag Person Functions
+        function selectTrustLevel(level) {
+            selectedTrustLevel = level;
+            // Remove selected class from all
+            document.getElementById('trust-good').classList.remove('selected');
+            document.getElementById('trust-neutral').classList.remove('selected');
+            document.getElementById('trust-bad').classList.remove('selected');
+            // Add to selected
+            document.getElementById(`trust-${level}`).classList.add('selected');
+        }
+
+        function openTagPersonModal() {
+            // Reset form
+            document.getElementById('person-name').value = '';
+            document.getElementById('person-role').value = 'visitor';
+            document.getElementById('person-description').value = '';
+            document.getElementById('person-notes').value = '';
+            selectTrustLevel('good');  // Reset to default
+
+            document.getElementById('tag-person-modal').classList.add('active');
+        }
+
+        function closeTagPersonModal() {
+            document.getElementById('tag-person-modal').classList.remove('active');
+        }
+
+        async function submitTagPerson() {
+            if (!lastSnapshot) {
+                alert('No snapshot available. Please wait for camera analysis to complete.');
+                return;
+            }
+
+            const name = document.getElementById('person-name').value.trim();
+            if (!name) {
+                alert("Please enter the person's name.");
+                return;
+            }
+
+            const description = document.getElementById('person-description').value.trim();
+            if (!description) {
+                alert("Please enter a physical description.");
+                return;
+            }
+
+            const data = {
+                name: name,
+                role: document.getElementById('person-role').value,
+                description: description,
+                notes: document.getElementById('person-notes').value.trim(),
+                trust_level: selectedTrustLevel,
+                snapshot: lastSnapshot
+            };
+
+            try {
+                const response = await fetch('/camera/tag-person', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${errorText}`);
+                }
+
+                const result = await response.json();
+
+                if (result.success) {
+                    alert(`✅ Person tagged successfully!\n${result.message}`);
+                    closeTagPersonModal();
+                } else {
+                    alert('Failed to tag person: ' + (result.message || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Tag person error:', error);
+                alert('Failed to tag person: ' + error.message);
+            }
+        }
+
         // Event listeners
-        document.getElementById('start-btn').addEventListener('click', startCamera);
-        
+        console.log('Setting up event listeners...');
+        const startBtn = document.getElementById('start-btn');
+        console.log('Start button element:', startBtn);
+
+        if (startBtn) {
+            startBtn.addEventListener('click', () => {
+                console.log('Start button clicked!');
+                startCamera();
+            });
+            console.log('Start button listener attached');
+        } else {
+            console.error('Start button not found!');
+        }
+
         document.getElementById('pause-btn').addEventListener('click', () => {
             isPaused = !isPaused;
             const btn = document.getElementById('pause-btn');
             btn.textContent = isPaused ? '▶️ Resume' : '⏸ Pause';
         });
-        
+
         document.getElementById('red-flag-btn').addEventListener('click', openRedFlagModal);
+        document.getElementById('tag-person-btn').addEventListener('click', openTagPersonModal);
+
+        console.log('All event listeners set up');
     </script>
 </body>
 </html>
