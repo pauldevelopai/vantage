@@ -986,6 +986,140 @@ async def update_settings(
     return {"status": "updated", "settings": current}
 
 
+# ── Camera Registry endpoints ────────────────────────────────────────────
+
+from alibi.cameras.camera_store import Camera, CameraStore, get_camera_store
+from alibi.cameras.vms_connect import test_connection as vms_test_connection
+
+
+class CameraCreateRequest(BaseModel):
+    """Request to register a new camera"""
+    camera_id: str
+    name: str
+    source: str = ""
+    source_type: str = "rtsp"  # rtsp | onvif | milestone | genetec | mobile
+    enabled: bool = True
+    location: str = ""
+    vms_config: dict = Field(default_factory=dict)
+
+
+class CameraUpdateRequest(BaseModel):
+    """Partial update for a camera"""
+    name: Optional[str] = None
+    source: Optional[str] = None
+    source_type: Optional[str] = None
+    enabled: Optional[bool] = None
+    location: Optional[str] = None
+    vms_config: Optional[dict] = None
+
+
+@app.get("/api/cameras", tags=["Cameras"])
+async def list_cameras(
+    current_user: User = Depends(get_current_user),
+):
+    """List all registered cameras with status."""
+    store = get_camera_store()
+    cameras = store.list_all()
+    return {"cameras": [c.to_dict() for c in cameras]}
+
+
+@app.post("/api/cameras", tags=["Cameras"])
+async def add_camera(
+    req: CameraCreateRequest,
+    current_user: User = Depends(require_role([Role.ADMIN])),
+):
+    """Register a new camera (admin only)."""
+    store = get_camera_store()
+    camera = Camera(
+        camera_id=req.camera_id,
+        name=req.name,
+        source=req.source,
+        source_type=req.source_type,
+        enabled=req.enabled,
+        location=req.location,
+        vms_config=req.vms_config,
+    )
+    store.add(camera)
+
+    audit_store = get_store()
+    audit_store.append_audit("camera_added", {"camera_id": req.camera_id, "user": current_user.username})
+
+    return camera.to_dict()
+
+
+@app.put("/api/cameras/{camera_id}", tags=["Cameras"])
+async def update_camera(
+    camera_id: str,
+    req: CameraUpdateRequest,
+    current_user: User = Depends(require_role([Role.ADMIN])),
+):
+    """Update camera configuration (admin only)."""
+    store = get_camera_store()
+    updates = {k: v for k, v in req.model_dump().items() if v is not None}
+    camera = store.update(camera_id, updates)
+    if camera is None:
+        raise HTTPException(status_code=404, detail="Camera not found")
+    return camera.to_dict()
+
+
+@app.delete("/api/cameras/{camera_id}", tags=["Cameras"])
+async def delete_camera(
+    camera_id: str,
+    current_user: User = Depends(require_role([Role.ADMIN])),
+):
+    """Remove a camera (admin only)."""
+    store = get_camera_store()
+    if not store.remove(camera_id):
+        raise HTTPException(status_code=404, detail="Camera not found")
+
+    audit_store = get_store()
+    audit_store.append_audit("camera_removed", {"camera_id": camera_id, "user": current_user.username})
+
+    return {"status": "removed", "camera_id": camera_id}
+
+
+@app.post("/api/cameras/{camera_id}/test", tags=["Cameras"])
+async def test_camera_connection(
+    camera_id: str,
+    current_user: User = Depends(require_role([Role.ADMIN])),
+):
+    """Test camera connection by reading one frame."""
+    store = get_camera_store()
+    camera = store.get(camera_id)
+    if camera is None:
+        raise HTTPException(status_code=404, detail="Camera not found")
+
+    result = vms_test_connection(camera)
+
+    # Update camera status based on test result
+    new_status = "online" if result.get("ok") else "offline"
+    store.update_status(camera_id, new_status, datetime.now().isoformat() if result.get("ok") else None)
+
+    return result
+
+
+# ── Cross-Camera Trail endpoint ──────────────────────────────────────────
+
+from alibi.cameras.cross_camera import get_cross_camera_tracker
+
+
+@app.get("/api/trail/{entity_type}/{entity_id}", tags=["Cameras"])
+async def get_entity_trail(
+    entity_type: str,
+    entity_id: str,
+    hours: int = 24,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get camera-by-camera trail for an entity (plate or vehicle description).
+
+    Returns chronological list of sightings across cameras.
+    """
+    tracker = get_cross_camera_tracker()
+    trail = tracker.get_entity_trail(entity_type, entity_id, hours=hours)
+    return {"entity_type": entity_type, "entity_id": entity_id, "trail": trail}
+
+
 # Watchlist endpoints
 
 @app.get("/watchlist")

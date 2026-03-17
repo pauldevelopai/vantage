@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api } from '../lib/api';
+import type { TrailEntry } from '../lib/types';
 
 interface VehicleSighting {
   sighting_id: string;
@@ -28,6 +29,11 @@ export function VehicleSearchPage() {
   const [searching, setSearching] = useState(false);
   const [searched, setSearched] = useState(false);
 
+  // Trail state
+  const [trail, setTrail] = useState<TrailEntry[]>([]);
+  const [trailPlate, setTrailPlate] = useState('');
+  const [trailLoading, setTrailLoading] = useState(false);
+
   async function handleSearch() {
     setSearching(true);
     setSearched(true);
@@ -49,6 +55,20 @@ export function VehicleSearchPage() {
       alert('Search failed');
     } finally {
       setSearching(false);
+    }
+  }
+
+  async function handleViewTrail(plateText: string) {
+    setTrailLoading(true);
+    setTrailPlate(plateText);
+    try {
+      const data = await api.getEntityTrail('plate', plateText);
+      setTrail(data.trail || []);
+    } catch (error) {
+      console.error('Failed to load trail:', error);
+      setTrail([]);
+    } finally {
+      setTrailLoading(false);
     }
   }
 
@@ -293,6 +313,14 @@ export function VehicleSearchPage() {
 
                       {/* Actions */}
                       <div className="ml-4 flex-shrink-0 flex gap-2">
+                        {sighting.metadata?.plate_text && (
+                          <button
+                            onClick={() => handleViewTrail(sighting.metadata!.plate_text)}
+                            className="inline-flex items-center px-3 py-2 border border-blue-300 shadow-sm text-sm leading-4 font-medium rounded-md text-blue-700 bg-blue-50 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                          >
+                            View Trail
+                          </button>
+                        )}
                         {sighting.snapshot_url && (
                           <a
                             href={sighting.snapshot_url}
@@ -314,6 +342,51 @@ export function VehicleSearchPage() {
                           </a>
                         )}
                       </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Trail Panel */}
+      {trailPlate && (
+        <div className="mt-8">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-medium text-gray-900">
+              Camera Trail: <span className="font-mono">{trailPlate}</span>
+            </h2>
+            <button
+              onClick={() => { setTrailPlate(''); setTrail([]); }}
+              className="text-sm text-gray-500 hover:text-gray-700"
+            >
+              Close
+            </button>
+          </div>
+
+          {trailLoading ? (
+            <div className="text-center py-8 bg-white shadow sm:rounded-lg">
+              <p className="text-gray-500">Loading trail...</p>
+            </div>
+          ) : trail.length === 0 ? (
+            <div className="text-center py-8 bg-white shadow sm:rounded-lg">
+              <p className="text-gray-500">No cross-camera trail found for this plate.</p>
+            </div>
+          ) : (
+            <div className="bg-white shadow sm:rounded-lg overflow-hidden">
+              <ul className="divide-y divide-gray-200">
+                {trail.map((entry, i) => (
+                  <li key={i} className="px-6 py-3 flex items-center gap-4">
+                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-100 text-blue-800 flex items-center justify-center text-sm font-medium">
+                      {i + 1}
+                    </div>
+                    <div>
+                      <span className="font-medium text-gray-900">{entry.camera_id}</span>
+                      <span className="ml-3 text-sm text-gray-500">
+                        {new Date(entry.timestamp).toLocaleString()}
+                      </span>
                     </div>
                   </li>
                 ))}

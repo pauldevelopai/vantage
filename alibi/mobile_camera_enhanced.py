@@ -36,6 +36,8 @@ from alibi.plates.normalize import normalize_plate, format_plate_display
 from alibi.plates.hotlist_store import HotlistStore
 from alibi.plates.travel_detector import ImpossibleTravelDetector
 from alibi.vehicles.sightings_store import VehicleSightingsStore, VehicleSighting
+from alibi.cameras.camera_store import get_camera_store
+from alibi.cameras.cross_camera import get_cross_camera_tracker
 
 router = APIRouter(prefix="/camera", tags=["Enhanced Mobile Camera"])
 
@@ -55,12 +57,15 @@ _plate_ocr = None
 _hotlist_store = None
 _sightings_store = None
 _travel_detector = None
+_camera_store = None
+_cross_camera_tracker = None
 
 
 def get_security_components():
     """Initialize security components"""
     global _gatekeeper, _tracker, _rule_evaluator, _incident_manager, _intelligence_store
     global _plate_detector, _plate_ocr, _hotlist_store, _sightings_store, _travel_detector
+    global _camera_store, _cross_camera_tracker
     
     if _gatekeeper is None:
         policy = GatekeeperPolicy(min_combined_conf=0.5)
@@ -86,7 +91,7 @@ def get_security_components():
         _incident_manager = IncidentManager(
             _rule_evaluator,
             auto_convert_to_training=True,
-            camera_id="mobile_camera"
+            camera_id="mobile"  # Default; overridden per-request with dynamic camera_id
         )
     
     if _intelligence_store is None:
@@ -107,7 +112,20 @@ def get_security_components():
     if _travel_detector is None:
         _travel_detector = ImpossibleTravelDetector()
 
+    if _camera_store is None:
+        _camera_store = get_camera_store()
+
+    if _cross_camera_tracker is None:
+        _cross_camera_tracker = get_cross_camera_tracker()
+
     return _gatekeeper, _tracker, _rule_evaluator, _incident_manager, _intelligence_store
+
+
+def _get_camera_id(username: str) -> str:
+    """Get dynamic camera_id for a mobile user and register in camera store."""
+    camera_id = f"mobile_{username}"
+    _camera_store.upsert_mobile(camera_id, username)
+    return camera_id
 
 
 def assess_threat_level(detections, zone_hits, triggered_rules, ai_activities=None):
@@ -201,7 +219,10 @@ async def analyze_frame_secure(
     """
     # Get components
     gatekeeper, tracker, rule_evaluator, incident_manager, intelligence_store = get_security_components()
-    
+
+    # Dynamic camera_id based on logged-in user
+    camera_id = _get_camera_id(current_user.username)
+
     # Read image
     contents = await image.read()
     nparr = np.frombuffer(contents, np.uint8)
@@ -287,7 +308,7 @@ async def analyze_frame_secure(
                 # Record sighting
                 _sightings_store.add_sighting(VehicleSighting(
                     sighting_id=str(uuid.uuid4()),
-                    camera_id="mobile_camera",
+                    camera_id=camera_id,
                     ts=timestamp.isoformat(),
                     bbox=plate.bbox,
                     color="unknown",
@@ -297,9 +318,26 @@ async def analyze_frame_secure(
                     metadata={"plate_text": normalized or text, "ocr_confidence": ocr_conf},
                 ))
 
-                # Check impossible travel
+                # Cross-camera correlation
+                cross_alerts = _cross_camera_tracker.record_sighting(
+                    camera_id=camera_id,
+                    entity_type="plate",
+                    entity_id=normalized or text,
+                    timestamp=timestamp.isoformat(),
+                    metadata={"confidence": ocr_conf},
+                )
+                for ca in cross_alerts:
+                    detected_plates[-1].setdefault("cross_camera_alerts", []).append({
+                        "type": ca.alert_type,
+                        "message": ca.message,
+                        "cameras": ca.cameras,
+                    })
+                    hotlist_hit = True
+                    hotlist_reason = ca.message
+
+                # Check impossible travel (legacy single-detector)
                 travel_alert = _travel_detector.check(
-                    normalized or text, "mobile_camera", timestamp.isoformat()
+                    normalized or text, camera_id, timestamp.isoformat()
                 )
                 if travel_alert:
                     detected_plates[-1]["impossible_travel"] = {
@@ -341,7 +379,7 @@ async def analyze_frame_secure(
             analysis_id=str(uuid.uuid4()),
             timestamp=timestamp.isoformat(),
             user=username,
-            camera_source="mobile_camera",
+            camera_source=camera_id,
             description=ai_description_text,
             confidence=ai_confidence,
             detected_objects=ai_objects,
@@ -447,7 +485,7 @@ def _maybe_create_auto_alert(
             description=f"[AUTO] {threat_message} — {ai_description}",
             snapshot_url=snapshot_path,
             analysis_id=analysis_id,
-            location="mobile_camera",
+            location=f"mobile_{username}",
             tags=["auto_alert", f"threat_{threat_level}"] + [a.lower() for a in ai_activities[:5]],
             metadata={
                 "threat_level": threat_level,
@@ -518,7 +556,7 @@ async def create_red_flag(
     red_flag = RedFlag(
         flag_id=str(uuid.uuid4()),
         timestamp=datetime.utcnow(),
-        camera_id=data.get("camera_id", "mobile_camera"),
+        camera_id=data.get("camera_id", f"mobile_{current_user.username}"),
         flagged_by=current_user.username,
         severity=data.get("severity", "medium"),
         category=data.get("category", "suspicious_activity"),
@@ -1576,7 +1614,7 @@ SECURE_CAMERA_HTML = """
                 severity: document.getElementById('severity').value,
                 category: document.getElementById('category').value,
                 description: description,
-                camera_id: 'mobile_camera',
+                camera_id: 'mobile_' + (localStorage.getItem('alibi_user') ? JSON.parse(localStorage.getItem('alibi_user')).username : 'unknown'),
                 snapshot_path: lastSnapshot
             };
             

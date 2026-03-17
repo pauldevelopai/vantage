@@ -6,6 +6,7 @@ import { SettingsPage } from './pages/SettingsPage';
 import { LoginPage } from './pages/LoginPage';
 import { MetricsPage } from './pages/MetricsPage';
 import { VehicleSearchPage } from './pages/VehicleSearchPage';
+import { CamerasPage } from './pages/CamerasPage';
 import { isAuthenticated, getUser, logout, hasRole } from './lib/auth';
 
 // Protected route wrapper
@@ -83,6 +84,16 @@ function Layout({ children }: { children: React.ReactNode }) {
                 >
                   Vehicle Search
                 </Link>
+                <Link
+                  to="/cameras"
+                  className={`${
+                    isActive('/cameras')
+                      ? 'border-blue-500 text-gray-900'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  } inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium`}
+                >
+                  Cameras
+                </Link>
                 {hasRole('admin') && (
                   <Link
                     to="/settings"
@@ -144,6 +155,7 @@ function App() {
                   <Route path="/reports" element={<ReportsPage />} />
                   <Route path="/metrics" element={<MetricsPage />} />
                   <Route path="/vehicle-search" element={<VehicleSearchPage />} />
+                  <Route path="/cameras" element={<CamerasPage />} />
                   <Route path="/settings" element={<SettingsPage />} />
                 </Routes>
               </Layout>

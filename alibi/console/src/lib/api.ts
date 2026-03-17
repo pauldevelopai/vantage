@@ -1,6 +1,6 @@
 // API client for Alibi backend
 
-import type { IncidentSummary, IncidentDetail, DecisionRequest, Settings, ShiftReport } from './types';
+import type { IncidentSummary, IncidentDetail, DecisionRequest, Settings, ShiftReport, Camera, TrailEntry } from './types';
 import { getToken } from './auth';
 
 const API_BASE = '/api';
@@ -203,6 +203,65 @@ export const api = {
 
     const res = await fetchWithAuth(`${API_BASE}/search/vehicles?${queryParams}`);
     if (!res.ok) throw new Error('Search failed');
+    return res.json();
+  },
+
+  // Cameras
+  async listCameras(): Promise<{ cameras: Camera[] }> {
+    const res = await fetchWithAuth(`${API_BASE}/cameras`);
+    if (!res.ok) throw new Error('Failed to fetch cameras');
+    return res.json();
+  },
+
+  async addCamera(camera: {
+    camera_id: string;
+    name: string;
+    source?: string;
+    source_type?: string;
+    location?: string;
+    vms_config?: Record<string, any>;
+  }): Promise<Camera> {
+    const res = await fetchWithAuth(`${API_BASE}/cameras`, {
+      method: 'POST',
+      body: JSON.stringify(camera),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to add camera');
+    }
+    return res.json();
+  },
+
+  async updateCamera(cameraId: string, updates: Partial<Camera>): Promise<Camera> {
+    const res = await fetchWithAuth(`${API_BASE}/cameras/${cameraId}`, {
+      method: 'PUT',
+      body: JSON.stringify(updates),
+    });
+    if (!res.ok) throw new Error('Failed to update camera');
+    return res.json();
+  },
+
+  async deleteCamera(cameraId: string): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/cameras/${cameraId}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) throw new Error('Failed to delete camera');
+    return res.json();
+  },
+
+  async testCamera(cameraId: string): Promise<{ ok: boolean; resolution?: string; fps?: number; error?: string }> {
+    const res = await fetchWithAuth(`${API_BASE}/cameras/${cameraId}/test`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw new Error('Failed to test camera');
+    return res.json();
+  },
+
+  // Entity Trail (cross-camera tracking)
+  async getEntityTrail(entityType: string, entityId: string, hours?: number): Promise<{ entity_type: string; entity_id: string; trail: TrailEntry[] }> {
+    const query = hours ? `?hours=${hours}` : '';
+    const res = await fetchWithAuth(`${API_BASE}/trail/${entityType}/${encodeURIComponent(entityId)}${query}`);
+    if (!res.ok) throw new Error('Failed to fetch trail');
     return res.json();
   },
 };
