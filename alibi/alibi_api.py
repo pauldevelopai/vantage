@@ -1159,6 +1159,7 @@ async def remove_hotlist_plate(
 
 @app.get("/search/vehicles")
 async def search_vehicles(
+    plate: Optional[str] = None,
     make: Optional[str] = None,
     model: Optional[str] = None,
     color: Optional[str] = None,
@@ -1170,8 +1171,9 @@ async def search_vehicles(
 ):
     """
     Search vehicle sightings.
-    
+
     Query parameters:
+    - plate: License plate text (partial match, searches metadata)
     - make: Vehicle make (partial match)
     - model: Vehicle model (partial match)
     - color: Vehicle color (exact match)
@@ -1179,30 +1181,34 @@ async def search_vehicles(
     - from_ts: Start timestamp (ISO format)
     - to_ts: End timestamp (ISO format)
     - limit: Max results (default 100)
-    
+
     Returns matched sightings with evidence URLs.
     """
     from alibi.vehicles.sightings_store import VehicleSightingsStore
-    
+
     store = VehicleSightingsStore()
-    
-    # Search
-    sightings = store.search(
-        make=make,
-        model=model,
-        color=color,
-        camera_id=camera_id,
-        from_ts=from_ts,
-        to_ts=to_ts,
-        limit=limit
-    )
-    
+
+    # If plate search, use dedicated method
+    if plate:
+        sightings = store.search_by_plate(plate_query=plate, limit=limit)
+    else:
+        sightings = store.search(
+            make=make,
+            model=model,
+            color=color,
+            camera_id=camera_id,
+            from_ts=from_ts,
+            to_ts=to_ts,
+            limit=limit
+        )
+
     # Audit log
     audit_store = get_store()
     audit_store.append_audit("vehicle_search", {
         "user": current_user.username,
         "role": current_user.role.value,
         "filters": {
+            "plate": plate,
             "make": make,
             "model": model,
             "color": color,
@@ -1212,11 +1218,12 @@ async def search_vehicles(
         },
         "result_count": len(sightings)
     })
-    
+
     return {
         "sightings": [s.to_dict() for s in sightings],
         "total": len(sightings),
         "filters": {
+            "plate": plate,
             "make": make,
             "model": model,
             "color": color,

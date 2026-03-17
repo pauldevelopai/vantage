@@ -222,6 +222,29 @@ class VehicleSightingsStore:
         
         return None
     
+    def search_by_plate(self, plate_query: str, limit: int = 100) -> List[VehicleSighting]:
+        """
+        Search sightings by license plate text stored in metadata.
+
+        Args:
+            plate_query: Plate text to search for (case-insensitive partial match)
+            limit: Maximum results
+
+        Returns:
+            Matching sightings sorted by timestamp desc
+        """
+        query_upper = plate_query.upper().replace(" ", "")
+        all_sightings = self.load_all()
+        matches = []
+
+        for s in all_sightings:
+            plate_text = (s.metadata or {}).get("plate_text", "")
+            if plate_text and query_upper in plate_text.upper().replace(" ", ""):
+                matches.append(s)
+
+        matches.sort(key=lambda s: s.ts, reverse=True)
+        return matches[:limit]
+
     def get_recent(self, limit: int = 100) -> List[VehicleSighting]:
         """
         Get most recent sightings.

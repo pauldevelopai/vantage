@@ -36,7 +36,7 @@ bcrypt>=4.0.0
 python-multipart>=0.0.6
 
 # License plate recognition (optional but recommended for hotlist feature)
-# easyocr>=1.7.0  # Uncomment to enable plate OCR
+easyocr>=1.7.0  # License plate OCR
 
 # NLP / Embeddings (optional but recommended for full features)
 # These enable local semantic search - FREE, FAST, OFFLINE

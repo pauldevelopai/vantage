@@ -30,6 +30,12 @@ from alibi.vision.scene_analyzer import SceneAnalyzer
 from alibi.camera_analysis_store import CameraAnalysis, get_camera_analysis_store
 from alibi.known_persons import KnownPerson, KnownPersonsStore, get_known_persons_store
 from alibi.continuous_learning import get_learning_system
+from alibi.plates.plate_detect import PlateDetector
+from alibi.plates.plate_ocr import PlateOCR
+from alibi.plates.normalize import normalize_plate, format_plate_display
+from alibi.plates.hotlist_store import HotlistStore
+from alibi.plates.travel_detector import ImpossibleTravelDetector
+from alibi.vehicles.sightings_store import VehicleSightingsStore, VehicleSighting
 
 router = APIRouter(prefix="/camera", tags=["Enhanced Mobile Camera"])
 
@@ -44,11 +50,17 @@ _tracker = None
 _rule_evaluator = None
 _incident_manager = None
 _intelligence_store = None
+_plate_detector = None
+_plate_ocr = None
+_hotlist_store = None
+_sightings_store = None
+_travel_detector = None
 
 
 def get_security_components():
     """Initialize security components"""
     global _gatekeeper, _tracker, _rule_evaluator, _incident_manager, _intelligence_store
+    global _plate_detector, _plate_ocr, _hotlist_store, _sightings_store, _travel_detector
     
     if _gatekeeper is None:
         policy = GatekeeperPolicy(min_combined_conf=0.5)
@@ -79,7 +91,22 @@ def get_security_components():
     
     if _intelligence_store is None:
         _intelligence_store = IntelligenceStore()
-    
+
+    if _plate_detector is None:
+        _plate_detector = PlateDetector()
+
+    if _plate_ocr is None:
+        _plate_ocr = PlateOCR()
+
+    if _hotlist_store is None:
+        _hotlist_store = HotlistStore()
+
+    if _sightings_store is None:
+        _sightings_store = VehicleSightingsStore()
+
+    if _travel_detector is None:
+        _travel_detector = ImpossibleTravelDetector()
+
     return _gatekeeper, _tracker, _rule_evaluator, _incident_manager, _intelligence_store
 
 
@@ -229,6 +256,63 @@ async def analyze_frame_secure(
         ai_description_text = f"Detected: {', '.join(detected_classes) if detected_classes else 'No objects'}. AI analysis temporarily unavailable."
         ai_confidence = 0.5
 
+    # PLATE DETECTION: Detect and read license plates
+    detected_plates = []
+    hotlist_hit = False
+    hotlist_reason = None
+    try:
+        raw_plates = _plate_detector.detect(frame)
+        for plate in raw_plates:
+            text, ocr_conf = _plate_ocr.read_plate(plate.plate_image)
+            if text and ocr_conf >= 0.5:
+                normalized = normalize_plate(text)
+                display_text = format_plate_display(normalized) if normalized else text
+                is_hotlist = _hotlist_store.is_on_hotlist(normalized)
+                hl_reason = None
+                if is_hotlist:
+                    entry = _hotlist_store.get_by_plate(normalized)
+                    hl_reason = entry.reason if entry else "unknown"
+                    hotlist_hit = True
+                    hotlist_reason = hl_reason
+
+                detected_plates.append({
+                    "text": normalized or text,
+                    "display": display_text,
+                    "confidence": round(min(plate.confidence, ocr_conf), 2),
+                    "bbox": list(plate.bbox),
+                    "hotlist_match": is_hotlist,
+                    "hotlist_reason": hl_reason,
+                })
+
+                # Record sighting
+                _sightings_store.add_sighting(VehicleSighting(
+                    sighting_id=str(uuid.uuid4()),
+                    camera_id="mobile_camera",
+                    ts=timestamp.isoformat(),
+                    bbox=plate.bbox,
+                    color="unknown",
+                    make="unknown",
+                    model="unknown",
+                    confidence=round(min(plate.confidence, ocr_conf), 2),
+                    metadata={"plate_text": normalized or text, "ocr_confidence": ocr_conf},
+                ))
+
+                # Check impossible travel
+                travel_alert = _travel_detector.check(
+                    normalized or text, "mobile_camera", timestamp.isoformat()
+                )
+                if travel_alert:
+                    detected_plates[-1]["impossible_travel"] = {
+                        "alert": True,
+                        "message": travel_alert.message,
+                        "previous_camera": travel_alert.camera_a,
+                        "seconds_between": travel_alert.seconds_between,
+                    }
+                    hotlist_hit = True
+                    hotlist_reason = travel_alert.message
+    except Exception as e:
+        print(f"[PlateDetection] Error: {e}")
+
     # NOW assess threat level with AI activities
     detections = result.get("detections", [])
     threat_level, threat_color, threat_message = assess_threat_level(
@@ -237,6 +321,12 @@ async def analyze_frame_secure(
         triggered_rules,
         ai_activities  # Pass activities to threat assessment
     )
+
+    # Escalate threat if hotlist plate detected
+    if hotlist_hit and threat_level in ("safe", "caution"):
+        threat_level = "warning"
+        threat_color = "#ef4444"
+        threat_message = f"HOTLIST PLATE MATCH: {detected_plates[0]['display']} — {hotlist_reason}"
 
     # CONTINUOUS LEARNING: Get additional threat intelligence
     learning_system = get_learning_system()
@@ -312,6 +402,10 @@ async def analyze_frame_secure(
             "confidence": ai_confidence,
             "objects": ai_objects,
             "activities": ai_activities
+        },
+        "plates": {
+            "detected": detected_plates,
+            "count": len(detected_plates),
         },
         "scores": result.get("scores", {}),
         "eligible_for_training": result.get("eligible", False),
@@ -1075,6 +1169,62 @@ SECURE_CAMERA_HTML = """
             margin-bottom: 4px;
         }
         .alert-item .alert-desc { line-height: 1.4; }
+
+        /* === PLATE DETECTION === */
+        #plate-display {
+            display: none;
+            max-width: 640px;
+            margin: 0 auto 10px;
+            padding: 0 20px;
+        }
+        .plate-box {
+            background: #111827;
+            border: 2px solid #3b82f6;
+            border-radius: 8px;
+            padding: 12px;
+        }
+        .plate-box.hotlist-match {
+            border-color: #ef4444;
+            background: rgba(239, 68, 68, 0.1);
+            animation: pulse 1.5s infinite;
+        }
+        .plate-header {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #3b82f6;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+        .plate-box.hotlist-match .plate-header { color: #ef4444; }
+        .plate-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 6px 0;
+            border-bottom: 1px solid #333;
+        }
+        .plate-item:last-child { border-bottom: none; }
+        .plate-text {
+            font-family: 'Courier New', monospace;
+            font-size: 20px;
+            font-weight: bold;
+            letter-spacing: 2px;
+            color: white;
+        }
+        .plate-confidence {
+            font-size: 11px;
+            color: #9ca3af;
+            background: rgba(255,255,255,0.05);
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+        .plate-hotlist-warning {
+            color: #ef4444;
+            font-size: 12px;
+            font-weight: 600;
+            margin-top: 6px;
+        }
     </style>
 </head>
 <body>
@@ -1133,6 +1283,14 @@ SECURE_CAMERA_HTML = """
         </div>
     </div>
     
+    <!-- Plate Detection Display (hidden until plates detected) -->
+    <div id="plate-display">
+        <div class="plate-box" id="plate-box">
+            <div class="plate-header" id="plate-header">License Plates Detected</div>
+            <div id="plate-list"></div>
+        </div>
+    </div>
+
     <div class="controls">
         <button class="btn-primary" id="start-btn">▶️ Start Camera</button>
         <button class="btn-secondary" id="pause-btn">⏸ Pause</button>
@@ -1656,10 +1814,45 @@ SECURE_CAMERA_HTML = """
             if (alertHistoryOpen) renderAlertHistory();
         }
 
-        // Hook into updateThreatDisplay to trigger alerts
+        // Plate display logic
+        function updatePlateDisplay(plates) {
+            const container = document.getElementById('plate-display');
+            const box = document.getElementById('plate-box');
+            const list = document.getElementById('plate-list');
+            const header = document.getElementById('plate-header');
+
+            if (!plates || !plates.detected || plates.detected.length === 0) {
+                container.style.display = 'none';
+                return;
+            }
+
+            container.style.display = 'block';
+            const hasHotlist = plates.detected.some(p => p.hotlist_match);
+            box.className = hasHotlist ? 'plate-box hotlist-match' : 'plate-box';
+            header.textContent = hasHotlist ? 'HOTLIST PLATE DETECTED' : `License Plate${plates.count > 1 ? 's' : ''} Detected`;
+
+            list.innerHTML = plates.detected.map(p => {
+                let html = `<div class="plate-item">
+                    <span class="plate-text">${p.display || p.text}</span>
+                    <span class="plate-confidence">${Math.round(p.confidence * 100)}%</span>
+                </div>`;
+                if (p.hotlist_match) {
+                    html += `<div class="plate-hotlist-warning">HOTLIST: ${p.hotlist_reason}</div>`;
+                }
+                if (p.impossible_travel && p.impossible_travel.alert) {
+                    html += `<div class="plate-hotlist-warning">IMPOSSIBLE TRAVEL: ${p.impossible_travel.message}</div>`;
+                }
+                return html;
+            }).join('');
+        }
+
+        // Hook into updateThreatDisplay to trigger alerts and plate display
         const _origUpdateThreat = updateThreatDisplay;
         updateThreatDisplay = function(result) {
             _origUpdateThreat(result);
+
+            // Update plate display
+            updatePlateDisplay(result.plates);
 
             // If alert was created by backend, add to local alert list
             if (result.alert_created && result.threat && (result.threat.level === 'warning' || result.threat.level === 'critical')) {

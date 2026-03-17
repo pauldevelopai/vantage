@@ -16,13 +16,14 @@ interface VehicleSighting {
 }
 
 export function VehicleSearchPage() {
+  const [plate, setPlate] = useState('');
   const [make, setMake] = useState('');
   const [model, setModel] = useState('');
   const [color, setColor] = useState('');
   const [cameraId, setCameraId] = useState('');
   const [fromTs, setFromTs] = useState('');
   const [toTs, setToTs] = useState('');
-  
+
   const [results, setResults] = useState<VehicleSighting[]>([]);
   const [searching, setSearching] = useState(false);
   const [searched, setSearched] = useState(false);
@@ -30,9 +31,10 @@ export function VehicleSearchPage() {
   async function handleSearch() {
     setSearching(true);
     setSearched(true);
-    
+
     try {
       const response = await api.searchVehicles({
+        plate: plate || undefined,
         make: make || undefined,
         model: model || undefined,
         color: color || undefined,
@@ -51,6 +53,7 @@ export function VehicleSearchPage() {
   }
 
   function handleClear() {
+    setPlate('');
     setMake('');
     setModel('');
     setColor('');
@@ -67,7 +70,7 @@ export function VehicleSearchPage() {
         <div className="sm:flex-auto">
           <h1 className="text-2xl font-semibold text-gray-900">Vehicle Search</h1>
           <p className="mt-2 text-sm text-gray-700">
-            Search indexed vehicle sightings by make, model, color, location, and time.
+            Search indexed vehicle sightings by license plate, make, model, color, location, and time.
           </p>
         </div>
       </div>
@@ -77,6 +80,22 @@ export function VehicleSearchPage() {
         <h2 className="text-lg font-medium text-gray-900 mb-4">Search Criteria</h2>
         
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          {/* License Plate */}
+          <div className="sm:col-span-2 lg:col-span-3">
+            <label htmlFor="plate" className="block text-sm font-medium text-gray-700">
+              License Plate
+            </label>
+            <input
+              type="text"
+              id="plate"
+              value={plate}
+              onChange={(e) => setPlate(e.target.value)}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm font-mono text-lg tracking-wider"
+              placeholder="e.g., N 12345 W"
+            />
+            <p className="mt-1 text-xs text-gray-500">Partial match, spaces ignored. When set, overrides make/model/color filters.</p>
+          </div>
+
           {/* Make */}
           <div>
             <label htmlFor="make" className="block text-sm font-medium text-gray-700">
@@ -236,17 +255,24 @@ export function VehicleSearchPage() {
 
                         {/* Details */}
                         <div className="ml-4 flex-1">
-                          <div className="flex items-center">
+                          <div className="flex items-center flex-wrap gap-1">
+                            {sighting.metadata?.plate_text && (
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded text-sm font-mono font-bold bg-blue-100 text-blue-800 tracking-wider mr-2">
+                                {sighting.metadata.plate_text}
+                              </span>
+                            )}
                             <h3 className="text-sm font-medium text-gray-900">
-                              {sighting.make !== 'unknown' && sighting.model !== 'unknown' 
-                                ? `${sighting.make} ${sighting.model}` 
+                              {sighting.make !== 'unknown' && sighting.model !== 'unknown'
+                                ? `${sighting.make} ${sighting.model}`
                                 : 'Vehicle'}
                             </h3>
-                            <span
-                              className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 capitalize"
-                            >
-                              {sighting.color}
-                            </span>
+                            {sighting.color !== 'unknown' && (
+                              <span
+                                className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 capitalize"
+                              >
+                                {sighting.color}
+                              </span>
+                            )}
                           </div>
                           
                           <div className="mt-1 flex items-center text-sm text-gray-500">
