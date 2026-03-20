@@ -9,6 +9,7 @@ import { MetricsPage } from './pages/MetricsPage';
 import { VehicleSearchPage } from './pages/VehicleSearchPage';
 import { CamerasPage } from './pages/CamerasPage';
 import { WatchlistPage } from './pages/WatchlistPage';
+import { SearchPage } from './pages/SearchPage';
 import { isAuthenticated, getUser, logout, hasRole } from './lib/auth';
 
 type LayoutMode = 'standard' | 'control-room';
@@ -88,6 +89,7 @@ function Layout({ children }: { children: React.ReactNode }) {
               <div className="w-px h-5 bg-white/10 mx-1.5 flex-shrink-0" />
               {navLink('/incidents', 'Incidents')}
               {navLink('/reports', 'Reports')}
+              {navLink('/search', 'Search')}
               {navLink('/metrics', 'Metrics')}
               {navLink('/vehicle-search', 'Vehicles')}
               {navLink('/cameras', 'Cameras')}
@@ -145,6 +147,7 @@ function App() {
                   <Route path="/incidents/:id" element={<IncidentDetailPage />} />
                   <Route path="/reports" element={<ReportsPage />} />
                   <Route path="/metrics" element={<MetricsPage />} />
+                  <Route path="/search" element={<SearchPage />} />
                   <Route path="/vehicle-search" element={<VehicleSearchPage />} />
                   <Route path="/cameras" element={<CamerasPage />} />
                   <Route path="/watchlist" element={<WatchlistPage />} />

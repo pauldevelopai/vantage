@@ -1949,6 +1949,95 @@ async def run_cleanup(current_user: User = Depends(get_current_user)):
     return results
 
 
+# ── Semantic Search ────────────────────────────────────────────
+
+class SemanticSearchRequest(BaseModel):
+    query: str
+    limit: int = 20
+    min_score: float = 0.15
+    source: Optional[str] = None      # "camera_analysis", "red_flag", "intelligence"
+    camera_id: Optional[str] = None
+    hours: Optional[int] = None
+    threat_level: Optional[str] = None  # "caution", "warning", "critical"
+
+
+@app.post("/api/search/semantic")
+async def semantic_search(
+    req: SemanticSearchRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Natural language search across all stored security data.
+
+    Examples:
+    - "person in red jacket near entrance"
+    - "suspicious vehicle at night"
+    - "group of people running"
+    """
+    from alibi.semantic_search import get_semantic_search
+
+    engine = get_semantic_search()
+    results = engine.search(
+        query=req.query,
+        limit=req.limit,
+        min_score=req.min_score,
+        source_filter=req.source,
+        camera_filter=req.camera_id,
+        hours=req.hours,
+        threat_filter=req.threat_level,
+    )
+
+    return {
+        "query": req.query,
+        "results": [r.to_dict() for r in results],
+        "total": len(results),
+    }
+
+
+@app.get("/api/search/stats")
+async def search_stats(current_user: User = Depends(get_current_user)):
+    """Get semantic search index statistics."""
+    from alibi.semantic_search import get_semantic_search
+    return get_semantic_search().get_stats()
+
+
+@app.post("/api/search/rebuild-index")
+async def rebuild_search_index(current_user: User = Depends(get_current_user)):
+    """Force rebuild the semantic search index."""
+    from alibi.semantic_search import get_semantic_search
+    return get_semantic_search().rebuild_index()
+
+
+# ── Intelligence Search ───────────────────────────────────────
+
+@app.get("/api/intelligence/search")
+async def search_intelligence(
+    q: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Search across red flags, people tags, place tags, and intelligence notes."""
+    from alibi.intelligence_store import get_intelligence_store
+
+    store = get_intelligence_store()
+    results = store.search(q)
+
+    # Convert dataclass results to dicts
+    def to_dict_safe(obj):
+        if hasattr(obj, '__dataclass_fields__'):
+            from dataclasses import asdict as _asdict
+            return _asdict(obj)
+        return obj
+
+    return {
+        "query": q,
+        "red_flags": [to_dict_safe(f) for f in results.get("red_flags", [])],
+        "people": [to_dict_safe(p) for p in results.get("people", [])],
+        "places": [to_dict_safe(p) for p in results.get("places", [])],
+        "notes": [to_dict_safe(n) for n in results.get("notes", [])],
+        "total": sum(len(v) for v in results.values()),
+    }
+
+
 # ── Training Stats ──────────────────────────────────────────────
 
 @app.get("/api/training/stats")

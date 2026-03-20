@@ -305,6 +305,45 @@ export const api = {
     return res.json();
   },
 
+  // Semantic Search
+  async semanticSearch(params: {
+    query: string;
+    limit?: number;
+    min_score?: number;
+    source?: string;
+    camera_id?: string;
+    hours?: number;
+    threat_level?: string;
+  }): Promise<{
+    query: string;
+    results: Array<{
+      source: string;
+      score: number;
+      timestamp: string;
+      camera_id: string;
+      description: string;
+      snapshot_url: string | null;
+      thumbnail_url: string | null;
+      detected_objects: string[];
+      threat_level: string;
+      metadata: Record<string, any>;
+    }>;
+    total: number;
+  }> {
+    const res = await fetchWithAuth(`${API_BASE}/search/semantic`, {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) throw new Error('Search failed');
+    return res.json();
+  },
+
+  async getSearchStats(): Promise<Record<string, any>> {
+    const res = await fetchWithAuth(`${API_BASE}/search/stats`);
+    if (!res.ok) throw new Error('Failed to get search stats');
+    return res.json();
+  },
+
   // Entity Trail (cross-camera tracking)
   async getEntityTrail(entityType: string, entityId: string, hours?: number): Promise<{ entity_type: string; entity_id: string; trail: TrailEntry[] }> {
     const query = hours ? `?hours=${hours}` : '';
