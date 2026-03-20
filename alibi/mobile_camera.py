@@ -49,8 +49,8 @@ MOBILE_LOGIN_HTML = """
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f1117;
             min-height: 100vh;
             display: flex;
             align-items: center;
@@ -58,155 +58,137 @@ MOBILE_LOGIN_HTML = """
             padding: 20px;
         }
         .login-container {
-            background: white;
-            border-radius: 20px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 16px;
             padding: 40px 30px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
             width: 100%;
-            max-width: 400px;
+            max-width: 380px;
         }
         h1 {
             text-align: center;
-            color: #333;
-            margin-bottom: 10px;
-            font-size: 28px;
+            color: #fff;
+            margin-bottom: 6px;
+            font-size: 24px;
+            font-weight: 700;
+            letter-spacing: -0.3px;
         }
         .subtitle {
             text-align: center;
-            color: #666;
-            margin-bottom: 30px;
-            font-size: 14px;
+            color: rgba(255,255,255,0.4);
+            margin-bottom: 28px;
+            font-size: 13px;
         }
-        .form-group {
-            margin-bottom: 20px;
-        }
+        .form-group { margin-bottom: 18px; }
         label {
             display: block;
-            color: #555;
-            margin-bottom: 8px;
+            color: rgba(255,255,255,0.5);
+            margin-bottom: 6px;
             font-weight: 500;
-            font-size: 14px;
+            font-size: 13px;
         }
         input {
             width: 100%;
-            padding: 14px;
-            border: 2px solid #e0e0e0;
-            border-radius: 10px;
-            font-size: 16px;
-            transition: all 0.3s;
+            padding: 12px 14px;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px;
+            font-size: 15px;
+            color: #fff;
+            transition: border-color 0.15s;
         }
         input:focus {
             outline: none;
-            border-color: #667eea;
+            border-color: rgba(99, 102, 241, 0.5);
         }
-        button {
+        input::placeholder { color: rgba(255,255,255,0.2); }
+        .login-btn {
             width: 100%;
-            padding: 16px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 12px;
+            background: rgba(99, 102, 241, 0.8);
             color: white;
             border: none;
-            border-radius: 10px;
-            font-size: 18px;
+            border-radius: 8px;
+            font-size: 15px;
             font-weight: 600;
             cursor: pointer;
-            transition: transform 0.2s;
+            transition: background 0.15s;
+            margin-top: 4px;
         }
-        button:active {
-            transform: scale(0.98);
-        }
-        button:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-        }
+        .login-btn:hover { background: rgba(99, 102, 241, 1); }
+        .login-btn:active { transform: scale(0.98); }
+        .login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .error {
-            background: #fee;
-            border: 1px solid #fcc;
-            color: #c33;
-            padding: 12px;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            color: #f87171;
+            padding: 10px 14px;
             border-radius: 8px;
-            margin-bottom: 20px;
-            font-size: 14px;
-        }
-        .demo-creds {
-            background: #f0f7ff;
-            border: 1px solid #b3d9ff;
-            padding: 12px;
-            border-radius: 8px;
-            margin-top: 20px;
+            margin-bottom: 16px;
             font-size: 13px;
-        }
-        .demo-creds strong {
-            color: #0066cc;
         }
         .loading {
             text-align: center;
-            color: #667eea;
+            color: rgba(99, 102, 241, 0.7);
             margin-top: 10px;
+            font-size: 13px;
         }
     </style>
 </head>
 <body>
     <div class="login-container">
-        <h1>🎥 Alibi</h1>
-        <p class="subtitle">Mobile Camera Login</p>
-        
+        <h1>Alibi</h1>
+        <p class="subtitle">Sign in to continue</p>
+
         <div id="error" class="error" style="display: none;"></div>
-        
+
         <form id="loginForm">
             <div class="form-group">
                 <label for="username">Username</label>
-                <input type="text" id="username" name="username" required autofocus>
+                <input type="text" id="username" name="username" placeholder="Enter username" required autofocus>
             </div>
-            
             <div class="form-group">
                 <label for="password">Password</label>
-                <input type="password" id="password" name="password" required>
+                <input type="password" id="password" name="password" placeholder="Enter password" required>
             </div>
-            
-            <button type="submit" id="loginBtn">Login</button>
-            <div id="loading" class="loading" style="display: none;">Logging in...</div>
+            <button type="submit" id="loginBtn" class="login-btn">Sign In</button>
+            <div id="loading" class="loading" style="display: none;">Signing in...</div>
         </form>
-        
-        <div class="demo-creds">
-            <strong>Credentials:</strong><br>
-            Username: <code>admin</code><br>
-            Password: <code>admin123</code>
-        </div>
     </div>
-    
+
     <script>
         const form = document.getElementById('loginForm');
         const errorDiv = document.getElementById('error');
         const loginBtn = document.getElementById('loginBtn');
         const loading = document.getElementById('loading');
-        
+
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
-            
             const username = document.getElementById('username').value;
             const password = document.getElementById('password').value;
-            
+
             errorDiv.style.display = 'none';
             loginBtn.disabled = true;
             loading.style.display = 'block';
-            
+
             try {
                 const response = await fetch('/auth/login', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ username, password })
                 });
-                
+
                 if (response.ok) {
                     const data = await response.json();
-                    // Store token in localStorage
                     localStorage.setItem('alibi_token', data.access_token);
-                    localStorage.setItem('alibi_user', JSON.stringify(data.user));
-                    
-                    // Redirect to enhanced security camera
-                    window.location.href = '/camera/secure-stream';
+                    // Store user info (API returns flat: username, role, full_name)
+                    localStorage.setItem('alibi_user', JSON.stringify({
+                        username: data.username,
+                        role: data.role,
+                        full_name: data.full_name
+                    }));
+                    // Redirect to home dashboard
+                    window.location.href = '/';
                 } else {
                     const error = await response.json();
                     errorDiv.textContent = error.detail || 'Login failed';
@@ -619,6 +601,11 @@ async def mobile_camera_stream_page():
 </body>
 </html>
     """
+    from alibi.alibi_nav import build_nav
+    nav_css, nav_html, nav_js = build_nav(active_page="camera")
+    html_content = html_content.replace("</style>", nav_css + "\n    </style>", 1)
+    html_content = html_content.replace("<body>", "<body>\n" + nav_html, 1)
+    html_content = html_content.replace("</body>", nav_js + "\n</body>", 1)
     return HTMLResponse(content=html_content)
 
 

@@ -2,8 +2,11 @@
 Mobile Home Page - Main entry point for iPhone/mobile access
 Provides access to all Alibi features from a single mobile-friendly page
 """
+from alibi.alibi_nav import build_nav
 
-MOBILE_HOME_HTML = """
+_nav_css, _nav_html, _nav_js = build_nav(active_page="home")
+
+MOBILE_HOME_HTML = f"""
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -11,317 +14,223 @@ MOBILE_HOME_HTML = """
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <title>Alibi Mobile</title>
+    <title>Alibi</title>
     <style>
-        * {
+        {_nav_css}
+
+        * {{
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-        }
-        
-        body {
+        }}
+
+        body {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #0f1117;
             min-height: 100vh;
-            padding: 20px;
-        }
-        
-        .container {
-            max-width: 500px;
+            color: #e5e7eb;
+        }}
+
+        .container {{
+            max-width: 720px;
             margin: 0 auto;
-        }
-        
-        .header {
-            text-align: center;
-            color: white;
-            padding: 30px 0;
-        }
-        
-        .header h1 {
-            font-size: 36px;
-            margin-bottom: 10px;
-        }
-        
-        .header .subtitle {
-            font-size: 16px;
-            opacity: 0.9;
-        }
-        
-        .user-info {
-            background: rgba(255,255,255,0.15);
-            backdrop-filter: blur(10px);
-            border-radius: 15px;
-            padding: 15px 20px;
-            margin-bottom: 20px;
-            color: white;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        
-        .user-info .name {
+            padding: 24px 16px 40px;
+        }}
+
+        .page-title {{
+            font-size: 22px;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 24px;
+        }}
+
+        .section-title {{
+            color: rgba(255,255,255,0.45);
+            font-size: 11px;
             font-weight: 600;
-        }
-        
-        .user-info .role {
-            background: rgba(255,255,255,0.2);
-            padding: 4px 12px;
-            border-radius: 12px;
-            font-size: 12px;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        
-        .logout-btn {
-            background: rgba(255,255,255,0.2);
-            border: none;
-            color: white;
-            padding: 8px 16px;
-            border-radius: 12px;
-            font-size: 14px;
-            cursor: pointer;
-        }
-        
-        .card-grid {
+            letter-spacing: 1.5px;
+            margin: 28px 0 12px 0;
+        }}
+
+        .card-grid {{
             display: grid;
             grid-template-columns: 1fr;
-            gap: 15px;
-        }
-        
-        .card {
-            background: white;
-            border-radius: 20px;
-            padding: 25px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            gap: 10px;
+        }}
+
+        @media (min-width: 500px) {{
+            .card-grid {{ grid-template-columns: 1fr 1fr; }}
+        }}
+
+        .card {{
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 12px;
+            padding: 18px 20px;
             text-decoration: none;
             color: inherit;
             display: flex;
             align-items: center;
-            gap: 20px;
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-        
-        .card:active {
+            gap: 16px;
+            transition: all 0.15s ease;
+        }}
+
+        .card:hover {{
+            background: rgba(255,255,255,0.07);
+            border-color: rgba(99, 102, 241, 0.25);
+        }}
+
+        .card:active {{
             transform: scale(0.98);
-            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
-        }
-        
-        .card-icon {
-            font-size: 40px;
-            width: 60px;
-            height: 60px;
+        }}
+
+        .card-icon {{
+            font-size: 24px;
+            width: 44px;
+            height: 44px;
             display: flex;
             align-items: center;
             justify-content: center;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border-radius: 15px;
+            background: rgba(99, 102, 241, 0.12);
+            border-radius: 10px;
             flex-shrink: 0;
-        }
-        
-        .card-content {
+        }}
+
+        .card-content {{
             flex: 1;
-        }
-        
-        .card-title {
-            font-size: 18px;
+            min-width: 0;
+        }}
+
+        .card-title {{
+            font-size: 15px;
             font-weight: 600;
-            margin-bottom: 5px;
-            color: #333;
-        }
-        
-        .card-description {
-            font-size: 14px;
-            color: #666;
-            line-height: 1.4;
-        }
-        
-        .card-badge {
-            background: #ef4444;
-            color: white;
-            padding: 4px 8px;
-            border-radius: 8px;
-            font-size: 11px;
-            font-weight: 600;
-        }
-        
-        .featured {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-        }
-        
-        .featured .card-icon {
-            background: rgba(255,255,255,0.2);
-        }
-        
-        .featured .card-title,
-        .featured .card-description {
-            color: white;
-        }
-        
-        .section-title {
-            color: white;
-            font-size: 14px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            margin: 30px 0 15px 0;
-            opacity: 0.9;
-        }
-        
-        .footer {
-            text-align: center;
-            color: white;
-            padding: 30px 0;
+            color: #f3f4f6;
+            margin-bottom: 2px;
+        }}
+
+        .card-description {{
             font-size: 12px;
-            opacity: 0.7;
-        }
-        
-        .admin-only {
-            position: relative;
-        }
-        
-        .admin-only::after {
-            content: 'ADMIN';
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            background: #ef4444;
-            color: white;
-            padding: 4px 8px;
-            border-radius: 6px;
-            font-size: 10px;
-            font-weight: 600;
-        }
-        
-        .hidden {
-            display: none;
-        }
+            color: rgba(255,255,255,0.4);
+            line-height: 1.4;
+        }}
+
+        .featured {{
+            background: rgba(99, 102, 241, 0.12);
+            border-color: rgba(99, 102, 241, 0.2);
+        }}
+
+        .featured:hover {{
+            background: rgba(99, 102, 241, 0.18);
+            border-color: rgba(99, 102, 241, 0.35);
+        }}
+
+        .featured .card-icon {{
+            background: rgba(99, 102, 241, 0.25);
+        }}
+
+        .footer {{
+            text-align: center;
+            color: rgba(255,255,255,0.2);
+            padding: 40px 0 20px;
+            font-size: 11px;
+        }}
     </style>
 </head>
 <body>
+    {_nav_html}
+
     <div class="container">
-        <div class="header">
-            <h1>🎥 Alibi</h1>
-            <p class="subtitle">Mobile Command Center</p>
-        </div>
-        
-        <div class="user-info">
-            <div>
-                <div class="name" id="userName">User</div>
-                <div class="role" id="userRole"></div>
-            </div>
-            <button class="logout-btn" onclick="logout()">Logout</button>
-        </div>
-        
-        <!-- Featured: Enhanced Security Camera -->
-        <a href="/camera/secure-stream" class="card featured">
-            <div class="card-icon">🔒</div>
-            <div class="card-content">
-                <div class="card-title">Security Camera</div>
-                <div class="card-description">Real-time threat detection with red flag capability</div>
-            </div>
-        </a>
-        
-        <div class="section-title">📊 Operations</div>
-        
+        <div class="page-title">Dashboard</div>
+
         <div class="card-grid">
+            <a href="/camera/secure-stream" class="card featured" style="grid-column: 1 / -1;">
+                <div class="card-icon">&#128274;</div>
+                <div class="card-content">
+                    <div class="card-title">Security Camera</div>
+                    <div class="card-description">Live feed with AI threat detection, plate & face recognition</div>
+                </div>
+            </a>
+        </div>
+
+        <div class="section-title">Operations</div>
+
+        <div class="card-grid">
+            <a href="javascript:void(0)" onclick="alibiOpenConsole('/')" class="card">
+                <div class="card-icon">&#128202;</div>
+                <div class="card-content">
+                    <div class="card-title">Control Room</div>
+                    <div class="card-description">Incidents, cameras, metrics, reports</div>
+                </div>
+            </a>
+
             <a href="/camera/history" class="card">
-                <div class="card-icon">📸💥</div>
+                <div class="card-icon">&#128247;</div>
                 <div class="card-content">
                     <div class="card-title">Camera History</div>
-                    <div class="card-description">Browse analyzed snapshots and AI descriptions</div>
+                    <div class="card-description">Snapshots and AI descriptions</div>
                 </div>
             </a>
-            
+
             <a href="/camera/insights" class="card">
-                <div class="card-icon">🧠</div>
+                <div class="card-icon">&#129504;</div>
                 <div class="card-content">
-                    <div class="card-title">Insights & Reports</div>
-                    <div class="card-description">AI-powered insights from camera footage</div>
+                    <div class="card-title">Insights</div>
+                    <div class="card-description">AI-powered analysis and patterns</div>
                 </div>
             </a>
-            
-            <a href="/camera/training" class="card">
-                <div class="card-icon">🎓</div>
+
+            <a href="javascript:void(0)" onclick="alibiOpenConsole('/watchlist')" class="card">
+                <div class="card-icon">&#128100;</div>
                 <div class="card-content">
-                    <div class="card-title">Training Data</div>
-                    <div class="card-description">Improve AI vision for South African context</div>
+                    <div class="card-title">Watchlist</div>
+                    <div class="card-description">Face recognition management</div>
+                </div>
+            </a>
+
+            <a href="javascript:void(0)" onclick="alibiOpenConsole('/vehicle-search')" class="card">
+                <div class="card-icon">&#128663;</div>
+                <div class="card-content">
+                    <div class="card-title">Vehicle Search</div>
+                    <div class="card-description">Plate sightings and hotlist</div>
+                </div>
+            </a>
+
+            <a href="/camera/training" class="card">
+                <div class="card-icon">&#127891;</div>
+                <div class="card-content">
+                    <div class="card-title">Training</div>
+                    <div class="card-description">Improve AI vision accuracy</div>
                 </div>
             </a>
         </div>
-        
-        <div class="section-title">⚙️ Administration</div>
-        
+
+        <div class="section-title">Administration</div>
+
         <div class="card-grid">
             <a href="/docs" class="card">
-                <div class="card-icon">📚</div>
+                <div class="card-icon">&#128218;</div>
                 <div class="card-content">
                     <div class="card-title">API Documentation</div>
-                    <div class="card-description">Interactive API testing and docs</div>
+                    <div class="card-description">Interactive API testing</div>
+                </div>
+            </a>
+
+            <a href="javascript:void(0)" onclick="alibiOpenConsole('/settings')" class="card">
+                <div class="card-icon">&#9881;</div>
+                <div class="card-content">
+                    <div class="card-title">Settings</div>
+                    <div class="card-description">System configuration (admin)</div>
                 </div>
             </a>
         </div>
-        
+
         <div class="footer">
-            Alibi Police Oversight System<br>
-            Namibia Pilot Deployment 2026
+            Alibi Police Oversight System &middot; Namibia 2026
         </div>
     </div>
-    
-    <script>
-        // Check if logged in
-        const token = localStorage.getItem('alibi_token');
-        const user = localStorage.getItem('alibi_user');
-        
-        if (!token) {
-            // Redirect to login
-            window.location.href = '/camera/login';
-        } else {
-            // Display user info
-            let userData = null;
-            
-            try {
-                // Safely parse user data
-                if (user && user !== 'undefined' && user !== 'null') {
-                    userData = JSON.parse(user);
-                }
-            } catch (e) {
-                console.error('Error parsing user data:', e);
-                // Clear corrupted data
-                localStorage.removeItem('alibi_user');
-            }
-            
-            // Update UI with user data
-            if (userData && userData.username) {
-                document.getElementById('userName').textContent = userData.full_name || userData.username;
-                document.getElementById('userRole').textContent = userData.role || 'user';
-            } else {
-                // Default values if no valid data
-                document.getElementById('userName').textContent = 'User';
-                document.getElementById('userRole').textContent = 'guest';
-            }
-        }
-        
-        function logout() {
-            localStorage.removeItem('alibi_token');
-            localStorage.removeItem('alibi_user');
-            window.location.href = '/camera/login';
-        }
-        
-        function openConsole(path) {
-            // Build console URL with current host but port 5173
-            const host = window.location.hostname;
-            const consoleUrl = `http://${host}:5173${path}`;
-            window.location.href = consoleUrl;
-        }
-        
-        // Add to home screen prompt
-        let deferredPrompt;
-        window.addEventListener('beforeinstallprompt', (e) => {
-            e.preventDefault();
-            deferredPrompt = e;
-        });
-    </script>
+
+    {_nav_js}
 </body>
 </html>
 """

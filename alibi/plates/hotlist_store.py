@@ -11,6 +11,8 @@ from datetime import datetime
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass, asdict
 
+from alibi.encryption import get_encrypted_writer
+
 
 @dataclass
 class HotlistEntry:
@@ -57,12 +59,13 @@ class HotlistStore:
     def __init__(self, storage_path: str = "alibi/data/hotlist_plates.jsonl"):
         self.storage_path = Path(storage_path)
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
-        
+        self._crypto = get_encrypted_writer()
+
         # Create file if it doesn't exist
         if not self.storage_path.exists():
             self.storage_path.touch()
             print(f"[HotlistStore] Created new hotlist file: {self.storage_path}")
-        
+
         # Cache for fast lookups
         self._cache: Optional[Dict[str, HotlistEntry]] = None
         self._cache_time: Optional[float] = None
@@ -70,13 +73,12 @@ class HotlistStore:
     
     def add_entry(self, entry: HotlistEntry) -> None:
         """
-        Add entry to hotlist.
-        
+        Add entry to hotlist (encrypted at rest).
+
         Args:
             entry: HotlistEntry to add
         """
-        with open(self.storage_path, 'a') as f:
-            f.write(json.dumps(entry.to_dict()) + '\n')
+        self._crypto.write_line(self.storage_path, entry.to_dict())
         
         # Invalidate cache
         self._cache = None
@@ -86,30 +88,24 @@ class HotlistStore:
     def load_all(self, use_cache: bool = True) -> List[HotlistEntry]:
         """
         Load all hotlist entries.
-        
+
         Args:
             use_cache: Whether to use cached entries
-            
+
         Returns:
             List of HotlistEntry objects
         """
         entries = []
-        
+
         if not self.storage_path.exists():
             return entries
-        
-        with open(self.storage_path, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                
-                try:
-                    data = json.loads(line)
-                    entries.append(HotlistEntry.from_dict(data))
-                except Exception as e:
-                    print(f"[HotlistStore] Error loading entry: {e}")
-        
+
+        for data in self._crypto.read_lines(self.storage_path):
+            try:
+                entries.append(HotlistEntry.from_dict(data))
+            except Exception as e:
+                print(f"[HotlistStore] Error loading entry: {e}")
+
         return entries
     
     def get_by_plate(self, plate: str, use_cache: bool = True) -> Optional[HotlistEntry]:

@@ -47,11 +47,18 @@ class AlibiSettings:
                 "min_confidence_for_action": 0.80,
                 "high_severity_threshold": 4
             },
+            "encryption": {
+                "enabled": True
+            },
             "llm": {
                 "enabled": True,
+                "provider": "auto",
                 "model": "gpt-4o-mini",
                 "max_tokens": 500,
-                "temperature": 0.3
+                "temperature": 0.3,
+                "ollama_url": "http://localhost:11434",
+                "ollama_vision_model": "llama3.2-vision",
+                "ollama_text_model": "llama3.2"
             },
             "api": {
                 "port": 8000,

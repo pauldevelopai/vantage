@@ -15,6 +15,8 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
 import hashlib
 
+from alibi.encryption import get_encrypted_writer
+
 # Storage files
 RED_FLAGS_FILE = Path("alibi/data/red_flags.jsonl")
 PEOPLE_TAGS_FILE = Path("alibi/data/people_tags.jsonl")
@@ -104,13 +106,13 @@ class IntelligenceStore:
         self.people_tags_file = PEOPLE_TAGS_FILE
         self.place_tags_file = PLACE_TAGS_FILE
         self.intelligence_notes_file = INTELLIGENCE_NOTES_FILE
+        self._crypto = get_encrypted_writer()
     
     # RED FLAGS
     
     def add_red_flag(self, flag: RedFlag):
-        """Add a red flag"""
-        with open(self.red_flags_file, 'a') as f:
-            f.write(json.dumps(asdict(flag)) + '\n')
+        """Add a red flag (encrypted at rest)"""
+        self._crypto.write_line(self.red_flags_file, asdict(flag))
     
     def get_red_flags(self, 
                       resolved: Optional[bool] = None,
@@ -122,23 +124,21 @@ class IntelligenceStore:
             return []
         
         flags = []
-        with open(self.red_flags_file, 'r') as f:
-            for line in f:
-                try:
-                    data = json.loads(line)
-                    flag = RedFlag(**data)
-                    
-                    # Apply filters
-                    if resolved is not None and flag.resolved != resolved:
-                        continue
-                    if severity and flag.severity != severity:
-                        continue
-                    if category and flag.category != category:
-                        continue
-                    
-                    flags.append(flag)
-                except:
+        for data in self._crypto.read_lines(self.red_flags_file):
+            try:
+                flag = RedFlag(**data)
+
+                # Apply filters
+                if resolved is not None and flag.resolved != resolved:
                     continue
+                if severity and flag.severity != severity:
+                    continue
+                if category and flag.category != category:
+                    continue
+
+                flags.append(flag)
+            except:
+                continue
         
         # Sort by timestamp, most recent first
         flags.sort(key=lambda x: x.timestamp, reverse=True)
@@ -147,30 +147,27 @@ class IntelligenceStore:
     def resolve_red_flag(self, flag_id: str, resolved_by: str, notes: str):
         """Mark a red flag as resolved"""
         flags = []
-        with open(self.red_flags_file, 'r') as f:
-            for line in f:
-                try:
-                    data = json.loads(line)
-                    if data['flag_id'] == flag_id:
-                        data['resolved'] = True
-                        data['resolved_by'] = resolved_by
-                        data['resolved_at'] = datetime.utcnow().isoformat()
-                        data['resolution_notes'] = notes
-                    flags.append(data)
-                except:
-                    continue
-        
-        # Rewrite file
+        for data in self._crypto.read_lines(self.red_flags_file):
+            try:
+                if data['flag_id'] == flag_id:
+                    data['resolved'] = True
+                    data['resolved_by'] = resolved_by
+                    data['resolved_at'] = datetime.utcnow().isoformat()
+                    data['resolution_notes'] = notes
+                flags.append(data)
+            except:
+                continue
+
+        # Rewrite file (encrypted)
         with open(self.red_flags_file, 'w') as f:
             for flag_data in flags:
-                f.write(json.dumps(flag_data) + '\n')
+                f.write(self._crypto.encrypt_line(flag_data) + '\n')
     
     # PEOPLE TAGS
     
     def add_person_tag(self, person: PersonTag):
-        """Add a person tag"""
-        with open(self.people_tags_file, 'a') as f:
-            f.write(json.dumps(asdict(person)) + '\n')
+        """Add a person tag (encrypted at rest)"""
+        self._crypto.write_line(self.people_tags_file, asdict(person))
     
     def get_person_tags(self, limit: int = 100) -> List[PersonTag]:
         """Get all person tags"""
@@ -178,13 +175,11 @@ class IntelligenceStore:
             return []
         
         people = []
-        with open(self.people_tags_file, 'r') as f:
-            for line in f:
-                try:
-                    data = json.loads(line)
-                    people.append(PersonTag(**data))
-                except:
-                    continue
+        for data in self._crypto.read_lines(self.people_tags_file):
+            try:
+                people.append(PersonTag(**data))
+            except:
+                continue
         
         # Sort by last seen, most recent first
         people.sort(key=lambda x: x.last_seen, reverse=True)
@@ -193,27 +188,24 @@ class IntelligenceStore:
     def update_person_tag(self, person_tag_id: str, updates: Dict):
         """Update a person tag"""
         people = []
-        with open(self.people_tags_file, 'r') as f:
-            for line in f:
-                try:
-                    data = json.loads(line)
-                    if data['person_tag_id'] == person_tag_id:
-                        data.update(updates)
-                    people.append(data)
-                except:
-                    continue
-        
-        # Rewrite file
+        for data in self._crypto.read_lines(self.people_tags_file):
+            try:
+                if data['person_tag_id'] == person_tag_id:
+                    data.update(updates)
+                people.append(data)
+            except:
+                continue
+
+        # Rewrite file (encrypted)
         with open(self.people_tags_file, 'w') as f:
             for person_data in people:
-                f.write(json.dumps(person_data) + '\n')
+                f.write(self._crypto.encrypt_line(person_data) + '\n')
     
     # PLACE TAGS
     
     def add_place_tag(self, place: PlaceTag):
-        """Add a place tag"""
-        with open(self.place_tags_file, 'a') as f:
-            f.write(json.dumps(asdict(place)) + '\n')
+        """Add a place tag (encrypted at rest)"""
+        self._crypto.write_line(self.place_tags_file, asdict(place))
     
     def get_place_tags(self, risk_level: Optional[str] = None, limit: int = 100) -> List[PlaceTag]:
         """Get place tags"""
@@ -221,18 +213,16 @@ class IntelligenceStore:
             return []
         
         places = []
-        with open(self.place_tags_file, 'r') as f:
-            for line in f:
-                try:
-                    data = json.loads(line)
-                    place = PlaceTag(**data)
-                    
-                    if risk_level and place.risk_level != risk_level:
-                        continue
-                    
-                    places.append(place)
-                except:
+        for data in self._crypto.read_lines(self.place_tags_file):
+            try:
+                place = PlaceTag(**data)
+
+                if risk_level and place.risk_level != risk_level:
                     continue
+
+                places.append(place)
+            except:
+                continue
         
         # Sort by number of incidents, highest first
         places.sort(key=lambda x: len(x.incidents), reverse=True)
@@ -241,9 +231,8 @@ class IntelligenceStore:
     # INTELLIGENCE NOTES
     
     def add_intelligence_note(self, note: IntelligenceNote):
-        """Add an intelligence note"""
-        with open(self.intelligence_notes_file, 'a') as f:
-            f.write(json.dumps(asdict(note)) + '\n')
+        """Add an intelligence note (encrypted at rest)"""
+        self._crypto.write_line(self.intelligence_notes_file, asdict(note))
     
     def get_intelligence_notes(self, 
                                category: Optional[str] = None,
@@ -254,20 +243,18 @@ class IntelligenceStore:
             return []
         
         notes = []
-        with open(self.intelligence_notes_file, 'r') as f:
-            for line in f:
-                try:
-                    data = json.loads(line)
-                    note = IntelligenceNote(**data)
-                    
-                    if category and note.category != category:
-                        continue
-                    if actionable is not None and note.actionable != actionable:
-                        continue
-                    
-                    notes.append(note)
-                except:
+        for data in self._crypto.read_lines(self.intelligence_notes_file):
+            try:
+                note = IntelligenceNote(**data)
+
+                if category and note.category != category:
                     continue
+                if actionable is not None and note.actionable != actionable:
+                    continue
+
+                notes.append(note)
+            except:
+                continue
         
         # Sort by timestamp, most recent first
         notes.sort(key=lambda x: x.timestamp, reverse=True)
