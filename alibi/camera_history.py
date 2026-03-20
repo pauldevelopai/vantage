@@ -246,9 +246,8 @@ CAMERA_HISTORY_HTML = """
 </head>
 <body>
     <div class="header">
-        <a href="/mobile" class="back-btn">← Back</a>
-        <h1>📸 Camera History</h1>
-        <button class="cleanup-btn" onclick="cleanupOld()">🗑️ Cleanup</button>
+        <h1>Camera History</h1>
+        <button class="cleanup-btn" onclick="cleanupOld()">Cleanup</button>
     </div>
     
     <div class="stats" id="stats">

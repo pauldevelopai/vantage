@@ -29,7 +29,13 @@ intel_store = get_intelligence_store()
 @router.get("/insights", response_class=HTMLResponse)
 async def insights_page():
     """Insights & Reports page - AI analysis of camera history"""
-    return HTMLResponse(content=INSIGHTS_HTML)
+    from alibi.alibi_nav import build_nav
+    nav_css, nav_html, nav_js = build_nav(active_page="insights")
+    html = INSIGHTS_HTML
+    html = html.replace("</style>", nav_css + "\n    </style>", 1)
+    html = html.replace("<body>", "<body>\n" + nav_html, 1)
+    html = html.replace("</body>", nav_js + "\n</body>", 1)
+    return HTMLResponse(content=html)
 
 
 @router.get("/insights/summary")
@@ -726,8 +732,6 @@ INSIGHTS_HTML = """
 </head>
 <body>
     <div class="container">
-        <a href="/" class="back-btn">← Back to Home</a>
-        
         <div class="header">
             <h1>🧠 Insights & Reports</h1>
             <p class="subtitle">AI-powered analysis of camera footage</p>

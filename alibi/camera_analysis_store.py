@@ -19,6 +19,8 @@ from dataclasses import dataclass, asdict
 import os
 import hashlib
 
+from alibi.encryption import get_encrypted_writer
+
 
 @dataclass
 class CameraAnalysis:
@@ -57,15 +59,16 @@ class CameraAnalysisStore:
                  retention_days: int = 7):
         self.store_file = Path(store_file)
         self.store_file.parent.mkdir(parents=True, exist_ok=True)
-        
+        self._crypto = get_encrypted_writer()
+
         # Snapshot storage
         self.snapshots_dir = Path(snapshots_dir)
         self.snapshots_dir.mkdir(parents=True, exist_ok=True)
         (self.snapshots_dir / "thumbnails").mkdir(exist_ok=True)
-        
+
         # Retention policy
         self.retention_days = retention_days
-        
+
         # Create file if it doesn't exist
         if not self.store_file.exists():
             self.store_file.touch()
@@ -79,22 +82,28 @@ class CameraAnalysisStore:
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         filename = f"{timestamp}_{analysis_id}.jpg"
         
-        # Save full snapshot
-        snapshot_path = self.snapshots_dir / filename
-        cv2.imwrite(str(snapshot_path), frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-        
-        # Create thumbnail (max 400px width)
+        # Cap resolution to 1280px wide to save disk space
         height, width = frame.shape[:2]
-        if width > 400:
-            scale = 400 / width
-            new_width = 400
+        if width > 1280:
+            scale = 1280 / width
+            frame = cv2.resize(frame, (1280, int(height * scale)))
+            height, width = frame.shape[:2]
+
+        # Save full snapshot (quality 70 — good visual fidelity, ~40% smaller than 85)
+        snapshot_path = self.snapshots_dir / filename
+        cv2.imwrite(str(snapshot_path), frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+
+        # Create thumbnail (max 320px width, quality 50)
+        if width > 320:
+            scale = 320 / width
+            new_width = 320
             new_height = int(height * scale)
             thumbnail = cv2.resize(frame, (new_width, new_height))
         else:
             thumbnail = frame
-        
+
         thumbnail_path = self.snapshots_dir / "thumbnails" / filename
-        cv2.imwrite(str(thumbnail_path), thumbnail, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        cv2.imwrite(str(thumbnail_path), thumbnail, [cv2.IMWRITE_JPEG_QUALITY, 50])
         
         return (f"/camera_snapshots/{filename}", f"/camera_snapshots/thumbnails/{filename}")
     
@@ -148,10 +157,8 @@ class CameraAnalysisStore:
         return kept
     
     def add_analysis(self, analysis: CameraAnalysis) -> None:
-        """Add a camera analysis record"""
-        # Save to store
-        with open(self.store_file, 'a') as f:
-            f.write(json.dumps(asdict(analysis)) + '\n')
+        """Add a camera analysis record (encrypted at rest)"""
+        self._crypto.write_line(self.store_file, asdict(analysis))
         
         # Automatically collect for training if security-relevant
         try:
@@ -183,16 +190,15 @@ class CameraAnalysisStore:
         """Get recent analysis records"""
         cutoff = datetime.utcnow() - timedelta(hours=hours)
         results = []
-        
-        with open(self.store_file, 'r') as f:
-            for line in f:
-                if line.strip():
-                    data = json.loads(line)
-                    record_time = datetime.fromisoformat(data['timestamp'].replace('Z', '+00:00'))
-                    
-                    if record_time >= cutoff:
-                        results.append(CameraAnalysis(**data))
-        
+
+        for data in self._crypto.read_lines(self.store_file):
+            try:
+                record_time = datetime.fromisoformat(data['timestamp'].replace('Z', '+00:00'))
+                if record_time >= cutoff:
+                    results.append(CameraAnalysis(**data))
+            except (KeyError, ValueError):
+                continue
+
         # Return most recent first
         results.sort(key=lambda x: x.timestamp, reverse=True)
         return results[:limit]
@@ -200,16 +206,15 @@ class CameraAnalysisStore:
     def get_by_date_range(self, start: datetime, end: datetime) -> List[CameraAnalysis]:
         """Get analysis records in a date range"""
         results = []
-        
-        with open(self.store_file, 'r') as f:
-            for line in f:
-                if line.strip():
-                    data = json.loads(line)
-                    record_time = datetime.fromisoformat(data['timestamp'].replace('Z', '+00:00'))
-                    
-                    if start <= record_time <= end:
-                        results.append(CameraAnalysis(**data))
-        
+
+        for data in self._crypto.read_lines(self.store_file):
+            try:
+                record_time = datetime.fromisoformat(data['timestamp'].replace('Z', '+00:00'))
+                if start <= record_time <= end:
+                    results.append(CameraAnalysis(**data))
+            except (KeyError, ValueError):
+                continue
+
         return results
     
     def get_safety_concerns(self, hours: int = 24) -> List[CameraAnalysis]:

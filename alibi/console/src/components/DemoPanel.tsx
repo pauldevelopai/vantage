@@ -91,11 +91,11 @@ export const DemoPanel: React.FC = () => {
   };
 
   return (
-    <div className="fixed right-0 top-16 h-[calc(100vh-4rem)] z-40">
+    <div className="fixed right-0 top-[52px] h-[calc(100vh-52px)] z-40">
       {/* Toggle button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="absolute left-0 top-4 -translate-x-full bg-blue-600 text-white px-3 py-2 rounded-l-lg shadow-lg hover:bg-blue-700 transition-colors"
+        className="absolute left-0 top-20 -translate-x-full bg-blue-600 text-white px-3 py-2 rounded-l-lg shadow-lg hover:bg-blue-700 transition-colors text-xs"
       >
         {isOpen ? '→' : '← Demo'}
       </button>

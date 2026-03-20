@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 import base64
 import json
+import requests
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 import os
@@ -28,14 +29,27 @@ class SceneAnalyzer:
     def __init__(self, mode: str = "auto"):
         """
         Initialize scene analyzer.
-        
+
         Args:
-            mode: "openai", "google", "local", or "auto" (try in order)
+            mode: "openai", "google", "ollama", "local", or "auto" (try in order)
+                  In auto mode, prefers local Ollama over cloud APIs for data sovereignty.
         """
         self.mode = mode
         self.openai_available = False
         self.google_available = False
-        
+        self.ollama_available = False
+        self.ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
+        self.ollama_vision_model = os.getenv("OLLAMA_VISION_MODEL", "llama3.2-vision")
+
+        # Try Ollama (local, data never leaves the network)
+        try:
+            resp = requests.get(f"{self.ollama_url}/api/tags", timeout=2)
+            if resp.status_code == 200:
+                self.ollama_available = True
+                print(f"[SceneAnalyzer] Ollama available at {self.ollama_url} (local AI — data stays in-country)")
+        except Exception:
+            pass
+
         # Try to import OpenAI
         try:
             import openai
@@ -43,22 +57,21 @@ class SceneAnalyzer:
             if self.openai_api_key:
                 self.openai_client = openai.OpenAI(api_key=self.openai_api_key)
                 self.openai_available = True
-                print("[SceneAnalyzer] OpenAI Vision API available")
+                print("[SceneAnalyzer] OpenAI Vision API available (cloud — data leaves network)")
         except ImportError:
             pass
-        
+
         # Try to import Google Vision
         try:
             from google.cloud import vision
             self.google_client = vision.ImageAnnotatorClient()
             self.google_available = True
-            print("[SceneAnalyzer] Google Cloud Vision available")
+            print("[SceneAnalyzer] Google Cloud Vision available (cloud — data leaves network)")
         except:
             pass
-        
-        # Fallback to basic CV
-        if not self.openai_available and not self.google_available:
-            print("[SceneAnalyzer] Using basic computer vision (install OpenAI or Google Cloud for better results)")
+
+        if not self.ollama_available and not self.openai_available and not self.google_available:
+            print("[SceneAnalyzer] Using basic computer vision (install Ollama for local AI, or OpenAI for cloud)")
     
     def analyze_frame(self, frame: np.ndarray, prompt: str = "describe_scene") -> Dict[str, Any]:
         """
@@ -79,12 +92,17 @@ class SceneAnalyzer:
             }
         """
         if self.mode == "auto":
-            if self.openai_available:
+            # Prefer local Ollama (data stays in-country) over cloud APIs
+            if self.ollama_available:
+                return self._analyze_with_ollama(frame, prompt)
+            elif self.openai_available:
                 return self._analyze_with_openai(frame, prompt)
             elif self.google_available:
                 return self._analyze_with_google(frame, prompt)
             else:
                 return self._analyze_with_basic_cv(frame, prompt)
+        elif self.mode == "ollama":
+            return self._analyze_with_ollama(frame, prompt)
         elif self.mode == "openai":
             return self._analyze_with_openai(frame, prompt)
         elif self.mode == "google":
@@ -92,6 +110,83 @@ class SceneAnalyzer:
         else:
             return self._analyze_with_basic_cv(frame, prompt)
     
+    def _analyze_with_ollama(self, frame: np.ndarray, prompt: str) -> Dict[str, Any]:
+        """Analyze using local Ollama vision model (data never leaves the network)."""
+        try:
+            # Encode frame to base64
+            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            base64_image = base64.b64encode(buffer).decode('utf-8')
+
+            # Build prompt
+            if prompt == "describe_scene":
+                system_prompt = (
+                    "You are a security camera analyst. Describe this frame in 2-3 clear sentences. "
+                    "For people: count, clothing, activities, position. For objects/scene: notable items, setting, safety concerns."
+                )
+
+                # Inject few-shot training examples for improved analysis
+                try:
+                    from alibi.training_selector import get_training_selector
+                    training_context = get_training_selector().get_context_for_scene(system_prompt)
+                    if training_context:
+                        system_prompt += training_context
+                except Exception:
+                    pass  # Fall back to base prompt if selector fails
+
+            elif prompt == "detect_activity":
+                system_prompt = "Describe any human activity you see. If no humans, say 'No human activity detected'."
+            elif prompt == "count_people":
+                system_prompt = "Count the number of people visible. Format: 'X people visible' or 'No people visible'."
+            else:
+                system_prompt = "Describe what you see in this security camera frame."
+
+            response = requests.post(
+                f"{self.ollama_url}/api/chat",
+                json={
+                    "model": self.ollama_vision_model,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": system_prompt,
+                            "images": [base64_image],
+                        }
+                    ],
+                    "stream": False,
+                    "options": {"temperature": 0.3, "num_predict": 150},
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            result = response.json()
+            description = result.get("message", {}).get("content", "").strip()
+
+            if not description:
+                return self._analyze_with_basic_cv(frame, prompt)
+
+            # Extract safety concerns
+            safety_keywords = ["fight", "weapon", "attack", "theft", "break", "suspicious", "danger", "emergency"]
+            safety_concern = any(keyword in description.lower() for keyword in safety_keywords)
+
+            common_objects = ["person", "car", "cat", "dog", "bike", "motorcycle", "truck", "door", "window"]
+            detected_objects = [obj for obj in common_objects if obj in description.lower()]
+
+            return {
+                "description": description,
+                "confidence": 0.80,
+                "detected_objects": detected_objects,
+                "detected_activities": self._extract_activities(description),
+                "safety_concern": safety_concern,
+                "method": "ollama_vision",
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+
+        except Exception as e:
+            print(f"[SceneAnalyzer] Ollama error: {e}")
+            # Fall back to OpenAI if available, then basic CV
+            if self.openai_available:
+                return self._analyze_with_openai(frame, prompt)
+            return self._analyze_with_basic_cv(frame, prompt)
+
     def _analyze_with_openai(self, frame: np.ndarray, prompt: str) -> Dict[str, Any]:
         """Analyze using OpenAI Vision API with South African context"""
         try:
@@ -150,6 +245,15 @@ Be descriptive, factual, and include visual details about people."""
                 # Add learned context if available
                 if learned_context:
                     system_prompt += f"\n\n{learned_context}"
+
+                # Inject few-shot training examples for improved analysis
+                try:
+                    from alibi.training_selector import get_training_selector
+                    training_context = get_training_selector().get_context_for_scene(system_prompt)
+                    if training_context:
+                        system_prompt += training_context
+                except Exception:
+                    pass  # Fall back to base prompt if selector fails
 
             elif prompt == "detect_activity":
                 system_prompt = "Describe any human activity you see. If no humans, say 'No human activity detected'."

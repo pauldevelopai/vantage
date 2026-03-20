@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 
+from alibi.encryption import get_encrypted_writer
+
 
 @dataclass
 class CrossCameraAlert:
@@ -46,6 +48,7 @@ class CrossCameraTracker:
         self.reappearance_camera_threshold = reappearance_camera_threshold
         self.storage_path = Path(storage_path)
         self.retention_hours = retention_hours
+        self._crypto = get_encrypted_writer()
 
         # In-memory: {entity_key: [(camera_id, timestamp_iso, metadata), ...]}
         self._sightings: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
@@ -64,28 +67,23 @@ class CrossCameraTracker:
         cutoff = datetime.now() - timedelta(hours=self.retention_hours)
 
         try:
-            with open(self.storage_path, 'r') as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        record = json.loads(line)
-                        ts = datetime.fromisoformat(record["timestamp"])
-                        if ts >= cutoff:
-                            key = self._entity_key(record["entity_type"], record["entity_id"])
-                            self._sightings[key].append({
-                                "camera_id": record["camera_id"],
-                                "timestamp": record["timestamp"],
-                                "metadata": record.get("metadata", {}),
-                            })
-                    except (json.JSONDecodeError, KeyError, ValueError):
-                        continue
+            for record in self._crypto.read_lines(self.storage_path):
+                try:
+                    ts = datetime.fromisoformat(record["timestamp"])
+                    if ts >= cutoff:
+                        key = self._entity_key(record["entity_type"], record["entity_id"])
+                        self._sightings[key].append({
+                            "camera_id": record["camera_id"],
+                            "timestamp": record["timestamp"],
+                            "metadata": record.get("metadata", {}),
+                        })
+                except (KeyError, ValueError):
+                    continue
         except Exception as e:
             print(f"[CrossCameraTracker] Error loading sightings: {e}")
 
     def _flush_sighting(self, entity_type: str, entity_id: str, camera_id: str, timestamp: str, metadata: dict):
-        """Append a sighting record to JSONL."""
+        """Append a sighting record to JSONL (encrypted at rest)."""
         record = {
             "entity_type": entity_type,
             "entity_id": entity_id,
@@ -94,8 +92,7 @@ class CrossCameraTracker:
             "metadata": metadata,
         }
         try:
-            with open(self.storage_path, 'a') as f:
-                f.write(json.dumps(record) + '\n')
+            self._crypto.write_line(self.storage_path, record)
         except Exception as e:
             print(f"[CrossCameraTracker] Error flushing: {e}")
 

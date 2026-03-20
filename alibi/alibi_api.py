@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 from pydantic import BaseModel, Field
 
-from fastapi import FastAPI, HTTPException, status, Depends
+from fastapi import FastAPI, HTTPException, status, Depends, UploadFile, File, Body, Form
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -64,6 +64,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Run data rotation on startup (clean old snapshots, compact JSONL)
+@app.on_event("startup")
+async def startup_data_rotation():
+    try:
+        from alibi.data_manager import get_data_manager
+        manager = get_data_manager()
+        results = manager.auto_rotate()
+        print(f"[Startup] Data rotation complete: freed {results.get('total_freed_mb', 0)} MB")
+    except Exception as e:
+        print(f"[Startup] Data rotation skipped: {e}")
+
 
 # Mount media directory for clips and snapshots (legacy/placeholder)
 MEDIA_DIR = Path("alibi/data/media")
@@ -125,6 +137,17 @@ app.include_router(camera_insights_router)
 from alibi.camera_training import router as camera_training_router
 app.include_router(camera_training_router)
 
+# Navigation injection helper
+from alibi.alibi_nav import build_nav
+
+def inject_nav(html: str, active_page: str) -> str:
+    """Inject the shared nav bar into any HTML page."""
+    nav_css, nav_html, nav_js = build_nav(active_page)
+    html = html.replace("</style>", nav_css + "\n    </style>", 1)
+    html = html.replace("<body>", "<body>\n" + nav_html, 1)
+    html = html.replace("</body>", nav_js + "\n</body>", 1)
+    return html
+
 # Mobile home page
 from alibi.mobile_home import MOBILE_HOME_HTML
 from alibi.camera_test import CAMERA_TEST_HTML
@@ -171,7 +194,7 @@ async def camera_history():
     - Safety concerns highlighted
     - Filterable by date and type
     """
-    return HTMLResponse(content=CAMERA_HISTORY_HTML)
+    return HTMLResponse(content=inject_nav(CAMERA_HISTORY_HTML, "history"))
 
 @app.post("/camera/cleanup", tags=["Camera"])
 async def cleanup_old_snapshots(current_user: User = Depends(get_current_user)):
@@ -917,6 +940,16 @@ async def generate_shift_report(
     }
 
 
+# Metrics endpoints
+
+@app.get("/api/metrics/summary")
+async def get_metrics_summary(range: str = "24h", current_user: User = Depends(get_current_user)):
+    """Get aggregated KPI metrics for the dashboard."""
+    from alibi.metrics import get_metrics_aggregator
+    aggregator = get_metrics_aggregator()
+    return aggregator.compute_summary(range)
+
+
 # Settings endpoints
 
 @app.get("/settings")
@@ -1148,6 +1181,170 @@ async def get_watchlist(
     return {
         "entries": entries,
         "total": len(entries)
+    }
+
+
+@app.post("/watchlist/enroll")
+async def enroll_watchlist_face(
+    person_id: str = Form(...),
+    label: str = Form(...),
+    source_ref: str = Form(""),
+    image: UploadFile = File(...),
+    current_user: User = Depends(require_role([Role.SUPERVISOR, Role.ADMIN]))
+):
+    """
+    Enroll a face into the watchlist from an uploaded image.
+
+    Requires: Supervisor or Admin role
+    """
+    import cv2
+    import numpy as np
+    from alibi.watchlist.watchlist_store import WatchlistStore, WatchlistEntry
+    from alibi.watchlist.face_detect import FaceDetector
+    from alibi.watchlist.face_embed import FaceEmbedder
+
+    contents = await image.read()
+    nparr = np.frombuffer(contents, np.uint8)
+    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+    if frame is None:
+        raise HTTPException(status_code=400, detail="Invalid image")
+
+    detector = FaceDetector(confidence_threshold=0.5)
+    result = detector.detect_and_extract(frame, return_largest=True)
+
+    if result is None:
+        raise HTTPException(status_code=400, detail="No face detected in image")
+
+    face_crop, bbox = result
+    embedder = FaceEmbedder()
+    embedding = embedder.generate_embedding(face_crop)
+
+    entry = WatchlistEntry(
+        person_id=person_id,
+        label=label,
+        embedding=embedding.tolist(),
+        added_ts=datetime.utcnow().isoformat(),
+        source_ref=source_ref,
+        metadata={
+            "enrolled_by": current_user.username,
+            "face_bbox": {"x": int(bbox[0]), "y": int(bbox[1]), "w": int(bbox[2]), "h": int(bbox[3])},
+        }
+    )
+
+    store = WatchlistStore()
+    store.add_entry(entry)
+
+    # Audit log
+    audit_store = get_store()
+    audit_store.append_audit("watchlist_enrolled", {
+        "user": current_user.username,
+        "person_id": person_id,
+        "label": label,
+    })
+
+    return {"status": "enrolled", "person_id": person_id, "label": label}
+
+
+@app.delete("/watchlist/{person_id}")
+async def remove_watchlist_entry(
+    person_id: str,
+    current_user: User = Depends(require_role([Role.ADMIN]))
+):
+    """
+    Remove a person from the watchlist by appending a removal record.
+
+    Requires: Admin role
+    """
+    from alibi.watchlist.watchlist_store import WatchlistStore, WatchlistEntry
+
+    store = WatchlistStore()
+    existing = store.get_by_person_id(person_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail=f"Person {person_id} not found in watchlist")
+
+    # Append a removal record (empty embedding signals removal)
+    removal = WatchlistEntry(
+        person_id=person_id,
+        label=existing.label,
+        embedding=[],
+        added_ts=datetime.utcnow().isoformat(),
+        source_ref="REMOVED",
+        metadata={
+            "removed_by": current_user.username,
+            "removal_reason": "manual_removal",
+        }
+    )
+    store.add_entry(removal)
+
+    # Audit log
+    audit_store = get_store()
+    audit_store.append_audit("watchlist_removed", {
+        "user": current_user.username,
+        "person_id": person_id,
+    })
+
+    return {"status": "removed", "person_id": person_id}
+
+
+@app.post("/watchlist/search")
+async def search_watchlist_by_face(
+    image: UploadFile = File(...),
+    current_user: User = Depends(require_role([Role.SUPERVISOR, Role.ADMIN]))
+):
+    """
+    Upload an image and search the watchlist for matching faces.
+
+    Requires: Supervisor or Admin role
+    """
+    import cv2
+    import numpy as np
+    from alibi.watchlist.watchlist_store import WatchlistStore
+    from alibi.watchlist.face_detect import FaceDetector
+    from alibi.watchlist.face_embed import FaceEmbedder
+    from alibi.watchlist.face_match import FaceMatcher
+
+    contents = await image.read()
+    nparr = np.frombuffer(contents, np.uint8)
+    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+    if frame is None:
+        raise HTTPException(status_code=400, detail="Invalid image")
+
+    detector = FaceDetector(confidence_threshold=0.5)
+    result = detector.detect_and_extract(frame, return_largest=True)
+
+    if result is None:
+        raise HTTPException(status_code=400, detail="No face detected in image")
+
+    face_crop, bbox = result
+    embedder = FaceEmbedder()
+    embedding = embedder.generate_embedding(face_crop)
+
+    store = WatchlistStore()
+    watchlist_embeddings = store.get_all_embeddings()
+    watchlist_labels = {e.person_id: e.label for e in store.load_all()}
+
+    if not watchlist_embeddings:
+        return {"match": False, "candidates": [], "message": "Watchlist is empty"}
+
+    matcher = FaceMatcher(match_threshold=0.6, top_k=5)
+    is_match, top_candidates, best_score = matcher.match(
+        embedding, watchlist_embeddings, watchlist_labels
+    )
+
+    # Audit log
+    audit_store = get_store()
+    audit_store.append_audit("watchlist_searched", {
+        "user": current_user.username,
+        "match_found": is_match,
+        "best_score": round(best_score, 4),
+    })
+
+    return {
+        "match": is_match,
+        "best_score": round(best_score, 4),
+        "candidates": [c.to_dict() for c in top_candidates],
     }
 
 
@@ -1643,6 +1840,265 @@ async def replay_events(
         "events_replayed": events_replayed,
         "incidents_created": len(incidents_created),
         "errors": errors,
+    }
+
+
+# ── Training Stats ──────────────────────────────────────────────
+
+# ── Camera Discovery ────────────────────────────────────────────
+
+@app.post("/api/cameras/scan")
+async def scan_for_cameras(
+    verify: bool = False,
+    current_user: User = Depends(get_current_user),
+):
+    """Scan the local network for IP cameras (ONVIF, RTSP, mDNS)."""
+    from alibi.cameras.network_scanner import get_network_scanner
+
+    scanner = get_network_scanner()
+    if scanner.is_scanning:
+        return {"status": "already_scanning", "progress": scanner.progress}
+
+    cameras = scanner.scan_all(timeout=15.0, verify=verify)
+    return {
+        "status": "complete",
+        "cameras": [c.to_dict() for c in cameras],
+        "count": len(cameras),
+        "new_cameras": len([c for c in cameras if not c.already_registered]),
+    }
+
+
+@app.get("/api/cameras/scan/status")
+async def scan_status(current_user: User = Depends(get_current_user)):
+    """Get current network scan progress."""
+    from alibi.cameras.network_scanner import get_network_scanner
+
+    scanner = get_network_scanner()
+    return scanner.progress
+
+
+class AddDiscoveredRequest(BaseModel):
+    ip: str
+    port: int = 554
+    rtsp_url: str = ""
+    name: str = ""
+    source_type: str = "rtsp"
+    location: str = ""
+    username: str = ""
+    password: str = ""
+
+
+@app.post("/api/cameras/add-discovered")
+async def add_discovered_camera(
+    req: AddDiscoveredRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """One-click add a discovered camera to the registry."""
+    from alibi.cameras.camera_store import get_camera_store, Camera, slugify
+
+    store = get_camera_store()
+    camera_id = slugify(req.name or f"camera-{req.ip.replace('.', '-')}")
+
+    # Build RTSP URL with credentials if provided
+    rtsp_url = req.rtsp_url
+    if req.username and rtsp_url and "://" in rtsp_url:
+        # Insert credentials into URL
+        from urllib.parse import quote
+        cred = f"{quote(req.username)}:{quote(req.password)}@"
+        rtsp_url = rtsp_url.replace("rtsp://", f"rtsp://{cred}", 1)
+
+    camera = Camera(
+        camera_id=camera_id,
+        name=req.name or f"Camera {req.ip}",
+        source=rtsp_url or f"rtsp://{req.ip}:{req.port}/stream1",
+        source_type=req.source_type,
+        enabled=True,
+        location=req.location,
+        status="unknown",
+        vms_config={
+            "host": req.ip,
+            "port": req.port,
+            "username": req.username,
+            "password": req.password,
+        } if req.username else {},
+    )
+
+    store.add(camera)
+    return {"status": "ok", "camera": camera.to_dict()}
+
+
+# ── System Storage ──────────────────────────────────────────────
+
+@app.get("/api/system/storage")
+async def get_storage_info(current_user: User = Depends(get_current_user)):
+    """Get disk usage breakdown for all data stores."""
+    from alibi.data_manager import get_data_manager
+
+    manager = get_data_manager()
+    usage = manager.get_disk_usage()
+    return usage.to_dict()
+
+
+@app.post("/api/system/cleanup")
+async def run_cleanup(current_user: User = Depends(get_current_user)):
+    """Run data rotation and cleanup."""
+    from alibi.data_manager import get_data_manager
+
+    manager = get_data_manager()
+    results = manager.auto_rotate()
+    return results
+
+
+# ── Training Stats ──────────────────────────────────────────────
+
+@app.get("/api/training/stats")
+async def get_training_stats(current_user: User = Depends(get_current_user)):
+    """Get statistics about collected training examples and the training selector index."""
+    from alibi.training_agent import get_training_agent
+    from alibi.training_selector import get_training_selector
+
+    agent_stats = get_training_agent().get_collection_stats()
+    selector_stats = get_training_selector().get_stats()
+
+    return {
+        **agent_stats,
+        "index_type": selector_stats.get("index_type", "none"),
+        "index_loaded": selector_stats.get("total_examples", 0) > 0,
+    }
+
+
+# ── Activity Baselines ─────────────────────────────────────────
+
+@app.get("/api/baselines/anomalies")
+async def get_recent_anomalies(
+    hours: int = 24,
+    current_user: User = Depends(get_current_user),
+):
+    """Get recent anomaly scores above threshold."""
+    from alibi.activity_baseline import get_baseline_engine
+
+    engine = get_baseline_engine()
+    anomalies = engine.get_recent_anomalies(hours=hours)
+    return {"anomalies": [a.to_dict() for a in anomalies], "hours": hours}
+
+
+@app.post("/api/baselines/rebuild")
+async def rebuild_baselines(
+    camera_id: Optional[str] = None,
+    days: int = 7,
+    current_user: User = Depends(get_current_user),
+):
+    """Rebuild activity baselines from camera analysis history."""
+    from alibi.activity_baseline import get_baseline_engine
+
+    engine = get_baseline_engine()
+    count = engine.build_baselines(camera_id=camera_id, days=days)
+    return {"status": "ok", "baselines_built": count, "camera_id": camera_id or "all", "days": days}
+
+
+@app.get("/api/baselines/{camera_id}")
+async def get_baselines(camera_id: str, current_user: User = Depends(get_current_user)):
+    """Get activity baselines for a camera (24h x 7d matrix)."""
+    from alibi.activity_baseline import get_baseline_engine
+
+    engine = get_baseline_engine()
+    baselines = engine.get_all_baselines(camera_id=camera_id)
+    return {"camera_id": camera_id, "baselines": [b.to_dict() for b in baselines]}
+
+
+# ── Face Sighting Index ────────────────────────────────────────
+
+@app.get("/api/faces/recent")
+async def get_recent_faces(
+    camera_id: Optional[str] = None,
+    limit: int = 50,
+    current_user: User = Depends(get_current_user),
+):
+    """Get recent face sightings (without embeddings for bandwidth)."""
+    from alibi.watchlist.face_sighting_store import get_face_sighting_store
+
+    store = get_face_sighting_store()
+    if camera_id:
+        sightings = store.get_by_camera(camera_id, limit=limit)
+    else:
+        sightings = store.get_recent(limit=limit)
+
+    # Strip embeddings from response
+    results = []
+    for s in sightings:
+        d = s.to_dict()
+        d.pop("embedding", None)
+        results.append(d)
+
+    return {"sightings": results, "count": len(results)}
+
+
+@app.post("/api/faces/search")
+async def search_faces(
+    file: UploadFile = File(...),
+    threshold: float = 0.6,
+    limit: int = 50,
+    current_user: User = Depends(get_current_user),
+):
+    """Upload an image, detect the face, and find matching sightings."""
+    import numpy as np
+    import cv2
+    from alibi.watchlist.face_detect import FaceDetector
+    from alibi.watchlist.face_embed import FaceEmbedder
+    from alibi.watchlist.face_sighting_store import get_face_sighting_store
+
+    contents = await file.read()
+    nparr = np.frombuffer(contents, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if img is None:
+        raise HTTPException(status_code=400, detail="Could not decode image")
+
+    detector = FaceDetector()
+    embedder = FaceEmbedder()
+
+    faces = detector.detect(img)
+    if not faces:
+        return {"matches": [], "message": "No face detected in uploaded image"}
+
+    # Use the first (largest) face
+    bbox = faces[0]
+    face_crop = detector.extract_face(img, bbox)
+    embedding = embedder.generate_embedding(face_crop)
+    if embedding is None:
+        raise HTTPException(status_code=400, detail="Could not generate face embedding")
+
+    store = get_face_sighting_store()
+    matches = store.find_similar(embedding, threshold=threshold, limit=limit)
+
+    results = []
+    for sighting, score in matches:
+        d = sighting.to_dict()
+        d.pop("embedding", None)
+        d["search_score"] = round(score, 4)
+        results.append(d)
+
+    return {"matches": results, "count": len(results)}
+
+
+@app.get("/api/faces/stats")
+async def get_face_stats(current_user: User = Depends(get_current_user)):
+    """Get face sighting statistics."""
+    from alibi.watchlist.face_sighting_store import get_face_sighting_store
+
+    store = get_face_sighting_store()
+    all_sightings = store.load_all()
+
+    total = len(all_sightings)
+    matched = sum(1 for s in all_sightings if s.matched_person_id)
+    cameras = {}
+    for s in all_sightings:
+        cameras[s.camera_id] = cameras.get(s.camera_id, 0) + 1
+
+    return {
+        "total_sightings": total,
+        "watchlist_matches": matched,
+        "match_percentage": round(matched / total * 100, 1) if total else 0,
+        "by_camera": cameras,
     }
 
 

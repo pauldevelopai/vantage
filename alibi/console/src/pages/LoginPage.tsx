@@ -35,12 +35,13 @@ export function LoginPage() {
       }
 
       const data = await response.json();
-      
+
       // Store token and user info
       localStorage.setItem('alibi_token', data.access_token);
       localStorage.setItem('alibi_user', JSON.stringify({
         username: data.username,
         role: data.role,
+        full_name: data.full_name,
       }));
 
       // Redirect to original destination
@@ -53,89 +54,55 @@ export function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-md w-full space-y-8">
-        <div>
-          <h1 className="text-center text-4xl font-bold text-gray-900">🔒 Alibi</h1>
-          <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-            Sign in to your account
-          </h2>
-          <p className="mt-2 text-center text-sm text-gray-600">
-            Police Oversight System - Namibia Pilot
-          </p>
-        </div>
-        
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
+    <div className="min-h-screen flex items-center justify-center bg-gray-900 py-12 px-4">
+      <div className="w-full max-w-sm">
+        <div className="bg-white/[0.04] border border-white/[0.08] rounded-2xl p-8">
+          <h1 className="text-center text-2xl font-bold text-white tracking-tight">Alibi</h1>
+          <p className="mt-1 text-center text-sm text-white/40 mb-7">Sign in to continue</p>
+
           {error && (
-            <div className="rounded-md bg-red-50 p-4">
-              <div className="flex">
-                <div className="flex-shrink-0">
-                  <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clipRule="evenodd" />
-                  </svg>
-                </div>
-                <div className="ml-3">
-                  <h3 className="text-sm font-medium text-red-800">{error}</h3>
-                </div>
-              </div>
+            <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3 mb-4">
+              <p className="text-sm text-red-400">{error}</p>
             </div>
           )}
 
-          <div className="rounded-md shadow-sm -space-y-px">
+          <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label htmlFor="username" className="sr-only">
-                Username
-              </label>
+              <label htmlFor="username" className="block text-sm font-medium text-white/50 mb-1.5">Username</label>
               <input
                 id="username"
-                name="username"
                 type="text"
                 autoComplete="username"
                 required
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-t-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
-                placeholder="Username"
+                placeholder="Enter username"
+                className="w-full px-3.5 py-2.5 bg-white/[0.06] border border-white/10 rounded-lg text-white text-sm placeholder-white/20 focus:outline-none focus:border-indigo-500/50 transition-colors"
               />
             </div>
             <div>
-              <label htmlFor="password" className="sr-only">
-                Password
-              </label>
+              <label htmlFor="password" className="block text-sm font-medium text-white/50 mb-1.5">Password</label>
               <input
                 id="password"
-                name="password"
                 type="password"
                 autoComplete="current-password"
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-b-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
-                placeholder="Password"
+                placeholder="Enter password"
+                className="w-full px-3.5 py-2.5 bg-white/[0.06] border border-white/10 rounded-lg text-white text-sm placeholder-white/20 focus:outline-none focus:border-indigo-500/50 transition-colors"
               />
             </div>
-          </div>
 
-          <div>
             <button
               type="submit"
               disabled={loading}
-              className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-gray-400 disabled:cursor-not-allowed"
+              className="w-full py-2.5 bg-indigo-500/80 hover:bg-indigo-500 text-white text-sm font-semibold rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed mt-1"
             >
-              {loading ? 'Signing in...' : 'Sign in'}
+              {loading ? 'Signing in...' : 'Sign In'}
             </button>
-          </div>
-
-          <div className="text-sm text-gray-600 bg-gray-50 rounded p-4">
-            <p className="font-medium mb-2">Default Users:</p>
-            <ul className="space-y-1 text-xs">
-              <li><strong>operator1</strong> (Operator role)</li>
-              <li><strong>supervisor1</strong> (Supervisor role)</li>
-              <li><strong>admin</strong> (Admin role)</li>
-            </ul>
-            <p className="text-xs text-gray-500 mt-2">Passwords were generated at first startup. Check <code>alibi/data/.initial_passwords.txt</code></p>
-          </div>
-        </form>
+          </form>
+        </div>
       </div>
     </div>
   );

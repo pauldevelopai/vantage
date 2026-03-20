@@ -38,6 +38,10 @@ from alibi.plates.travel_detector import ImpossibleTravelDetector
 from alibi.vehicles.sightings_store import VehicleSightingsStore, VehicleSighting
 from alibi.cameras.camera_store import get_camera_store
 from alibi.cameras.cross_camera import get_cross_camera_tracker
+from alibi.watchlist.face_detect import FaceDetector
+from alibi.watchlist.face_embed import FaceEmbedder
+from alibi.watchlist.face_match import FaceMatcher
+from alibi.watchlist.watchlist_store import WatchlistStore
 
 router = APIRouter(prefix="/camera", tags=["Enhanced Mobile Camera"])
 
@@ -59,6 +63,10 @@ _sightings_store = None
 _travel_detector = None
 _camera_store = None
 _cross_camera_tracker = None
+_face_detector = None
+_face_embedder = None
+_face_matcher = None
+_watchlist_store = None
 
 
 def get_security_components():
@@ -66,6 +74,7 @@ def get_security_components():
     global _gatekeeper, _tracker, _rule_evaluator, _incident_manager, _intelligence_store
     global _plate_detector, _plate_ocr, _hotlist_store, _sightings_store, _travel_detector
     global _camera_store, _cross_camera_tracker
+    global _face_detector, _face_embedder, _face_matcher, _watchlist_store
     
     if _gatekeeper is None:
         policy = GatekeeperPolicy(min_combined_conf=0.5)
@@ -117,6 +126,18 @@ def get_security_components():
 
     if _cross_camera_tracker is None:
         _cross_camera_tracker = get_cross_camera_tracker()
+
+    if _face_detector is None:
+        _face_detector = FaceDetector(confidence_threshold=0.5)
+
+    if _face_embedder is None:
+        _face_embedder = FaceEmbedder()
+
+    if _face_matcher is None:
+        _face_matcher = FaceMatcher(match_threshold=0.6, top_k=3)
+
+    if _watchlist_store is None:
+        _watchlist_store = WatchlistStore()
 
     return _gatekeeper, _tracker, _rule_evaluator, _incident_manager, _intelligence_store
 
@@ -351,6 +372,92 @@ async def analyze_frame_secure(
     except Exception as e:
         print(f"[PlateDetection] Error: {e}")
 
+    # FACE RECOGNITION: Detect faces and match against watchlist
+    detected_faces = []
+    watchlist_hit = False
+    watchlist_match_label = None
+    try:
+        faces = _face_detector.detect(frame)
+        if faces:
+            watchlist_embeddings = _watchlist_store.get_all_embeddings()
+            watchlist_labels = {
+                e.person_id: e.label for e in _watchlist_store.load_all()
+            }
+
+            for bbox in faces:
+                face_crop = _face_detector.extract_face(frame, bbox)
+                embedding = _face_embedder.generate_embedding(face_crop)
+
+                face_result = {
+                    "bbox": list(bbox),
+                    "watchlist_match": False,
+                    "best_candidate": None,
+                    "top_candidates": [],
+                }
+
+                is_match = False
+                best_score = 0.0
+                top_candidates = []
+
+                if watchlist_embeddings:
+                    is_match, top_candidates, best_score = _face_matcher.match(
+                        embedding, watchlist_embeddings, watchlist_labels
+                    )
+                    face_result["top_candidates"] = [c.to_dict() for c in top_candidates]
+
+                    if is_match:
+                        face_result["watchlist_match"] = True
+                        face_result["best_candidate"] = top_candidates[0].to_dict()
+                        watchlist_hit = True
+                        watchlist_match_label = top_candidates[0].label
+
+                        # Cross-camera tracking for matched face
+                        _cross_camera_tracker.record_sighting(
+                            camera_id=camera_id,
+                            entity_type="face",
+                            entity_id=top_candidates[0].person_id,
+                            timestamp=timestamp.isoformat(),
+                            metadata={"score": best_score, "label": watchlist_match_label},
+                        )
+
+                # FACE SIGHTING INDEX: Record every detected face
+                try:
+                    import uuid as _uuid
+                    import hashlib as _hashlib
+                    from alibi.watchlist.face_sighting_store import FaceSighting, get_face_sighting_store
+
+                    sighting = FaceSighting(
+                        sighting_id=str(_uuid.uuid4()),
+                        camera_id=camera_id,
+                        ts=timestamp.isoformat(),
+                        embedding=embedding.tolist() if hasattr(embedding, 'tolist') else list(embedding),
+                        bbox=tuple(bbox),
+                        confidence=best_score if is_match else 0.0,
+                        matched_person_id=top_candidates[0].person_id if is_match and top_candidates else None,
+                        match_score=best_score if is_match else None,
+                        image_path=None,
+                        metadata={},
+                    )
+                    get_face_sighting_store().add_sighting(sighting)
+
+                    # Cross-camera tracking for unknown faces
+                    if not is_match and embedding is not None:
+                        face_hash = _hashlib.md5(
+                            embedding.tobytes() if hasattr(embedding, 'tobytes') else bytes(embedding)
+                        ).hexdigest()[:12]
+                        _cross_camera_tracker.record_sighting(
+                            camera_id=camera_id,
+                            entity_type="unknown_face",
+                            entity_id=face_hash,
+                            timestamp=timestamp.isoformat(),
+                        )
+                except Exception as e:
+                    print(f"[FaceSightingIndex] Error recording sighting: {e}")
+
+                detected_faces.append(face_result)
+    except Exception as e:
+        print(f"[FaceRecognition] Error: {e}")
+
     # NOW assess threat level with AI activities
     detections = result.get("detections", [])
     threat_level, threat_color, threat_message = assess_threat_level(
@@ -365,6 +472,12 @@ async def analyze_frame_secure(
         threat_level = "warning"
         threat_color = "#ef4444"
         threat_message = f"HOTLIST PLATE MATCH: {detected_plates[0]['display']} — {hotlist_reason}"
+
+    # Escalate threat if watchlist face match detected
+    if watchlist_hit and threat_level in ("safe", "caution"):
+        threat_level = "warning"
+        threat_color = "#ef4444"
+        threat_message = f"WATCHLIST FACE MATCH: Person appears to match '{watchlist_match_label}'"
 
     # CONTINUOUS LEARNING: Get additional threat intelligence
     learning_system = get_learning_system()
@@ -390,7 +503,9 @@ async def analyze_frame_secure(
                 "threat_level": threat_level,
                 "threat_message": threat_message if threat_level in ["warning", "critical"] else None,
                 "detections_count": len(detections),
-                "tracks_count": len(tracks)
+                "tracks_count": len(tracks),
+                "faces_detected": len(detected_faces),
+                "watchlist_match": watchlist_match_label,
             }
         )
 
@@ -402,6 +517,27 @@ async def analyze_frame_secure(
         analysis_store.add_analysis(analysis_entry)
     except Exception as e:
         print(f"Failed to store analysis: {e}")
+
+    # ANOMALY SCORING: Compare observation against activity baseline
+    anomaly_data = None
+    try:
+        from alibi.activity_baseline import get_baseline_engine
+        baseline_engine = get_baseline_engine()
+        person_count = sum(1 for o in ai_objects if o.lower() == "person")
+        vehicle_count = sum(1 for o in ai_objects if o.lower() in ("car", "truck", "motorcycle", "bus", "van"))
+        anomaly = baseline_engine.score_observation(
+            camera_id, person_count, vehicle_count, threat_level, timestamp
+        )
+        anomaly_data = {
+            "combined_score": anomaly.combined_score,
+            "is_anomalous": anomaly.is_anomalous,
+            "person_z": anomaly.person_z_score,
+            "vehicle_z": anomaly.vehicle_z_score,
+            "threat_z": anomaly.threat_z_score,
+            "baseline_samples": anomaly.baseline_sample_count,
+        }
+    except Exception as e:
+        print(f"[AnomalyScoring] Error: {e}")
 
     # AUTO-ALERT: Create persistent alert for dangerous detections
     alert_created = False
@@ -445,9 +581,14 @@ async def analyze_frame_secure(
             "detected": detected_plates,
             "count": len(detected_plates),
         },
+        "faces": {
+            "detected": detected_faces,
+            "count": len(detected_faces),
+        },
         "scores": result.get("scores", {}),
         "eligible_for_training": result.get("eligible", False),
-        "alert_created": alert_created
+        "alert_created": alert_created,
+        "anomaly_score": anomaly_data,
     }
 
 
@@ -773,7 +914,13 @@ async def remove_person(
 @router.get("/secure-stream", response_class=HTMLResponse)
 async def secure_mobile_stream():
     """Enhanced mobile camera stream with threat detection"""
-    return HTMLResponse(content=SECURE_CAMERA_HTML)
+    from alibi.alibi_nav import build_nav
+    nav_css, nav_html, nav_js = build_nav(active_page="camera")
+    html = SECURE_CAMERA_HTML
+    html = html.replace("</style>", nav_css + "\n    </style>", 1)
+    html = html.replace("<body>", "<body>\n" + nav_html, 1)
+    html = html.replace("</body>", nav_js + "\n</body>", 1)
+    return HTMLResponse(content=html)
 
 
 # Enhanced HTML with threat warnings and red flag
@@ -1263,6 +1410,64 @@ SECURE_CAMERA_HTML = """
             font-weight: 600;
             margin-top: 6px;
         }
+        #face-display {
+            display: none;
+            max-width: 640px;
+            margin: 0 auto 10px;
+            padding: 0 20px;
+        }
+        .face-box {
+            background: #111827;
+            border: 2px solid #8b5cf6;
+            border-radius: 8px;
+            padding: 12px;
+        }
+        .face-box.watchlist-match {
+            border-color: #ef4444;
+            background: rgba(239, 68, 68, 0.1);
+            animation: pulse 1.5s infinite;
+        }
+        .face-header {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #8b5cf6;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+        .face-box.watchlist-match .face-header { color: #ef4444; }
+        .face-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 6px 0;
+            border-bottom: 1px solid #333;
+        }
+        .face-item:last-child { border-bottom: none; }
+        .face-label {
+            font-size: 16px;
+            font-weight: bold;
+            color: white;
+        }
+        .face-score {
+            font-size: 11px;
+            color: #9ca3af;
+            background: rgba(255,255,255,0.05);
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+        .face-match-warning {
+            color: #ef4444;
+            font-size: 12px;
+            font-weight: 600;
+            margin-top: 6px;
+        }
+        .face-disclaimer {
+            color: #6b7280;
+            font-size: 10px;
+            margin-top: 6px;
+            font-style: italic;
+        }
     </style>
 </head>
 <body>
@@ -1286,10 +1491,6 @@ SECURE_CAMERA_HTML = """
         <div id="alert-list">
             <p style="color:#666; font-size:13px;">No alerts yet</p>
         </div>
-    </div>
-
-    <div class="header">
-        <h1>🔒 ALIBI SECURITY CAMERA</h1>
     </div>
 
     <div class="video-container">
@@ -1326,6 +1527,14 @@ SECURE_CAMERA_HTML = """
         <div class="plate-box" id="plate-box">
             <div class="plate-header" id="plate-header">License Plates Detected</div>
             <div id="plate-list"></div>
+        </div>
+    </div>
+
+    <!-- Face Recognition Display (hidden until faces detected) -->
+    <div id="face-display">
+        <div class="face-box" id="face-box">
+            <div class="face-header" id="face-header">Faces Detected</div>
+            <div id="face-list"></div>
         </div>
     </div>
 
@@ -1497,7 +1706,9 @@ SECURE_CAMERA_HTML = """
                 }
             }, 25000);
             
-            // Convert to blob
+            // Convert to compressed blob — adaptive quality based on connection
+            const jpegQuality = (navigator.connection && navigator.connection.effectiveType === '4g') ? 0.55 :
+                                (navigator.connection && navigator.connection.effectiveType === '3g') ? 0.35 : 0.55;
             canvas.toBlob(async (blob) => {
                 const formData = new FormData();
                 formData.append('image', blob, 'frame.jpg');
@@ -1540,7 +1751,7 @@ SECURE_CAMERA_HTML = """
                     aiText.style.color = '#f59e0b';
                     isAnalyzing = false;
                 }
-            }, 'image/jpeg');
+            }, 'image/jpeg', jpegQuality);
         }
         
         function updateThreatDisplay(result) {
@@ -1884,13 +2095,55 @@ SECURE_CAMERA_HTML = """
             }).join('');
         }
 
-        // Hook into updateThreatDisplay to trigger alerts and plate display
+        // Face display logic
+        function updateFaceDisplay(faces) {
+            const container = document.getElementById('face-display');
+            const box = document.getElementById('face-box');
+            const list = document.getElementById('face-list');
+            const header = document.getElementById('face-header');
+
+            if (!faces || !faces.detected || faces.detected.length === 0) {
+                container.style.display = 'none';
+                return;
+            }
+
+            container.style.display = 'block';
+            const hasMatch = faces.detected.some(f => f.watchlist_match);
+            box.className = hasMatch ? 'face-box watchlist-match' : 'face-box';
+            header.textContent = hasMatch ? 'WATCHLIST FACE MATCH' : `Face${faces.count > 1 ? 's' : ''} Detected`;
+
+            list.innerHTML = faces.detected.map(f => {
+                let html = '';
+                if (f.watchlist_match && f.best_candidate) {
+                    html += `<div class="face-item">
+                        <span class="face-label">${f.best_candidate.label}</span>
+                        <span class="face-score">${Math.round(f.best_candidate.score * 100)}% match</span>
+                    </div>`;
+                    html += `<div class="face-match-warning">Appears to match watchlist entry: ${f.best_candidate.person_id}</div>`;
+                } else {
+                    html += `<div class="face-item">
+                        <span class="face-label" style="color:#9ca3af">Face detected</span>
+                        <span class="face-score">No watchlist match</span>
+                    </div>`;
+                }
+                return html;
+            }).join('');
+
+            if (hasMatch) {
+                list.innerHTML += '<div class="face-disclaimer">Similarity score only — not a positive identification. Human verification required.</div>';
+            }
+        }
+
+        // Hook into updateThreatDisplay to trigger alerts, plate display, and face display
         const _origUpdateThreat = updateThreatDisplay;
         updateThreatDisplay = function(result) {
             _origUpdateThreat(result);
 
             // Update plate display
             updatePlateDisplay(result.plates);
+
+            // Update face display
+            updateFaceDisplay(result.faces);
 
             // If alert was created by backend, add to local alert list
             if (result.alert_created && result.threat && (result.threat.level === 'warning' || result.threat.level === 'critical')) {

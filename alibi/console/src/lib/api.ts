@@ -257,11 +257,114 @@ export const api = {
     return res.json();
   },
 
+  // Camera Network Scan
+  async scanCameras(): Promise<{ scan_id: string; status: string }> {
+    const res = await fetchWithAuth(`${API_BASE}/cameras/scan`, { method: 'POST' });
+    if (!res.ok) throw new Error('Failed to start camera scan');
+    return res.json();
+  },
+
+  async getScanStatus(): Promise<{
+    status: string;
+    discovered: Array<{
+      ip: string;
+      port: number;
+      source_type: string;
+      rtsp_url: string;
+      name: string;
+      manufacturer: string;
+      model: string;
+      resolution: string;
+      discovery_method: string;
+      already_registered: boolean;
+    }>;
+    total: number;
+    new_cameras: number;
+  }> {
+    const res = await fetchWithAuth(`${API_BASE}/cameras/scan/status`);
+    if (!res.ok) throw new Error('Failed to get scan status');
+    return res.json();
+  },
+
+  async addDiscoveredCamera(camera: {
+    ip: string;
+    port: number;
+    rtsp_url: string;
+    source_type: string;
+    name?: string;
+    location?: string;
+  }): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/cameras/add-discovered`, {
+      method: 'POST',
+      body: JSON.stringify(camera),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to add camera');
+    }
+    return res.json();
+  },
+
   // Entity Trail (cross-camera tracking)
   async getEntityTrail(entityType: string, entityId: string, hours?: number): Promise<{ entity_type: string; entity_id: string; trail: TrailEntry[] }> {
     const query = hours ? `?hours=${hours}` : '';
     const res = await fetchWithAuth(`${API_BASE}/trail/${entityType}/${encodeURIComponent(entityId)}${query}`);
     if (!res.ok) throw new Error('Failed to fetch trail');
+    return res.json();
+  },
+
+  // Watchlist
+  async getWatchlist(): Promise<{ entries: any[]; total: number }> {
+    const res = await fetchWithAuth(`${API_BASE}/watchlist`);
+    if (!res.ok) throw new Error('Failed to fetch watchlist');
+    return res.json();
+  },
+
+  async enrollWatchlistFace(formData: FormData): Promise<any> {
+    const token = getToken();
+    const res = await fetch(`${API_BASE}/watchlist/enroll`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: formData,
+    });
+    if (res.status === 401) {
+      localStorage.removeItem('alibi_token');
+      localStorage.removeItem('alibi_user');
+      window.location.href = '/login';
+      throw new Error('Unauthorized');
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Enrollment failed');
+    }
+    return res.json();
+  },
+
+  async removeWatchlistEntry(personId: string): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/watchlist/${encodeURIComponent(personId)}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) throw new Error('Failed to remove entry');
+    return res.json();
+  },
+
+  async searchWatchlistByFace(formData: FormData): Promise<any> {
+    const token = getToken();
+    const res = await fetch(`${API_BASE}/watchlist/search`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: formData,
+    });
+    if (res.status === 401) {
+      localStorage.removeItem('alibi_token');
+      localStorage.removeItem('alibi_user');
+      window.location.href = '/login';
+      throw new Error('Unauthorized');
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Search failed');
+    }
     return res.json();
   },
 };

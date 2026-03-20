@@ -16,6 +16,7 @@ from alibi.schemas import (
     IncidentStatus,
     Decision,
 )
+from alibi.encryption import get_encrypted_writer
 
 
 class AlibiStore:
@@ -24,12 +25,14 @@ class AlibiStore:
     def __init__(self, data_dir: str = "alibi/data"):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        
+
         self.events_file = self.data_dir / "events.jsonl"
         self.incidents_file = self.data_dir / "incidents.jsonl"
         self.decisions_file = self.data_dir / "decisions.jsonl"
         self.audit_file = self.data_dir / "audit.jsonl"
-        
+
+        self._crypto = get_encrypted_writer()
+
         # Ensure files exist
         for file in [self.events_file, self.incidents_file, self.decisions_file, self.audit_file]:
             file.touch(exist_ok=True)
@@ -37,12 +40,10 @@ class AlibiStore:
     # Event operations
     
     def append_event(self, event: CameraEvent) -> None:
-        """Append camera event to events.jsonl"""
+        """Append camera event to events.jsonl (encrypted at rest)"""
         event_dict = self._serialize_event(event)
         event_dict["_stored_at"] = datetime.utcnow().isoformat()
-        
-        with open(self.events_file, "a") as f:
-            f.write(json.dumps(event_dict) + "\n")
+        self._crypto.write_line(self.events_file, event_dict)
     
     def list_events(
         self,
@@ -52,47 +53,36 @@ class AlibiStore:
     ) -> List[CameraEvent]:
         """List events with optional filters"""
         events = []
-        
+
         if not self.events_file.exists():
             return events
-        
-        with open(self.events_file, "r") as f:
-            for line in f:
-                if not line.strip():
-                    continue
-                
-                event_dict = json.loads(line)
-                
-                # Apply filters
-                if camera_id and event_dict.get("camera_id") != camera_id:
-                    continue
-                if zone_id and event_dict.get("zone_id") != zone_id:
-                    continue
-                
-                events.append(self._deserialize_event(event_dict))
-                
-                if len(events) >= limit:
-                    break
-        
+
+        for event_dict in self._crypto.read_lines(self.events_file):
+            # Apply filters
+            if camera_id and event_dict.get("camera_id") != camera_id:
+                continue
+            if zone_id and event_dict.get("zone_id") != zone_id:
+                continue
+
+            events.append(self._deserialize_event(event_dict))
+
+            if len(events) >= limit:
+                break
+
         return list(reversed(events))  # Most recent first
     
     def get_events_by_ids(self, event_ids: List[str]) -> List[CameraEvent]:
         """Get events by their IDs"""
         event_id_set = set(event_ids)
         events = []
-        
+
         if not self.events_file.exists():
             return events
-        
-        with open(self.events_file, "r") as f:
-            for line in f:
-                if not line.strip():
-                    continue
-                
-                event_dict = json.loads(line)
-                if event_dict.get("event_id") in event_id_set:
-                    events.append(self._deserialize_event(event_dict))
-        
+
+        for event_dict in self._crypto.read_lines(self.events_file):
+            if event_dict.get("event_id") in event_id_set:
+                events.append(self._deserialize_event(event_dict))
+
         return events
     
     # Incident operations
@@ -107,29 +97,22 @@ class AlibiStore:
         incident_dict = self._serialize_incident(incident)
         incident_dict["_stored_at"] = datetime.utcnow().isoformat()
         incident_dict["_version"] = datetime.utcnow().timestamp()
-        
+
         if metadata:
             incident_dict["_metadata"] = metadata
-        
-        with open(self.incidents_file, "a") as f:
-            f.write(json.dumps(incident_dict) + "\n")
+
+        self._crypto.write_line(self.incidents_file, incident_dict)
     
     def get_incident(self, incident_id: str) -> Optional[Incident]:
         """Get latest version of incident by ID"""
         if not self.incidents_file.exists():
             return None
-        
-        # Read backwards to find latest version
+
         latest = None
-        with open(self.incidents_file, "r") as f:
-            for line in f:
-                if not line.strip():
-                    continue
-                
-                incident_dict = json.loads(line)
-                if incident_dict.get("incident_id") == incident_id:
-                    latest = incident_dict
-        
+        for incident_dict in self._crypto.read_lines(self.incidents_file):
+            if incident_dict.get("incident_id") == incident_id:
+                latest = incident_dict
+
         if latest:
             return self._deserialize_incident(latest)
         return None
@@ -138,17 +121,12 @@ class AlibiStore:
         """Get incident with full metadata (plan, alert, validation)"""
         if not self.incidents_file.exists():
             return None
-        
+
         latest = None
-        with open(self.incidents_file, "r") as f:
-            for line in f:
-                if not line.strip():
-                    continue
-                
-                incident_dict = json.loads(line)
-                if incident_dict.get("incident_id") == incident_id:
-                    latest = incident_dict
-        
+        for incident_dict in self._crypto.read_lines(self.incidents_file):
+            if incident_dict.get("incident_id") == incident_id:
+                latest = incident_dict
+
         return latest
     
     def list_incidents(
@@ -158,29 +136,21 @@ class AlibiStore:
     ) -> List[Incident]:
         """List incidents (returns latest version of each)"""
         incidents_by_id = {}
-        
+
         if not self.incidents_file.exists():
             return []
-        
-        # Read all incidents, keeping latest version of each
-        with open(self.incidents_file, "r") as f:
-            for line in f:
-                if not line.strip():
-                    continue
-                
-                incident_dict = json.loads(line)
-                incident_id = incident_dict.get("incident_id")
-                
-                if incident_id:
-                    # Keep latest version
-                    if incident_id not in incidents_by_id:
+
+        for incident_dict in self._crypto.read_lines(self.incidents_file):
+            incident_id = incident_dict.get("incident_id")
+
+            if incident_id:
+                if incident_id not in incidents_by_id:
+                    incidents_by_id[incident_id] = incident_dict
+                else:
+                    current_version = incidents_by_id[incident_id].get("_version", 0)
+                    new_version = incident_dict.get("_version", 0)
+                    if new_version > current_version:
                         incidents_by_id[incident_id] = incident_dict
-                    else:
-                        # Compare versions
-                        current_version = incidents_by_id[incident_id].get("_version", 0)
-                        new_version = incident_dict.get("_version", 0)
-                        if new_version > current_version:
-                            incidents_by_id[incident_id] = incident_dict
         
         # Convert to Incident objects and filter
         incidents = []
@@ -205,26 +175,21 @@ class AlibiStore:
     ) -> List[Dict[str, Any]]:
         """List incidents with metadata (plan, alert, validation)"""
         incidents_by_id = {}
-        
+
         if not self.incidents_file.exists():
             return []
-        
-        with open(self.incidents_file, "r") as f:
-            for line in f:
-                if not line.strip():
-                    continue
-                
-                incident_dict = json.loads(line)
-                incident_id = incident_dict.get("incident_id")
-                
-                if incident_id:
-                    if incident_id not in incidents_by_id:
+
+        for incident_dict in self._crypto.read_lines(self.incidents_file):
+            incident_id = incident_dict.get("incident_id")
+
+            if incident_id:
+                if incident_id not in incidents_by_id:
+                    incidents_by_id[incident_id] = incident_dict
+                else:
+                    current_version = incidents_by_id[incident_id].get("_version", 0)
+                    new_version = incident_dict.get("_version", 0)
+                    if new_version > current_version:
                         incidents_by_id[incident_id] = incident_dict
-                    else:
-                        current_version = incidents_by_id[incident_id].get("_version", 0)
-                        new_version = incident_dict.get("_version", 0)
-                        if new_version > current_version:
-                            incidents_by_id[incident_id] = incident_dict
         
         # Filter and sort
         results = []
@@ -240,12 +205,10 @@ class AlibiStore:
     # Decision operations
     
     def append_decision(self, decision: Decision) -> None:
-        """Append operator decision to decisions.jsonl"""
+        """Append operator decision to decisions.jsonl (encrypted at rest)"""
         decision_dict = self._serialize_decision(decision)
         decision_dict["_stored_at"] = datetime.utcnow().isoformat()
-        
-        with open(self.decisions_file, "a") as f:
-            f.write(json.dumps(decision_dict) + "\n")
+        self._crypto.write_line(self.decisions_file, decision_dict)
     
     def list_decisions(
         self,
@@ -254,39 +217,31 @@ class AlibiStore:
     ) -> List[Decision]:
         """List decisions with optional filter by incident_id"""
         decisions = []
-        
+
         if not self.decisions_file.exists():
             return decisions
-        
-        with open(self.decisions_file, "r") as f:
-            for line in f:
-                if not line.strip():
-                    continue
-                
-                decision_dict = json.loads(line)
-                
-                if incident_id and decision_dict.get("incident_id") != incident_id:
-                    continue
-                
-                decisions.append(self._deserialize_decision(decision_dict))
-                
-                if len(decisions) >= limit:
-                    break
-        
+
+        for decision_dict in self._crypto.read_lines(self.decisions_file):
+            if incident_id and decision_dict.get("incident_id") != incident_id:
+                continue
+
+            decisions.append(self._deserialize_decision(decision_dict))
+
+            if len(decisions) >= limit:
+                break
+
         return list(reversed(decisions))  # Most recent first
     
     # Audit operations
     
     def append_audit(self, action: str, data: Dict[str, Any]) -> None:
-        """Append audit log entry"""
+        """Append audit log entry (encrypted at rest)"""
         audit_entry = {
             "timestamp": datetime.utcnow().isoformat(),
             "action": action,
             "data": data,
         }
-        
-        with open(self.audit_file, "a") as f:
-            f.write(json.dumps(audit_entry) + "\n")
+        self._crypto.write_line(self.audit_file, audit_entry)
     
     # Serialization helpers
     

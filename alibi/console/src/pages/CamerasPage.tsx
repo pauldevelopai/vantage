@@ -24,12 +24,38 @@ const SOURCE_BADGE: Record<string, string> = {
   mobile: 'bg-green-100 text-green-800',
 };
 
+interface DiscoveredCamera {
+  ip: string;
+  port: number;
+  source_type: string;
+  rtsp_url: string;
+  name: string;
+  manufacturer: string;
+  model: string;
+  resolution: string;
+  discovery_method: string;
+  already_registered: boolean;
+}
+
+const DISCOVERY_BADGE: Record<string, string> = {
+  onvif: 'bg-purple-100 text-purple-800',
+  rtsp_scan: 'bg-blue-100 text-blue-800',
+  mdns: 'bg-green-100 text-green-800',
+};
+
 export function CamerasPage() {
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<Record<string, any> | null>(null);
+
+  // Network scan state
+  const [scanning, setScanning] = useState(false);
+  const [scanComplete, setScanComplete] = useState(false);
+  const [discovered, setDiscovered] = useState<DiscoveredCamera[]>([]);
+  const [addingCamera, setAddingCamera] = useState<string | null>(null);
+  const [showScanResults, setShowScanResults] = useState(false);
 
   // Form state
   const [formId, setFormId] = useState('');
@@ -134,6 +160,72 @@ export function CamerasPage() {
     }
   }
 
+  async function handleScanNetwork() {
+    setScanning(true);
+    setScanComplete(false);
+    setDiscovered([]);
+    setShowScanResults(true);
+
+    try {
+      await api.scanCameras();
+
+      // Poll for results
+      const poll = async () => {
+        try {
+          const status = await api.getScanStatus();
+          setDiscovered(status.discovered || []);
+
+          if (status.status === 'completed' || status.status === 'idle') {
+            setScanning(false);
+            setScanComplete(true);
+          } else {
+            setTimeout(poll, 1500);
+          }
+        } catch {
+          setScanning(false);
+          setScanComplete(true);
+        }
+      };
+
+      setTimeout(poll, 2000);
+    } catch (error) {
+      console.error('Failed to start network scan:', error);
+      setScanning(false);
+      alert('Failed to start network scan');
+    }
+  }
+
+  async function handleAddDiscovered(cam: DiscoveredCamera) {
+    setAddingCamera(cam.ip);
+    try {
+      await api.addDiscoveredCamera({
+        ip: cam.ip,
+        port: cam.port,
+        rtsp_url: cam.rtsp_url,
+        source_type: cam.source_type,
+        name: cam.name || `Camera ${cam.ip}`,
+        location: '',
+      });
+      // Mark as registered in local state
+      setDiscovered(prev =>
+        prev.map(d => d.ip === cam.ip ? { ...d, already_registered: true } : d)
+      );
+      loadCameras();
+    } catch (error) {
+      console.error('Failed to add discovered camera:', error);
+      alert('Failed to add camera');
+    } finally {
+      setAddingCamera(null);
+    }
+  }
+
+  async function handleAddAllDiscovered() {
+    const newCameras = discovered.filter(d => !d.already_registered);
+    for (const cam of newCameras) {
+      await handleAddDiscovered(cam);
+    }
+  }
+
   const onlineCount = cameras.filter(c => c.status === 'online').length;
   const offlineCount = cameras.filter(c => c.status === 'offline').length;
 
@@ -154,12 +246,31 @@ export function CamerasPage() {
           </p>
         </div>
         {isAdmin && (
-          <button
-            onClick={() => { resetForm(); setShowForm(!showForm); }}
-            className="mt-3 sm:mt-0 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700"
-          >
-            {showForm ? 'Cancel' : 'Add Camera'}
-          </button>
+          <div className="mt-3 sm:mt-0 flex gap-2">
+            <button
+              onClick={handleScanNetwork}
+              disabled={scanning}
+              className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-md hover:bg-green-700 disabled:bg-green-300 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {scanning ? (
+                <>
+                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                  Scanning...
+                </>
+              ) : (
+                <>
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.858 15.355-5.858 21.213 0" /></svg>
+                  Scan Network
+                </>
+              )}
+            </button>
+            <button
+              onClick={() => { resetForm(); setShowForm(!showForm); }}
+              className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700"
+            >
+              {showForm ? 'Cancel' : 'Add Camera'}
+            </button>
+          </div>
         )}
       </div>
 
@@ -311,11 +422,120 @@ export function CamerasPage() {
         </div>
       )}
 
+      {/* Network Scan Results */}
+      {showScanResults && (
+        <div className="bg-white shadow rounded-lg p-6 mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <h2 className="text-lg font-medium text-gray-900">
+                {scanning ? 'Scanning Network...' : 'Discovered Cameras'}
+              </h2>
+              {scanning && (
+                <span className="inline-flex items-center gap-1 text-sm text-green-600">
+                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                  Probing ONVIF, RTSP, mDNS...
+                </span>
+              )}
+              {scanComplete && (
+                <span className="text-sm text-gray-500">
+                  Found {discovered.length} camera{discovered.length !== 1 ? 's' : ''}
+                  {discovered.filter(d => !d.already_registered).length > 0 &&
+                    ` — ${discovered.filter(d => !d.already_registered).length} new`
+                  }
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {scanComplete && discovered.filter(d => !d.already_registered).length > 1 && (
+                <button
+                  onClick={handleAddAllDiscovered}
+                  className="px-3 py-1.5 text-xs font-medium text-white bg-green-600 rounded-md hover:bg-green-700"
+                >
+                  Add All New ({discovered.filter(d => !d.already_registered).length})
+                </button>
+              )}
+              <button
+                onClick={() => setShowScanResults(false)}
+                className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 rounded-md hover:bg-gray-200"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+
+          {discovered.length === 0 && scanning && (
+            <div className="text-center py-8">
+              <div className="inline-flex items-center gap-2 text-gray-500">
+                <svg className="animate-pulse h-5 w-5 text-green-500" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5.05 3.636a1 1 0 010 1.414 7 7 0 000 9.9 1 1 0 11-1.414 1.414 9 9 0 010-12.728 1 1 0 011.414 0zm9.9 0a1 1 0 011.414 0 9 9 0 010 12.728 1 1 0 01-1.414-1.414 7 7 0 000-9.9 1 1 0 010-1.414zM7.879 6.464a1 1 0 010 1.414 3 3 0 000 4.243 1 1 0 11-1.415 1.414 5 5 0 010-7.07 1 1 0 011.415 0zm4.242 0a1 1 0 011.415 0 5 5 0 010 7.072 1 1 0 01-1.415-1.415 3 3 0 000-4.242 1 1 0 010-1.415zM10 9a1 1 0 100 2 1 1 0 000-2z" clipRule="evenodd" /></svg>
+                Scanning local network for cameras...
+              </div>
+              <p className="text-xs text-gray-400 mt-2">This may take 10-30 seconds depending on network size</p>
+            </div>
+          )}
+
+          {discovered.length === 0 && scanComplete && (
+            <div className="text-center py-8 text-gray-500">
+              <p>No cameras found on the local network.</p>
+              <p className="text-xs text-gray-400 mt-1">Ensure cameras are powered on and connected to the same network.</p>
+            </div>
+          )}
+
+          {discovered.length > 0 && (
+            <div className="space-y-2">
+              {discovered.map((cam, idx) => (
+                <div
+                  key={`${cam.ip}-${idx}`}
+                  className={`border rounded-lg p-3 flex items-center justify-between ${
+                    cam.already_registered ? 'bg-gray-50 border-gray-200' : 'bg-green-50 border-green-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={`flex-shrink-0 w-2.5 h-2.5 rounded-full ${cam.already_registered ? 'bg-gray-400' : 'bg-green-500'}`} />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-medium text-gray-900 text-sm">{cam.name || cam.ip}</span>
+                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${DISCOVERY_BADGE[cam.discovery_method] || 'bg-gray-100 text-gray-800'}`}>
+                          {cam.discovery_method === 'rtsp_scan' ? 'RTSP' : cam.discovery_method.toUpperCase()}
+                        </span>
+                        {cam.manufacturer && (
+                          <span className="text-xs text-gray-500">{cam.manufacturer} {cam.model}</span>
+                        )}
+                      </div>
+                      <div className="text-xs text-gray-500 font-mono mt-0.5">
+                        {cam.ip}:{cam.port}
+                        {cam.rtsp_url && <span className="ml-2 text-gray-400">{cam.rtsp_url}</span>}
+                        {cam.resolution && <span className="ml-2">{cam.resolution}</span>}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex-shrink-0 ml-3">
+                    {cam.already_registered ? (
+                      <span className="inline-flex items-center px-2.5 py-1 text-xs font-medium text-gray-500 bg-gray-100 rounded-md">
+                        Already Added
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => handleAddDiscovered(cam)}
+                        disabled={addingCamera === cam.ip}
+                        className="px-3 py-1.5 text-xs font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                      >
+                        {addingCamera === cam.ip ? 'Adding...' : 'Add Camera'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Camera List */}
       {cameras.length === 0 ? (
         <div className="text-center py-12 bg-white rounded-lg shadow">
           <p className="text-gray-500">No cameras registered.</p>
-          {isAdmin && <p className="text-sm text-gray-400 mt-1">Click "Add Camera" to register one, or open the mobile camera to auto-register.</p>}
+          {isAdmin && <p className="text-sm text-gray-400 mt-1">Click "Scan Network" to auto-discover cameras, or "Add Camera" to register manually.</p>}
         </div>
       ) : (
         <div className="space-y-3">

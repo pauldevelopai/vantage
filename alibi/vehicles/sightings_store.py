@@ -11,6 +11,8 @@ from datetime import datetime
 from typing import List, Optional, Dict, Any, Tuple
 from dataclasses import dataclass, asdict
 
+from alibi.encryption import get_encrypted_writer
+
 
 @dataclass
 class VehicleSighting:
@@ -75,7 +77,8 @@ class VehicleSightingsStore:
     def __init__(self, storage_path: str = "alibi/data/vehicle_sightings.jsonl"):
         self.storage_path = Path(storage_path)
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
-        
+        self._crypto = get_encrypted_writer()
+
         # Create file if it doesn't exist
         if not self.storage_path.exists():
             self.storage_path.touch()
@@ -83,45 +86,38 @@ class VehicleSightingsStore:
     
     def add_sighting(self, sighting: VehicleSighting) -> None:
         """
-        Add sighting to store.
-        
+        Add sighting to store (encrypted at rest).
+
         Args:
             sighting: VehicleSighting to add
         """
-        with open(self.storage_path, 'a') as f:
-            f.write(json.dumps(sighting.to_dict()) + '\n')
+        self._crypto.write_line(self.storage_path, sighting.to_dict())
     
     def load_all(self, limit: Optional[int] = None) -> List[VehicleSighting]:
         """
         Load all sightings (or limited number).
-        
+
         Args:
             limit: Maximum number of sightings to load (most recent)
-            
+
         Returns:
             List of VehicleSighting objects
         """
         sightings = []
-        
+
         if not self.storage_path.exists():
             return sightings
-        
-        with open(self.storage_path, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                
-                try:
-                    data = json.loads(line)
-                    sightings.append(VehicleSighting.from_dict(data))
-                except Exception as e:
-                    print(f"[VehicleSightingsStore] Error loading sighting: {e}")
-        
+
+        for data in self._crypto.read_lines(self.storage_path):
+            try:
+                sightings.append(VehicleSighting.from_dict(data))
+            except Exception as e:
+                print(f"[VehicleSightingsStore] Error loading sighting: {e}")
+
         # If limit specified, return most recent
         if limit and len(sightings) > limit:
             sightings = sightings[-limit:]
-        
+
         return sightings
     
     def search(

@@ -33,7 +33,13 @@ exporter = TrainingDataExporter(training_store)
 @router.get("/training", response_class=HTMLResponse)
 async def training_page():
     """Training Data page with human validation"""
-    return HTMLResponse(content=TRAINING_HTML)
+    from alibi.alibi_nav import build_nav
+    nav_css, nav_html, nav_js = build_nav(active_page="training")
+    html = TRAINING_HTML
+    html = html.replace("</style>", nav_css + "\n    </style>", 1)
+    html = html.replace("<body>", "<body>\n" + nav_html, 1)
+    html = html.replace("</body>", nav_js + "\n</body>", 1)
+    return HTMLResponse(content=html)
 
 
 @router.get("/training/stats")
@@ -510,7 +516,7 @@ TRAINING_HTML = """
 </head>
 <body>
     <div class="container">
-        <a href="/" class="back-btn">← Back to Dashboard</a>
+        <!-- nav bar provides navigation -->
         
         <div class="header">
             <h1>🎓 Training Data Review</h1>
@@ -536,6 +542,18 @@ TRAINING_HTML = """
             </div>
         </div>
         
+        <div class="card" id="ai-training-card">
+            <h2>AI Training Examples</h2>
+            <div style="display: flex; align-items: center; gap: 20px; margin-bottom: 10px;">
+                <div style="font-size: 48px; font-weight: bold; color: #6366f1;" id="ai-training-count">-</div>
+                <div>
+                    <div style="color: #666; font-size: 14px;">Automatically collected from camera analysis</div>
+                    <div style="color: #666; font-size: 14px;">Index type: <strong id="ai-index-type">-</strong></div>
+                </div>
+            </div>
+            <div id="ai-category-breakdown" style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px;"></div>
+        </div>
+
         <div class="card">
             <h2>Fine-Tune Ready</h2>
             <div style="display: flex; align-items: center; gap: 20px; margin-bottom: 20px;">
@@ -649,6 +667,24 @@ TRAINING_HTML = """
             }
         }
         
+        // Load AI training agent stats
+        async function loadAITrainingStats() {
+            try {
+                const stats = await apiCall('/api/training/stats');
+                document.getElementById('ai-training-count').textContent = stats.total_examples || 0;
+                document.getElementById('ai-index-type').textContent = stats.index_type || 'none';
+
+                const breakdown = document.getElementById('ai-category-breakdown');
+                if (stats.by_category) {
+                    breakdown.innerHTML = Object.entries(stats.by_category).map(([cat, count]) =>
+                        `<span style="background: #eef2ff; color: #4f46e5; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 500;">${cat}: ${count}</span>`
+                    ).join('');
+                }
+            } catch (error) {
+                console.error('Failed to load AI training stats:', error);
+            }
+        }
+
         // Load pending incidents
         async function loadIncidents() {
             try {
@@ -835,11 +871,13 @@ TRAINING_HTML = """
         // Initial load
         loadStats();
         loadIncidents();
-        
+        loadAITrainingStats();
+
         // Refresh every 30 seconds
         setInterval(() => {
             loadStats();
             loadIncidents();
+            loadAITrainingStats();
         }, 30000);
     </script>
 </body>
