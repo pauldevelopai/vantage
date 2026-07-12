@@ -31,7 +31,7 @@ torchaudio>=2.1.0
 # OSNet embeddings let the same vehicle/person be matched across cameras by
 # appearance (cosine similarity) even with no readable plate. MIT licensed.
 # torchreid needs these transitively; they are not always pulled in cleanly.
-torchreid>=1.4.0
+torchreid>=0.2.5    # PyPI tops out at 0.2.5 (has torchreid.reid.utils.FeatureExtractor)
 scipy>=1.10.0
 gdown>=4.7.0        # downloads pretrained OSNet weights on first use
 tensorboard>=2.14.0
