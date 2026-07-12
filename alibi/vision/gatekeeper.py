@@ -23,6 +23,7 @@ If the gate rejects, the data is stored as baseline/noise, NOT training.
 from dataclasses import dataclass
 from typing import List, Dict, Any, Tuple, Optional
 from pathlib import Path
+import os
 import cv2
 import numpy as np
 from datetime import datetime
@@ -32,7 +33,16 @@ try:
     YOLO_AVAILABLE = True
 except ImportError:
     YOLO_AVAILABLE = False
-    print("⚠️  ultralytics not installed. Install with: pip install ultralytics")
+
+
+def _dfine_available() -> bool:
+    """True if D-FINE's backend (transformers + torch) is importable."""
+    try:
+        import torch  # noqa: F401
+        import transformers  # noqa: F401
+        return True
+    except ImportError:
+        return False
 
 
 @dataclass
@@ -110,27 +120,64 @@ class VisionGatekeeper:
     def __init__(
         self,
         model_path: str = "yolov8n.pt",
-        policy: Optional[GatekeeperPolicy] = None
+        policy: Optional[GatekeeperPolicy] = None,
+        backend: Optional[str] = None,
     ):
         """
         Initialize the gatekeeper.
-        
+
         Args:
-            model_path: Path to YOLO model (default: yolov8n.pt - nano, fast)
-            policy: GatekeeperPolicy or None (uses defaults)
+            model_path: Path to YOLO model (used only for the YOLO backend).
+            policy: GatekeeperPolicy or None (uses defaults).
+            backend: "dfine" | "yolo" | None. If None, resolved from the
+                ALIBI_DETECTOR env var, else defaults to D-FINE (Apache-2.0)
+                when available, falling back to YOLO (AGPL) otherwise.
         """
-        if not YOLO_AVAILABLE:
-            raise ImportError(
-                "ultralytics not installed. "
-                "Install with: pip install ultralytics"
-            )
-        
-        self.model = YOLO(model_path)
         self.policy = policy or GatekeeperPolicy()
-        
-        # COCO class names
-        self.class_names = self.model.names
-        
+        self.backend = self._select_backend(backend, model_path)
+
+        if self.backend == "dfine":
+            from alibi.vision.dfine_detector import DFineDetector
+            self._detector = DFineDetector()
+            self.model = None
+            # {class_id: class_name}, mirrors ultralytics `model.names`.
+            self.class_names = self._detector.class_names
+        else:
+            if not YOLO_AVAILABLE:
+                raise ImportError(
+                    "No detector backend available. Install D-FINE "
+                    "('pip install transformers torch timm') or YOLO "
+                    "('pip install ultralytics')."
+                )
+            self._detector = None
+            self.model = YOLO(model_path)
+            self.class_names = self.model.names
+
+    @staticmethod
+    def _select_backend(backend: Optional[str], model_path: str) -> str:
+        """
+        Decide which detector backend to use.
+
+        Preference order: explicit `backend` arg > ALIBI_DETECTOR env var >
+        a "dfine" hint in model_path > default (D-FINE). Any D-FINE choice
+        falls back to YOLO if transformers/torch are not installed.
+        """
+        choice = (backend or os.getenv("ALIBI_DETECTOR", "")).strip().lower()
+        if choice not in ("dfine", "yolo"):
+            choice = "dfine" if "dfine" in str(model_path).lower() else "dfine"
+
+        if choice == "dfine":
+            if _dfine_available():
+                return "dfine"
+            if YOLO_AVAILABLE:
+                print("[gatekeeper] D-FINE backend requested but transformers/torch "
+                      "not installed; falling back to YOLO (AGPL). "
+                      "Install with: pip install transformers torch timm")
+                return "yolo"
+            # Neither available — let the YOLO branch raise the clear ImportError.
+            return "yolo"
+        return "yolo"
+
     def detect_objects(
         self,
         frame: np.ndarray,
@@ -146,8 +193,13 @@ class VisionGatekeeper:
         Returns:
             List of Detection objects
         """
+        # D-FINE backend (Apache-2.0): delegate to the drop-in detector.
+        if self.backend == "dfine":
+            return self._detector.detect(frame, conf_threshold=conf_threshold)
+
+        # YOLO backend (legacy, AGPL).
         results = self.model(frame, conf=conf_threshold, verbose=False)
-        
+
         detections = []
         for result in results:
             boxes = result.boxes

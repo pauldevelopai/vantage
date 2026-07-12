@@ -30,14 +30,14 @@ from alibi.vision.scene_analyzer import SceneAnalyzer
 from alibi.camera_analysis_store import CameraAnalysis, get_camera_analysis_store
 from alibi.known_persons import KnownPerson, KnownPersonsStore, get_known_persons_store
 from alibi.continuous_learning import get_learning_system
-from alibi.plates.plate_detect import PlateDetector
-from alibi.plates.plate_ocr import PlateOCR
+from alibi.plates import get_plate_detector, get_plate_ocr
 from alibi.plates.normalize import normalize_plate, format_plate_display
 from alibi.plates.hotlist_store import HotlistStore
 from alibi.plates.travel_detector import ImpossibleTravelDetector
 from alibi.vehicles.sightings_store import VehicleSightingsStore, VehicleSighting
 from alibi.cameras.camera_store import get_camera_store
 from alibi.cameras.cross_camera import get_cross_camera_tracker
+from alibi.cameras.appearance_reid import AppearanceEmbedder
 from alibi.watchlist.face_detect import FaceDetector
 from alibi.watchlist.face_embed import FaceEmbedder
 from alibi.watchlist.face_match import FaceMatcher
@@ -67,6 +67,7 @@ _face_detector = None
 _face_embedder = None
 _face_matcher = None
 _watchlist_store = None
+_vehicle_embedder = None
 
 
 def get_security_components():
@@ -74,7 +75,7 @@ def get_security_components():
     global _gatekeeper, _tracker, _rule_evaluator, _incident_manager, _intelligence_store
     global _plate_detector, _plate_ocr, _hotlist_store, _sightings_store, _travel_detector
     global _camera_store, _cross_camera_tracker
-    global _face_detector, _face_embedder, _face_matcher, _watchlist_store
+    global _face_detector, _face_embedder, _face_matcher, _watchlist_store, _vehicle_embedder
     
     if _gatekeeper is None:
         policy = GatekeeperPolicy(min_combined_conf=0.5)
@@ -107,10 +108,10 @@ def get_security_components():
         _intelligence_store = IntelligenceStore()
 
     if _plate_detector is None:
-        _plate_detector = PlateDetector()
+        _plate_detector = get_plate_detector()
 
     if _plate_ocr is None:
-        _plate_ocr = PlateOCR()
+        _plate_ocr = get_plate_ocr()
 
     if _hotlist_store is None:
         _hotlist_store = HotlistStore()
@@ -138,6 +139,17 @@ def get_security_components():
 
     if _watchlist_store is None:
         _watchlist_store = WatchlistStore()
+
+    if _vehicle_embedder is None:
+        # ReID embedder for cross-camera vehicle matching. If the ReID model
+        # (torchreid) is not installed, .available is False and the vehicle
+        # appearance block is skipped gracefully.
+        _vehicle_embedder = AppearanceEmbedder(kind="vehicle")
+        if _vehicle_embedder.available:
+            print(f"[VehicleAppearance] ReID embedder ready ({_vehicle_embedder.backend})")
+        else:
+            print("[VehicleAppearance] ReID embedder unavailable "
+                  "(install torchreid to enable cross-camera vehicle matching)")
 
     return _gatekeeper, _tracker, _rule_evaluator, _incident_manager, _intelligence_store
 
@@ -423,7 +435,6 @@ async def analyze_frame_secure(
                 # FACE SIGHTING INDEX: Record every detected face
                 try:
                     import uuid as _uuid
-                    import hashlib as _hashlib
                     from alibi.watchlist.face_sighting_store import FaceSighting, get_face_sighting_store
 
                     sighting = FaceSighting(
@@ -440,16 +451,19 @@ async def analyze_frame_secure(
                     )
                     get_face_sighting_store().add_sighting(sighting)
 
-                    # Cross-camera tracking for unknown faces
+                    # Cross-camera tracking for unknown faces.
+                    # Match by APPEARANCE (embedding cosine similarity) so the
+                    # same unknown person seen at multiple cameras is linked.
+                    # The old approach hashed the embedding (MD5), which never
+                    # matched two non-identical views of the same person.
                     if not is_match and embedding is not None:
-                        face_hash = _hashlib.md5(
-                            embedding.tobytes() if hasattr(embedding, 'tobytes') else bytes(embedding)
-                        ).hexdigest()[:12]
-                        _cross_camera_tracker.record_sighting(
+                        _cross_camera_tracker.record_appearance_sighting(
                             camera_id=camera_id,
                             entity_type="unknown_face",
-                            entity_id=face_hash,
+                            embedding=embedding,
                             timestamp=timestamp.isoformat(),
+                            match_threshold=0.85,
+                            id_prefix="unknown_face",
                         )
                 except Exception as e:
                     print(f"[FaceSightingIndex] Error recording sighting: {e}")
@@ -457,6 +471,50 @@ async def analyze_frame_secure(
                 detected_faces.append(face_result)
     except Exception as e:
         print(f"[FaceRecognition] Error: {e}")
+
+    # VEHICLE APPEARANCE MATCHING: link the SAME vehicle across cameras by
+    # appearance (ReID embedding), even with no readable plate. Uses the YOLO
+    # gatekeeper's vehicle detections as crop sources.
+    vehicle_cross_alerts = []
+    vehicle_travel_hit = False
+    try:
+        if _vehicle_embedder is not None and _vehicle_embedder.available:
+            VEHICLE_CLASSES = {"car", "truck", "bus", "motorcycle"}
+            for d in result.get("detections", []):
+                if d.class_name not in VEHICLE_CLASSES:
+                    continue
+                x, y, w, h = d.bbox
+                x, y = max(0, int(x)), max(0, int(y))
+                crop = frame[y:y + int(h), x:x + int(w)]
+                if crop.size == 0:
+                    continue
+                emb = _vehicle_embedder.embed(crop)
+                if emb is None:
+                    continue
+                entity_id, alerts = _cross_camera_tracker.record_appearance_sighting(
+                    camera_id=camera_id,
+                    entity_type="vehicle",
+                    embedding=emb,
+                    timestamp=timestamp.isoformat(),
+                    metadata={
+                        "class": d.class_name,
+                        "det_confidence": round(float(d.confidence), 3),
+                    },
+                    match_threshold=0.6,
+                    id_prefix="vehicle",
+                )
+                for ca in alerts:
+                    vehicle_cross_alerts.append({
+                        "entity_id": entity_id,
+                        "type": ca.alert_type,
+                        "message": ca.message,
+                        "cameras": ca.cameras,
+                        "severity": ca.severity,
+                    })
+                    if ca.alert_type == "impossible_travel":
+                        vehicle_travel_hit = True
+    except Exception as e:
+        print(f"[VehicleAppearance] Error: {e}")
 
     # NOW assess threat level with AI activities
     detections = result.get("detections", [])
@@ -478,6 +536,14 @@ async def analyze_frame_secure(
         threat_level = "warning"
         threat_color = "#ef4444"
         threat_message = f"WATCHLIST FACE MATCH: Person appears to match '{watchlist_match_label}'"
+
+    # Escalate threat if a vehicle appears at multiple cameras impossibly fast
+    if vehicle_travel_hit and threat_level in ("safe", "caution"):
+        threat_level = "warning"
+        threat_color = "#ef4444"
+        _msg = next((a["message"] for a in vehicle_cross_alerts
+                     if a["type"] == "impossible_travel"), "Cross-camera vehicle match")
+        threat_message = f"POSSIBLE VEHICLE OF INTEREST: {_msg}"
 
     # CONTINUOUS LEARNING: Get additional threat intelligence
     learning_system = get_learning_system()
@@ -584,6 +650,11 @@ async def analyze_frame_secure(
         "faces": {
             "detected": detected_faces,
             "count": len(detected_faces),
+        },
+        "vehicle_cross_camera": {
+            "alerts": vehicle_cross_alerts,
+            "count": len(vehicle_cross_alerts),
+            "reid_enabled": bool(_vehicle_embedder and _vehicle_embedder.available),
         },
         "scores": result.get("scores", {}),
         "eligible_for_training": result.get("eligible", False),

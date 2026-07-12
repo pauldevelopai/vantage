@@ -10,10 +10,13 @@ import time
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 
+import numpy as np
+
 from alibi.encryption import get_encrypted_writer
+from alibi.cameras.appearance_reid import cosine_similarity, l2_normalize
 
 
 @dataclass
@@ -52,6 +55,14 @@ class CrossCameraTracker:
 
         # In-memory: {entity_key: [(camera_id, timestamp_iso, metadata), ...]}
         self._sightings: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+
+        # Appearance galleries for ReID matching:
+        #   {entity_type: {entity_id: representative_embedding (L2-normalised)}}
+        self._galleries: Dict[str, Dict[str, np.ndarray]] = defaultdict(dict)
+        # Count of samples averaged into each gallery embedding (running mean).
+        self._gallery_counts: Dict[str, Dict[str, int]] = defaultdict(dict)
+        # Monotonic counter for minting new appearance-based entity IDs.
+        self._new_entity_counter = 0
 
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
         self._load_recent()
@@ -147,6 +158,105 @@ class CrossCameraTracker:
             alerts.append(alert)
 
         return alerts
+
+    def record_appearance_sighting(
+        self,
+        camera_id: str,
+        entity_type: str,
+        embedding: Any,
+        timestamp: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        match_threshold: float = 0.6,
+        id_prefix: Optional[str] = None,
+    ) -> Tuple[str, List[CrossCameraAlert]]:
+        """
+        Record a sighting identified by APPEARANCE (a ReID embedding) rather
+        than an exact string key.
+
+        The embedding is matched by cosine similarity against the recent
+        gallery for `entity_type`. If it is close enough to a known entity
+        (>= match_threshold), that entity's id is reused — so the SAME vehicle
+        or person seen at another camera is correctly linked even with no
+        readable plate. Otherwise a new entity id is minted.
+
+        Returns (resolved_entity_id, alerts).
+        """
+        metadata = metadata or {}
+        emb = None
+        if embedding is not None:
+            emb = np.asarray(embedding, dtype=np.float32).ravel()
+            if emb.size == 0:
+                emb = None
+
+        entity_id, score = self._resolve_entity_by_appearance(
+            entity_type, emb, match_threshold
+        )
+
+        if entity_id is None:
+            # No match — mint a new appearance-based identity.
+            self._new_entity_counter += 1
+            prefix = id_prefix or entity_type
+            entity_id = f"{prefix}_{self._new_entity_counter:06d}"
+            if emb is not None:
+                self._galleries[entity_type][entity_id] = l2_normalize(emb)
+                self._gallery_counts[entity_type][entity_id] = 1
+        else:
+            # Matched an existing identity — refine its gallery embedding and
+            # annotate the sighting with the match score for auditability.
+            if emb is not None:
+                self._update_gallery(entity_type, entity_id, emb)
+            metadata = {**metadata, "reid_match_score": round(score, 4)}
+
+        alerts = self.record_sighting(
+            camera_id, entity_type, entity_id, timestamp, metadata
+        )
+        return entity_id, alerts
+
+    def _resolve_entity_by_appearance(
+        self, entity_type: str, emb: Optional[np.ndarray], match_threshold: float
+    ) -> Tuple[Optional[str], float]:
+        """
+        Find the best-matching known entity of `entity_type` for embedding
+        `emb`. Only entities with at least one sighting still inside the
+        retention window are considered. Returns (entity_id, score) if the
+        best cosine similarity meets the threshold, else (None, best_score).
+        """
+        if emb is None:
+            return None, 0.0
+
+        gallery = self._galleries.get(entity_type, {})
+        best_id: Optional[str] = None
+        best_score = 0.0
+
+        for entity_id, ref in gallery.items():
+            # Skip entities that have aged out of the retention window.
+            if not self._has_recent_sighting(entity_type, entity_id):
+                continue
+            score = cosine_similarity(emb, ref)
+            if score > best_score:
+                best_score = score
+                best_id = entity_id
+
+        if best_id is not None and best_score >= match_threshold:
+            return best_id, best_score
+        return None, best_score
+
+    def _has_recent_sighting(self, entity_type: str, entity_id: str) -> bool:
+        key = self._entity_key(entity_type, entity_id)
+        return len(self._sightings.get(key, [])) > 0
+
+    def _update_gallery(self, entity_type: str, entity_id: str, emb: np.ndarray) -> None:
+        """Blend a new embedding into an entity's gallery via running mean."""
+        ref = self._galleries[entity_type].get(entity_id)
+        n = self._gallery_counts[entity_type].get(entity_id, 0)
+        if ref is None or n == 0:
+            self._galleries[entity_type][entity_id] = l2_normalize(emb)
+            self._gallery_counts[entity_type][entity_id] = 1
+            return
+        # Incremental mean, then re-normalise.
+        blended = (ref * n + l2_normalize(emb)) / (n + 1)
+        self._galleries[entity_type][entity_id] = l2_normalize(blended)
+        self._gallery_counts[entity_type][entity_id] = n + 1
 
     def _parse_ts(self, ts_str: str) -> Optional[datetime]:
         try:

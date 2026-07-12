@@ -14,8 +14,7 @@ import time
 
 from alibi.video.detectors.base import Detector, DetectionResult
 from alibi.video.zones import Zone
-from alibi.plates.plate_detect import PlateDetector
-from alibi.plates.plate_ocr import PlateOCR
+from alibi.plates import get_plate_detector, get_plate_ocr
 from alibi.plates.normalize import normalize_plate
 from alibi.vehicles.vehicle_detect import VehicleDetector
 from alibi.vehicles.vehicle_attrs import VehicleAttributeExtractor
@@ -59,8 +58,8 @@ class PlateVehicleMismatchDetector(Detector):
         self.evidence_dir = Path(self.config.get('evidence_dir', 'alibi/data/evidence'))
         
         # Initialize components
-        self.plate_detector = PlateDetector()
-        self.plate_ocr = PlateOCR()
+        self.plate_detector = get_plate_detector()
+        self.plate_ocr = get_plate_ocr()
         self.vehicle_detector = VehicleDetector()
         self.attr_extractor = VehicleAttributeExtractor()
         self.registry_store = PlateRegistryStore(self.registry_path)

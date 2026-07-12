@@ -27,6 +27,21 @@ torch>=2.1.0
 torchvision>=0.16.0
 torchaudio>=2.1.0
 
+# Appearance Re-Identification (ReID) for cross-camera correlation.
+# OSNet embeddings let the same vehicle/person be matched across cameras by
+# appearance (cosine similarity) even with no readable plate. MIT licensed.
+# torchreid needs these transitively; they are not always pulled in cleanly.
+torchreid>=1.4.0
+scipy>=1.10.0
+gdown>=4.7.0        # downloads pretrained OSNet weights on first use
+tensorboard>=2.14.0
+
+# D-FINE object detector (Apache-2.0) — preferred over YOLOv8n, which is
+# AGPL-3.0. The gatekeeper auto-selects D-FINE when transformers+torch are
+# present and falls back to YOLO otherwise. Force with ALIBI_DETECTOR=dfine|yolo.
+transformers>=4.48.0    # provides D-FINE via AutoModelForObjectDetection
+timm>=0.9.0             # backbone support for D-FINE / DETR models
+
 # Detectron2 for object detection (installed separately - see install_detectron2.sh)
 # detectron2 @ git+https://github.com/facebookresearch/detectron2.git
 
@@ -35,8 +50,12 @@ python-jose[cryptography]>=3.3.0
 bcrypt>=4.0.0
 python-multipart>=0.0.6
 
-# License plate recognition (optional but recommended for hotlist feature)
-easyocr>=1.7.0  # License plate OCR
+# License plate recognition — FastALPR (preferred: trained ONNX detector + OCR,
+# MIT licensed, no AGPL ultralytics runtime dependency). The plates package
+# auto-selects FastALPR when present and falls back to EasyOCR otherwise.
+fast-alpr>=0.4.0        # Plate detection + OCR (open-image-models + fast-plate-ocr)
+onnxruntime>=1.17.0     # ONNX inference backend for FastALPR
+easyocr>=1.7.0          # Legacy fallback OCR (used if FastALPR unavailable)
 
 # NLP / Embeddings (optional but recommended for full features)
 # These enable local semantic search - FREE, FAST, OFFLINE
