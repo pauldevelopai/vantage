@@ -1,0 +1,27 @@
+# systemd unit for the Vantage FastAPI app (uvicorn), co-located on the box.
+# Install:
+#   sudo cp deploy/vantage.service /etc/systemd/system/vantage.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now vantage
+#   systemctl status vantage        # check it's running
+#   journalctl -u vantage -f        # follow logs (first run downloads models)
+#
+# Binds 127.0.0.1:8000 (via production.env) so only Caddy reaches it.
+
+[Unit]
+Description=Vantage API (FastAPI / uvicorn)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/vantage
+EnvironmentFile=/home/ubuntu/vantage/alibi/config/production.env
+ExecStart=/home/ubuntu/vantage/.venv/bin/python -m alibi.alibi_api
+Restart=always
+RestartSec=5
+# ML models (D-FINE, OSNet, FastALPR) load into RAM on first request; allow time.
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target
