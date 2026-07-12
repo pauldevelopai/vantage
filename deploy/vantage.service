@@ -16,8 +16,12 @@ After=network.target
 Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/vantage
-EnvironmentFile=/home/ubuntu/vantage/alibi/config/production.env
-ExecStart=/home/ubuntu/vantage/.venv/bin/python -m alibi.alibi_api
+EnvironmentFile=-/home/ubuntu/vantage/alibi/config/production.env
+# Bind 127.0.0.1:8600 explicitly (Caddy fronts it). Port 8600 avoids the
+# existing services on this box — AIKit is on :8000, the Node app on :3001,
+# the Nodes on :4101-4105. The app's own default is :8000, so we override it
+# here rather than relying on config/env.
+ExecStart=/home/ubuntu/vantage/.venv/bin/python -m uvicorn alibi.alibi_api:app --host 127.0.0.1 --port 8600
 Restart=always
 RestartSec=5
 # ML models (D-FINE, OSNet, FastALPR) load into RAM on first request; allow time.

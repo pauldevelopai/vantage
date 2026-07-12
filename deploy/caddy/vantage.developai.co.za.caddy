@@ -17,17 +17,17 @@ vantage.developai.co.za {
     encode gzip zstd
     root * /home/ubuntu/vantage/alibi/console/dist
 
-    # ── API → FastAPI on :8000 ───────────────────────────────────────────
+    # ── API → FastAPI on :8600 ───────────────────────────────────────────
     # handle_path strips the /api prefix before proxying, matching the Vite
     # dev proxy's rewrite so the console's relative /api/* calls work in prod.
     handle_path /api/* {
-        reverse_proxy localhost:8000
+        reverse_proxy localhost:8600
     }
 
     # ── Server-served media (absolute paths returned by the API) → :8000 ──
     @backend path /media/* /evidence/* /camera_snapshots/*
     handle @backend {
-        reverse_proxy localhost:8000
+        reverse_proxy localhost:8600
     }
 
     # ── Everything else → the static console SPA (client-side routing) ────
