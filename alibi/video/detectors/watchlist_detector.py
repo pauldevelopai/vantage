@@ -240,7 +240,7 @@ def main():
     from alibi.watchlist.enroll import enroll_face
     
     parser = argparse.ArgumentParser(
-        description="Enroll face into Alibi watchlist"
+        description="Enroll face into Vantage watchlist"
     )
     
     parser.add_argument(

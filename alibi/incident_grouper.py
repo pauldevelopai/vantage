@@ -1,5 +1,5 @@
 """
-Alibi Incident Grouping Logic
+Vantage Incident Grouping Logic
 
 Deterministic rules for grouping camera events into incidents.
 """
@@ -9,14 +9,14 @@ from typing import Optional, List
 import hashlib
 
 from alibi.schemas import CameraEvent, Incident, IncidentStatus
-from alibi.alibi_store import AlibiStore
-from alibi.settings import AlibiSettings
+from alibi.alibi_store import VantageStore
+from alibi.settings import VantageSettings
 
 
 class IncidentGrouper:
     """Groups camera events into incidents with deduplication"""
     
-    def __init__(self, store: AlibiStore, settings: AlibiSettings):
+    def __init__(self, store: VantageStore, settings: VantageSettings):
         self.store = store
         self.settings = settings
     
@@ -145,8 +145,8 @@ class IncidentGrouper:
 
 def process_camera_event(
     event: CameraEvent,
-    store: AlibiStore,
-    settings: AlibiSettings
+    store: VantageStore,
+    settings: VantageSettings
 ) -> Incident:
     """
     Process a camera event and return the incident it belongs to.

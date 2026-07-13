@@ -2,7 +2,7 @@
 Data Manager
 
 Automatic data rotation, compression, and disk usage tracking.
-Ensures Alibi stays within disk capacity limits with configurable
+Ensures Vantage stays within disk capacity limits with configurable
 retention policies for snapshots, JSONL records, and face embeddings.
 """
 

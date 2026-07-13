@@ -1,5 +1,5 @@
 """
-Alibi CLI entry point
+Vantage CLI entry point
 
 Run with: python -m alibi.alibi_api
 """

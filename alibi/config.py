@@ -1,5 +1,5 @@
 """
-Alibi Configuration
+Vantage Configuration
 
 Safety thresholds and system configuration.
 """
@@ -10,8 +10,8 @@ from typing import Optional
 
 
 @dataclass
-class AlibiConfig:
-    """Configuration for Alibi incident management"""
+class VantageConfig:
+    """Configuration for Vantage incident management"""
     
     # Safety thresholds
     min_confidence_for_notify: float = 0.75
@@ -32,7 +32,7 @@ class AlibiConfig:
     require_evidence_for_dispatch: bool = True
     
     @classmethod
-    def from_env(cls) -> "AlibiConfig":
+    def from_env(cls) -> "VantageConfig":
         """Create config from environment variables"""
         return cls(
             min_confidence_for_notify=float(
@@ -51,4 +51,4 @@ class AlibiConfig:
 
 
 # Global default config
-DEFAULT_CONFIG = AlibiConfig.from_env()
+DEFAULT_CONFIG = VantageConfig.from_env()

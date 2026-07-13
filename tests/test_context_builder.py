@@ -20,7 +20,7 @@ from alibi.schemas import (
     IncidentStatus,
     RecommendedAction,
 )
-from alibi.config import AlibiConfig
+from alibi.config import VantageConfig
 from alibi.context import Availability, ContextBundle, ContextItem, ContextProvider, build_context
 from alibi.context.builder import _neutralize
 from alibi.alibi_engine import build_incident_plan, compile_alert
@@ -149,7 +149,7 @@ def test_unavailable_source_surfaced_in_disclaimer():
     )])
     inc = _incident(severity=2, confidence=0.9)
     plan = build_incident_plan(inc, context=bundle)
-    alert = compile_alert(plan, inc, config=AlibiConfig(), context=bundle)
+    alert = compile_alert(plan, inc, config=VantageConfig(), context=bundle)
     assert "could not be verified" in alert.disclaimer.lower()
     assert "Shift schedule" in alert.disclaimer
 
@@ -161,7 +161,7 @@ def test_context_recorded_on_incident_for_audit():
     )])
     inc = _incident()
     plan = build_incident_plan(inc, context=bundle)
-    compile_alert(plan, inc, config=AlibiConfig(), context=bundle)
+    compile_alert(plan, inc, config=VantageConfig(), context=bundle)
     assert "external_context" in inc.metadata
     assert inc.metadata["external_context"]["items"][0]["label"] == "Fake"
 
@@ -179,7 +179,7 @@ def test_render_for_prompt_flags_unavailable():
 def test_plan_and_alert_unchanged_without_context():
     inc = _incident(severity=3, confidence=0.9)
     plan = build_incident_plan(inc)  # no context arg
-    alert = compile_alert(plan, inc, config=AlibiConfig())  # no context arg
+    alert = compile_alert(plan, inc, config=VantageConfig())  # no context arg
     assert "external_context" not in inc.metadata
     assert alert.incident_id == "inc_1"
 

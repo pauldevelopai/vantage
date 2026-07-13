@@ -260,7 +260,7 @@ class TrainingDataExporter:
         # Build COCO format
         coco_data = {
             "info": {
-                "description": "Alibi Security Training Dataset",
+                "description": "Vantage Security Training Dataset",
                 "version": "1.0",
                 "year": datetime.utcnow().year,
                 "date_created": datetime.utcnow().isoformat()

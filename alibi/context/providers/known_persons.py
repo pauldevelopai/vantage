@@ -12,7 +12,7 @@ If no match was performed, the item is ABSENT (honest) - not "nobody known here"
 from typing import List, Optional
 
 from alibi.schemas import Incident
-from alibi.config import AlibiConfig
+from alibi.config import VantageConfig
 from alibi.known_persons import get_known_persons_store
 from alibi.context.schemas import Availability, ContextItem
 from alibi.context.provider import ContextProvider
@@ -36,7 +36,7 @@ def _find_match_id(incident: Incident) -> Optional[str]:
 class KnownPersonsContextProvider(ContextProvider):
     name = "known_persons"
 
-    def fetch(self, incident: Incident, config: Optional[AlibiConfig] = None) -> List[ContextItem]:
+    def fetch(self, incident: Incident, config: Optional[VantageConfig] = None) -> List[ContextItem]:
         match_id = _find_match_id(incident)
         if not match_id:
             return [ContextItem(

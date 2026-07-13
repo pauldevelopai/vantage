@@ -146,9 +146,9 @@ else:
 ### Python Configuration
 
 ```python
-from alibi.config import AlibiConfig
+from alibi.config import VantageConfig
 
-config = AlibiConfig(
+config = VantageConfig(
     min_confidence_for_notify=0.80,
     high_severity_threshold=3,
     openai_api_key="sk-...",
@@ -254,9 +254,9 @@ Alibi can optionally use OpenAI's API to generate alert text and shift reports. 
 
 Example with LLM:
 ```python
-from alibi.config import AlibiConfig
+from alibi.config import VantageConfig
 
-config = AlibiConfig(openai_api_key="sk-...")
+config = VantageConfig(openai_api_key="sk-...")
 alert = compile_alert(plan, incident, config)
 # Uses LLM to generate title and body
 ```

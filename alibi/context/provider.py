@@ -13,7 +13,7 @@ from abc import ABC, abstractmethod
 from typing import List, Optional
 
 from alibi.schemas import Incident
-from alibi.config import AlibiConfig
+from alibi.config import VantageConfig
 from alibi.context.schemas import ContextItem
 
 
@@ -24,6 +24,6 @@ class ContextProvider(ABC):
     name: str = "context_provider"
 
     @abstractmethod
-    def fetch(self, incident: Incident, config: Optional[AlibiConfig] = None) -> List[ContextItem]:
+    def fetch(self, incident: Incident, config: Optional[VantageConfig] = None) -> List[ContextItem]:
         """Return context items for this incident. May raise (handled by builder)."""
         raise NotImplementedError

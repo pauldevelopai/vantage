@@ -284,8 +284,8 @@ CAMERA_HISTORY_HTML = """
     <div class="modal" id="feedbackModal">
         <button class="modal-close" onclick="closeFeedbackModal()">×</button>
         <div class="modal-content">
-            <h2>🇿🇦 Improve Alibi Vision for South Africa</h2>
-            <p style="color: #666; margin-bottom: 20px;">Your corrections help Alibi understand South African context better!</p>
+            <h2>🇿🇦 Improve Vantage Vision for South Africa</h2>
+            <p style="color: #666; margin-bottom: 20px;">Your corrections help Vantage understand South African context better!</p>
             
             <form id="feedbackForm">
                 <input type="hidden" id="feedbackAnalysisId">
@@ -479,7 +479,7 @@ CAMERA_HISTORY_HTML = """
                 <p><strong>Method:</strong> ${snapshot.method}</p>
                 <hr style="margin: 20px 0;">
                 <div style="background: #f0f7ff; padding: 15px; border-radius: 10px; margin-bottom: 10px;">
-                    <strong>💡 Help Improve Alibi Vision for South Africa!</strong>
+                    <strong>💡 Help Improve Vantage Vision for South Africa!</strong>
                     <p style="font-size: 13px; margin-top: 5px;">
                         Your feedback helps us understand SA context better (townships, minibus taxis, local objects, etc.)
                     </p>
@@ -574,7 +574,7 @@ CAMERA_HISTORY_HTML = """
                 });
                 
                 if (response.ok) {
-                    alert('✅ Thank you! Your feedback helps improve Alibi Vision for South Africa!');
+                    alert('✅ Thank you! Your feedback helps improve Vantage Vision for South Africa!');
                     closeFeedbackModal();
                 } else {
                     const error = await response.json();

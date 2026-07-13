@@ -136,9 +136,9 @@ export OPENAI_API_KEY="sk-..."  # Optional for LLM text generation
 Or in Python:
 
 ```python
-from alibi.config import AlibiConfig
+from alibi.config import VantageConfig
 
-config = AlibiConfig(
+config = VantageConfig(
     min_confidence_for_notify=0.80,
     high_severity_threshold=3,
     openai_api_key="sk-...",

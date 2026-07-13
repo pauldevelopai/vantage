@@ -1,6 +1,6 @@
 """
 Mobile Home Page - Main entry point for iPhone/mobile access
-Provides access to all Alibi features from a single mobile-friendly page
+Provides access to all Vantage features from a single mobile-friendly page
 """
 from alibi.alibi_nav import build_nav
 
@@ -14,7 +14,7 @@ MOBILE_HOME_HTML = f"""
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <title>Alibi</title>
+    <title>Vantage</title>
     <style>
         {_nav_css}
 
@@ -226,7 +226,7 @@ MOBILE_HOME_HTML = f"""
         </div>
 
         <div class="footer">
-            Alibi Police Oversight System &middot; Namibia 2026
+            Vantage Police Oversight System &middot; Namibia 2026
         </div>
     </div>
 

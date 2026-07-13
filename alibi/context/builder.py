@@ -10,7 +10,7 @@ the pipeline never crashes because a side data source is down.
 from typing import List, Optional
 
 from alibi.schemas import Incident
-from alibi.config import AlibiConfig, DEFAULT_CONFIG
+from alibi.config import VantageConfig, DEFAULT_CONFIG
 from alibi.validator import contains_forbidden_language, suggest_neutral_alternative
 from alibi.context.schemas import Availability, ContextBundle, ContextItem
 from alibi.context.provider import ContextProvider
@@ -43,7 +43,7 @@ def _neutralize(text: str) -> str:
 
 def build_context(
     incident: Incident,
-    config: Optional[AlibiConfig] = None,
+    config: Optional[VantageConfig] = None,
     providers: Optional[List[ContextProvider]] = None,
 ) -> ContextBundle:
     """

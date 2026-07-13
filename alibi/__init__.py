@@ -1,5 +1,5 @@
 """
-Alibi - AI-Assisted Incident Alert Management System
+Vantage - AI-Assisted Incident Alert Management System
 
 This package provides incident detection, validation, and alert generation
 for security camera systems with human-in-the-loop safeguards.

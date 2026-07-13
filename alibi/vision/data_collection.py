@@ -1,5 +1,5 @@
 """
-Data Collection & Ingestion System for Alibi Vision
+Data Collection & Ingestion System for Vantage Vision
 
 Collects real-world usage data to improve AI vision for South African context.
 
@@ -58,7 +58,7 @@ class FeedbackRecord:
 
 class VisionDataCollector:
     """
-    Manages data collection for improving Alibi Vision.
+    Manages data collection for improving Vantage Vision.
     
     Focuses on:
     - South African context (townships, informal settlements, vehicles, etc.)
@@ -262,14 +262,14 @@ Be accurate, culturally sensitive, and context-aware. Describe what you see clea
     
     def export_improvement_report(self) -> str:
         """
-        Generate a report on how to improve Alibi Vision.
+        Generate a report on how to improve Vantage Vision.
         
         Returns markdown report.
         """
         stats = self.get_feedback_stats()
         vocab = self.extract_south_african_vocabulary()
         
-        report = f"""# Alibi Vision Improvement Report
+        report = f"""# Vantage Vision Improvement Report
 
 **Generated:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}
 

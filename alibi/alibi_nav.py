@@ -1,5 +1,5 @@
 """
-Alibi Shared Navigation Bar
+Vantage Shared Navigation Bar
 Injected into every FastAPI-served HTML page for uniform navigation.
 """
 
@@ -7,7 +7,7 @@ Injected into every FastAPI-served HTML page for uniform navigation.
 def get_nav_css():
     """CSS for the nav bar — injected into <head>"""
     return """
-    /* ── Alibi Nav Bar ── */
+    /* ── Vantage Nav Bar ── */
     .alibi-nav {
         position: fixed;
         top: 0;
@@ -134,7 +134,7 @@ def get_nav_html(active_page=""):
     return f"""
     <nav class="alibi-nav" id="alibi-nav">
         <div class="alibi-nav-inner">
-            <a href="/" class="alibi-nav-brand">Alibi</a>
+            <a href="/" class="alibi-nav-brand">Vantage</a>
             <div class="alibi-nav-links">
                 <a href="/camera/secure-stream" class="{cls('camera')}">Camera</a>
                 <a href="/camera/history" class="{cls('history')}">History</a>

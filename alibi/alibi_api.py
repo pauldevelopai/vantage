@@ -1,5 +1,5 @@
 """
-Alibi FastAPI Server
+Vantage FastAPI Server
 
 RESTful API for incident management.
 """
@@ -30,7 +30,7 @@ from alibi.alibi_engine import (
     validate_incident_plan,
     compile_alert,
 )
-from alibi.config import AlibiConfig
+from alibi.config import VantageConfig
 from alibi.sim.simulator_manager import get_simulator_manager
 from alibi.sim.event_simulator import Scenario
 from alibi.auth import (
@@ -51,7 +51,7 @@ from alibi.auth import (
 
 # FastAPI app
 app = FastAPI(
-    title="Alibi API",
+    title="Vantage API",
     description="AI-Assisted Incident Alert Management System",
     version="1.0.0",
 )
@@ -159,7 +159,7 @@ from fastapi.responses import HTMLResponse
 @app.get("/", response_class=HTMLResponse, tags=["Mobile"])
 async def mobile_home():
     """
-    Mobile-friendly home page with access to all Alibi features.
+    Mobile-friendly home page with access to all Vantage features.
     
     This is the main entry point for iPhone/mobile users.
     Provides quick access to:
@@ -268,7 +268,7 @@ class IncidentDetail(BaseModel):
 async def root():
     """API root endpoint"""
     return {
-        "service": "Alibi API",
+        "service": "Vantage API",
         "version": "1.0.0",
         "status": "operational",
     }
@@ -511,7 +511,7 @@ async def receive_camera_event(
     incident = process_camera_event(event, store, settings)
     
     # Build plan, validate, compile alert
-    config = AlibiConfig(
+    config = VantageConfig(
         min_confidence_for_notify=settings.min_confidence_for_notify,
         high_severity_threshold=settings.high_severity_threshold,
     )
@@ -1634,7 +1634,7 @@ async def start_simulator(
             incident = process_camera_event(camera_event, store, settings_obj)
             
             # Build plan, validate, compile alert
-            config = AlibiConfig(
+            config = VantageConfig(
                 min_confidence_for_notify=settings_obj.min_confidence_for_notify,
                 high_severity_threshold=settings_obj.high_severity_threshold,
             )
@@ -1792,7 +1792,7 @@ async def replay_events(
             store.append_event(camera_event)
             incident = process_camera_event(camera_event, store, settings_obj)
             
-            config = AlibiConfig(
+            config = VantageConfig(
                 min_confidence_for_notify=settings_obj.min_confidence_for_notify,
                 high_severity_threshold=settings_obj.high_severity_threshold,
             )
@@ -2199,7 +2199,7 @@ def main():
     
     settings = get_settings()
     
-    print(f"🔒 Starting Alibi API server...")
+    print(f"🔒 Starting Vantage API server...")
     print(f"   Host: {settings.api_host}")
     print(f"   Port: {settings.api_port}")
     print(f"   Docs: http://localhost:{settings.api_port}/docs")
