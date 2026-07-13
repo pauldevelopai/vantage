@@ -117,6 +117,26 @@ def build_incident_plan(
         f"{len(incident.events)} event(s) detected: {event_type_str} "
         f"(severity {max_severity}, confidence {avg_confidence:.2f})"
     )
+
+    # Sensitive detections MUST carry neutral "possible ... / requires
+    # verification" language, or the validator's hard rules reject the plan and
+    # NO alert is produced for the highest-priority incidents. Keep this in sync
+    # with the *_REQUIRED_PATTERNS in validator.py.
+    _SENSITIVE_QUALIFIERS = {
+        "watchlist_match": "possible match",
+        "hotlist_plate_match": "possible match",
+        "red_light_violation": "possible violation",
+        "plate_vehicle_mismatch": "possible mismatch",
+    }
+    qualifiers = []
+    if has_watchlist and "possible match" not in qualifiers:
+        qualifiers.append("possible match")
+    for et in sorted(event_types):
+        q = _SENSITIVE_QUALIFIERS.get(et)
+        if q and q not in qualifiers:
+            qualifiers.append(q)
+    if qualifiers:
+        summary_1line += f" — {', '.join(qualifiers)}; requires verification"
     
     # Caution-only fusion of external context. Never lowers severity, never
     # changes the recommended action, never downgrades review - only tightens.
