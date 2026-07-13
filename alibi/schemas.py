@@ -1,5 +1,5 @@
 """
-Alibi Schema Definitions
+Vantage Schema Definitions
 
 All core data structures for incident management, validation, and alerting.
 """

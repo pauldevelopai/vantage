@@ -1,5 +1,5 @@
 """
-Alibi Traffic Enforcement System
+Vantage Traffic Enforcement System
 
 Red light violation detection with evidence capture.
 ALWAYS requires human verification. NO automated citations.

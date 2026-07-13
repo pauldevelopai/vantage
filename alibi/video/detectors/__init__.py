@@ -1,5 +1,5 @@
 """
-Alibi Detectors Package
+Vantage Detectors Package
 
 Modular, swappable detectors for event generation.
 """

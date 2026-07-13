@@ -1,5 +1,5 @@
 """
-Alibi Video Worker CLI
+Vantage Video Worker CLI
 
 Entry point for: python -m alibi.video.worker
 """

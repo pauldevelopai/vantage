@@ -1,5 +1,5 @@
 """
-Alibi Video Processing Package
+Vantage Video Processing Package
 
 Real-time CCTV ingestion pipeline with modular detectors.
 """

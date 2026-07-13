@@ -1,5 +1,5 @@
 """
-Alibi Encryption Layer
+Vantage Encryption Layer
 
 Transparent Fernet encryption for JSONL storage.
 Backward-compatible: reads both plaintext and encrypted lines.

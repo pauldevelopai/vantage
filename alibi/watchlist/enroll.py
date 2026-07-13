@@ -31,7 +31,7 @@ def enroll_face(
         source_ref: Reference to source document/case
         watchlist_path: Path to watchlist storage
     """
-    print(f"\n🔒 Alibi Watchlist Enrollment")
+    print(f"\n🔒 Vantage Watchlist Enrollment")
     print(f"=" * 50)
     print(f"Person ID: {person_id}")
     print(f"Label: {label}")
@@ -104,7 +104,7 @@ def enroll_face(
 def main():
     """Main CLI entry point"""
     parser = argparse.ArgumentParser(
-        description="Enroll face into Alibi watchlist",
+        description="Enroll face into Vantage watchlist",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

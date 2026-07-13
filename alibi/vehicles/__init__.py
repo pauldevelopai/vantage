@@ -1,5 +1,5 @@
 """
-Alibi Vehicle Sightings System
+Vantage Vehicle Sightings System
 
 Continuous vehicle detection, attribute extraction, and searchable indexing.
 Enables operators to search vehicle history by make, model, color.

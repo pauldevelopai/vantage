@@ -1,5 +1,5 @@
 """
-Alibi Authentication & Authorization
+Vantage Authentication & Authorization
 
 JWT-based authentication with role-based access control.
 """

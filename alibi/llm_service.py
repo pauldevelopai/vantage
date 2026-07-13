@@ -1,5 +1,5 @@
 """
-Alibi LLM Service
+Vantage LLM Service
 
 Optional LLM integration for generating alert text and reports.
 MUST be fail-safe - all functions return None on failure.
@@ -13,7 +13,7 @@ import os
 import requests
 
 from alibi.schemas import Incident, IncidentPlan, Decision
-from alibi.config import AlibiConfig
+from alibi.config import VantageConfig
 
 # Ollama settings
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
@@ -141,7 +141,7 @@ BODY: [your body text]
 def generate_alert_text(
     plan: IncidentPlan,
     incident: Incident,
-    config: AlibiConfig,
+    config: VantageConfig,
     context=None,
 ) -> Optional[Tuple[str, str]]:
     """
@@ -195,7 +195,7 @@ def generate_shift_report_narrative(
     incidents: list,
     decisions: list,
     kpis: dict,
-    config: AlibiConfig
+    config: VantageConfig
 ) -> str:
     """
     Generate shift report narrative using LLM.

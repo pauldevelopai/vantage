@@ -1,5 +1,5 @@
 """
-Alibi Evidence Capture
+Vantage Evidence Capture
 
 Rolling buffer recorder for saving snapshots and video clips when events are detected.
 """

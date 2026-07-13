@@ -1,5 +1,5 @@
 """
-Alibi Validation Logic
+Vantage Validation Logic
 
 Hard safety rules enforced with NO EXCEPTIONS.
 """
@@ -14,7 +14,7 @@ from alibi.schemas import (
     ValidationStatus,
     RecommendedAction,
 )
-from alibi.config import AlibiConfig, DEFAULT_CONFIG
+from alibi.config import VantageConfig, DEFAULT_CONFIG
 
 
 # Forbidden patterns that indicate accusations or identity claims
@@ -90,7 +90,7 @@ NEUTRAL_PATTERNS = [
 def validate_incident_plan(
     plan: IncidentPlan,
     incident: Incident,
-    config: Optional[AlibiConfig] = None
+    config: Optional[VantageConfig] = None
 ) -> ValidationResult:
     """
     Validate incident plan against hard safety rules.

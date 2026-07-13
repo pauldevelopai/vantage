@@ -10,7 +10,7 @@ human review. If no baseline has been learned yet, the item is ABSENT (honest)
 from typing import List, Optional
 
 from alibi.schemas import Incident
-from alibi.config import AlibiConfig
+from alibi.config import VantageConfig
 from alibi.activity_baseline import get_baseline_engine
 from alibi.context.schemas import Availability, ContextItem
 from alibi.context.provider import ContextProvider
@@ -24,7 +24,7 @@ from alibi.context.providers._incident_signals import (
 class BaselineContextProvider(ContextProvider):
     name = "activity_baseline"
 
-    def fetch(self, incident: Incident, config: Optional[AlibiConfig] = None) -> List[ContextItem]:
+    def fetch(self, incident: Incident, config: Optional[VantageConfig] = None) -> List[ContextItem]:
         camera_id, _zone, ts = latest_camera_and_ts(incident)
         if not camera_id:
             return [ContextItem(
