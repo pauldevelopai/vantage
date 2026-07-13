@@ -1,5 +1,5 @@
 """
-Alibi Storage Layer
+Vantage Storage Layer
 
 Append-only JSONL storage for events, incidents, decisions, and audit logs.
 """
@@ -19,7 +19,7 @@ from alibi.schemas import (
 from alibi.encryption import get_encrypted_writer
 
 
-class AlibiStore:
+class VantageStore:
     """Append-only JSONL storage manager"""
     
     def __init__(self, data_dir: str = "alibi/data"):
@@ -308,9 +308,9 @@ class AlibiStore:
 _store_instance = None
 
 
-def get_store(data_dir: str = "alibi/data") -> AlibiStore:
+def get_store(data_dir: str = "alibi/data") -> VantageStore:
     """Get or create global store instance"""
     global _store_instance
     if _store_instance is None:
-        _store_instance = AlibiStore(data_dir)
+        _store_instance = VantageStore(data_dir)
     return _store_instance

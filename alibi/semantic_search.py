@@ -1,5 +1,5 @@
 """
-Semantic Search Engine for Alibi Security
+Semantic Search Engine for Vantage Security
 
 Enables natural language search across all stored camera analyses,
 red flags, intelligence notes, and incidents.

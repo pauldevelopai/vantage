@@ -1,5 +1,5 @@
 """
-Alibi License Plate Recognition System
+Vantage License Plate Recognition System
 
 Hotlist plate detection and matching.
 ALWAYS requires human verification. NO automated impoundment.

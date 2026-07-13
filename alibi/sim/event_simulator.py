@@ -1,5 +1,5 @@
 """
-Alibi Event Simulator
+Vantage Event Simulator
 
 Generates realistic camera events for demonstration and testing.
 """

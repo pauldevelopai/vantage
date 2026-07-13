@@ -1,7 +1,7 @@
 """
 Mobile Camera API Endpoints
 
-Allows ANY camera (iPhone, Android, webcam) to stream to Alibi
+Allows ANY camera (iPhone, Android, webcam) to stream to Vantage
 and get real-time feedback on what's being filmed.
 """
 
@@ -45,7 +45,7 @@ MOBILE_LOGIN_HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Alibi Login</title>
+    <title>Vantage Login</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -137,7 +137,7 @@ MOBILE_LOGIN_HTML = """
 </head>
 <body>
     <div class="login-container">
-        <h1>Alibi</h1>
+        <h1>Vantage</h1>
         <p class="subtitle">Sign in to continue</p>
 
         <div id="error" class="error" style="display: none;"></div>
@@ -324,7 +324,7 @@ async def mobile_camera_stream_page():
     """
     Simple web page for streaming from mobile phone camera.
     
-    Open this on ANY phone browser to start streaming to Alibi.
+    Open this on ANY phone browser to start streaming to Vantage.
     """
     html_content = """
 <!DOCTYPE html>
@@ -332,7 +332,7 @@ async def mobile_camera_stream_page():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Alibi Mobile Camera</title>
+    <title>Vantage Mobile Camera</title>
     <style>
         * {
             margin: 0;
@@ -691,7 +691,7 @@ async def submit_vision_feedback(
     """
     Submit feedback on AI vision analysis.
     
-    This is KEY for improving Alibi Vision for South African context!
+    This is KEY for improving Vantage Vision for South African context!
     
     Users can:
     - Correct AI descriptions
@@ -747,7 +747,7 @@ async def submit_vision_feedback(
     
     return {
         "status": "success",
-        "message": "Feedback collected! Thank you for improving Alibi Vision.",
+        "message": "Feedback collected! Thank you for improving Vantage Vision.",
         "feedback_id": feedback.feedback_id
     }
 

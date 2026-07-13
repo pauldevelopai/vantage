@@ -6,7 +6,7 @@ AUTO_FIX_HTML = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Fixing Alibi...</title>
+    <title>Fixing Vantage...</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
         body {
@@ -36,7 +36,7 @@ AUTO_FIX_HTML = """
 <body>
     <div class="container">
         <div class="status" id="icon">🔧</div>
-        <h1 id="title">Fixing Alibi...</h1>
+        <h1 id="title">Fixing Vantage...</h1>
         <p id="message">Clearing corrupted data...</p>
         <div class="progress" id="progress"></div>
     </div>

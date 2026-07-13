@@ -1,5 +1,5 @@
 """
-Alibi Core Engine
+Vantage Core Engine
 
 Implements the schema → validate → compile → log pipeline for incident management.
 """
@@ -19,14 +19,14 @@ from alibi.schemas import (
     RecommendedAction,
     ValidationStatus,
 )
-from alibi.config import AlibiConfig, DEFAULT_CONFIG
+from alibi.config import VantageConfig, DEFAULT_CONFIG
 from alibi.validator import validate_incident_plan
 from alibi.llm_service import generate_alert_text, generate_shift_report_narrative
 
 
 def build_incident_plan(
     incident: Incident,
-    config: Optional[AlibiConfig] = None,
+    config: Optional[VantageConfig] = None,
     context=None,
 ) -> IncidentPlan:
     """
@@ -163,7 +163,7 @@ def build_incident_plan(
 def compile_alert(
     plan: IncidentPlan,
     incident: Incident,
-    config: Optional[AlibiConfig] = None,
+    config: Optional[VantageConfig] = None,
     context=None,
 ) -> AlertMessage:
     """
@@ -250,7 +250,7 @@ def compile_shift_report(
     decisions: List[Decision],
     start_ts: datetime,
     end_ts: datetime,
-    config: Optional[AlibiConfig] = None
+    config: Optional[VantageConfig] = None
 ) -> ShiftReport:
     """
     Compile a shift report summarizing incidents and decisions.
@@ -347,7 +347,7 @@ def log_incident_processing(
     plan: IncidentPlan,
     validation: ValidationResult,
     alert: Optional[AlertMessage],
-    config: Optional[AlibiConfig] = None
+    config: Optional[VantageConfig] = None
 ) -> None:
     """
     Log incident processing to append-only JSONL file.

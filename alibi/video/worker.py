@@ -1,5 +1,5 @@
 """
-Alibi Video Worker
+Vantage Video Worker
 
 Main worker loop that processes video streams and posts events to API.
 """
@@ -360,7 +360,7 @@ class VideoWorker:
         TODO: Multi-threaded or multi-process for parallel processing.
         """
         print("\n" + "="*60)
-        print("Alibi Video Worker Starting")
+        print("Vantage Video Worker Starting")
         print("="*60)
         print(f"API URL: {self.config.api_url}")
         print(f"Cameras: {len(self.config.cameras)}")
@@ -415,7 +415,7 @@ def load_config(config_path: str, api_url: str, zones_config: str) -> WorkerConf
 
 def main():
     """CLI entry point"""
-    parser = argparse.ArgumentParser(description='Alibi Video Worker')
+    parser = argparse.ArgumentParser(description='Vantage Video Worker')
     parser.add_argument(
         '--config',
         required=True,

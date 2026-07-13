@@ -1,7 +1,7 @@
 """
 Red Light Enforcement Detector Plugin
 
-Integrates red light violation detection into the Alibi video worker pipeline.
+Integrates red light violation detection into the Vantage video worker pipeline.
 """
 
 import numpy as np
@@ -16,7 +16,7 @@ from alibi.traffic.red_light_detector import RedLightViolationDetector
 
 class RedLightEnforcementDetector(Detector):
     """
-    Red light enforcement detector for Alibi video worker.
+    Red light enforcement detector for Vantage video worker.
     
     Monitors traffic cameras for red light violations.
     ALWAYS requires human verification. NO automated citations.

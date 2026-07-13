@@ -238,7 +238,7 @@ TRAINING_HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Training Data Review - Alibi</title>
+    <title>Training Data Review - Vantage</title>
     <style>
         * {
             margin: 0;

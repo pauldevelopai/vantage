@@ -1,5 +1,5 @@
 """
-Alibi Settings Manager
+Vantage Settings Manager
 
 Load and manage settings from alibi_settings.json
 """
@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 
-class AlibiSettings:
-    """Settings manager for Alibi"""
+class VantageSettings:
+    """Settings manager for Vantage"""
     
     def __init__(self, settings_file: str = "alibi/data/alibi_settings.json"):
         self.settings_file = Path(settings_file)
@@ -131,9 +131,9 @@ class AlibiSettings:
 _settings_instance = None
 
 
-def get_settings() -> AlibiSettings:
+def get_settings() -> VantageSettings:
     """Get or create global settings instance"""
     global _settings_instance
     if _settings_instance is None:
-        _settings_instance = AlibiSettings()
+        _settings_instance = VantageSettings()
     return _settings_instance

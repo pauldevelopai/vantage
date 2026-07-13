@@ -10,7 +10,7 @@ flag adds caution and forces review.
 from typing import List, Optional
 
 from alibi.schemas import Incident
-from alibi.config import AlibiConfig
+from alibi.config import VantageConfig
 from alibi.intelligence_store import get_intelligence_store
 from alibi.context.schemas import Availability, ContextItem
 from alibi.context.provider import ContextProvider
@@ -31,7 +31,7 @@ def _matches_location(free_text: Optional[str], hint: str) -> bool:
 class IntelligenceContextProvider(ContextProvider):
     name = "intelligence_store"
 
-    def fetch(self, incident: Incident, config: Optional[AlibiConfig] = None) -> List[ContextItem]:
+    def fetch(self, incident: Incident, config: Optional[VantageConfig] = None) -> List[ContextItem]:
         camera_id, zone_id, _ts = latest_camera_and_ts(incident)
         hint = location_hint(camera_id, zone_id)
         store = get_intelligence_store()

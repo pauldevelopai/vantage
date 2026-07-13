@@ -1,5 +1,5 @@
 """
-Alibi Watchlist System
+Vantage Watchlist System
 
 Face detection, embedding, and matching against City Police wanted list.
 ALWAYS requires human verification. NEVER claims identity.

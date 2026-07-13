@@ -1,5 +1,5 @@
 """
-Alibi Schema Module
+Vantage Schema Module
 
 Structured data schemas for vision-first incident management.
 """
