@@ -1,38 +1,15 @@
-# Caddy block for Vantage (vantage.developai.co.za) — co-located on the SAME
-# Lightsail box as the Grounded / BE AI READY app.
+# Caddy block for Vantage (vantage.developai.co.za) — dedicated box.
 #
-# Topology: the built React console (alibi/console/dist) is served as a static
-# SPA by Caddy; API calls (relative /api/*) and server-served media are
-# reverse-proxied to the Vantage FastAPI app on localhost:8000. Same origin,
-# so no CORS config is needed. The FastAPI app should bind 127.0.0.1 (not
-# 0.0.0.0) so only Caddy can reach it.
+# Vantage's FastAPI app serves EVERYTHING on 127.0.0.1:8600: the mobile UI
+# (dashboard at /, the /camera/* pages), the JSON API, and /docs. So Caddy
+# just reverse-proxies the whole domain to it — same origin, no CORS, no
+# static-file serving needed. Caddy provisions HTTPS automatically once DNS
+# for vantage.developai.co.za points at this box and ports 80+443 are open.
 #
-# Install: copy this file into the box's Caddy sites dir (e.g.
-# /etc/caddy/sites/) or append the block to the Caddyfile, then
-#   sudo systemctl restart caddy      # restart, NOT reload (box runs `admin off`)
-#
-# The Node app (Grounded/BAIR) on :3001 and its Caddy blocks are untouched.
+# Install (single-site box): copy to /etc/caddy/Caddyfile, then
+#   sudo systemctl restart caddy
 
 vantage.developai.co.za {
     encode gzip zstd
-    root * /home/ubuntu/vantage/alibi/console/dist
-
-    # ── API → FastAPI on :8600 ───────────────────────────────────────────
-    # handle_path strips the /api prefix before proxying, matching the Vite
-    # dev proxy's rewrite so the console's relative /api/* calls work in prod.
-    handle_path /api/* {
-        reverse_proxy localhost:8600
-    }
-
-    # ── Server-served media (absolute paths returned by the API) → :8000 ──
-    @backend path /media/* /evidence/* /camera_snapshots/*
-    handle @backend {
-        reverse_proxy localhost:8600
-    }
-
-    # ── Everything else → the static console SPA (client-side routing) ────
-    handle {
-        try_files {path} /index.html
-        file_server
-    }
+    reverse_proxy localhost:8600
 }
