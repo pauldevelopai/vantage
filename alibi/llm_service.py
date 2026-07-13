@@ -81,8 +81,13 @@ def _parse_alert_response(content: str) -> Optional[Tuple[str, str]]:
     return None
 
 
-def _build_alert_prompt(plan: IncidentPlan, incident: Incident) -> Tuple[str, str]:
-    """Build system prompt and user prompt for alert generation."""
+def _build_alert_prompt(plan: IncidentPlan, incident: Incident, context=None) -> Tuple[str, str]:
+    """Build system prompt and user prompt for alert generation.
+
+    ``context`` is an optional ContextBundle of non-video facility/area context.
+    It is advisory only: it informs the narrative but must never be attributed to
+    the detected individual, and UNAVAILABLE sources must surface as uncertainty.
+    """
     event_summary = "\n".join([
         f"  - {e.event_type} at {e.ts.strftime('%H:%M:%S')} "
         f"(conf: {e.confidence:.2f}, sev: {e.severity})"
@@ -91,6 +96,12 @@ def _build_alert_prompt(plan: IncidentPlan, incident: Incident) -> Tuple[str, st
 
     if len(incident.events) > 5:
         event_summary += f"\n  ... and {len(incident.events) - 5} more events"
+
+    context_block = ""
+    if context is not None and not context.is_empty():
+        rendered = context.render_for_prompt()
+        if rendered:
+            context_block = "\n" + rendered + "\n"
 
     system_prompt = "You write neutral, cautious security alerts. Never accuse or make identity claims."
 
@@ -101,12 +112,14 @@ CRITICAL RULES:
 2. ALWAYS use: "possible", "appears", "may indicate", "needs review"
 3. NO identity claims - say "appears to match" not "is identified as"
 4. If no evidence, explicitly state "no video evidence available"
+5. Facility/area context below is background only. Do NOT tie it to the detected
+   individual, and never treat an UNAVAILABLE source as reassurance.
 
 Incident: {incident.incident_id}
 Time: {incident.created_ts.strftime('%Y-%m-%d %H:%M:%S')}
 Events:
 {event_summary}
-
+{context_block}
 Assessment:
 - Severity: {plan.severity}/5
 - Confidence: {plan.confidence:.2f}
@@ -128,15 +141,17 @@ BODY: [your body text]
 def generate_alert_text(
     plan: IncidentPlan,
     incident: Incident,
-    config: AlibiConfig
+    config: AlibiConfig,
+    context=None,
 ) -> Optional[Tuple[str, str]]:
     """
     Generate alert title and body using LLM.
 
     Prefers local Ollama (data stays in-country), falls back to OpenAI.
-    Returns None if no LLM available or call fails.
+    ``context`` is an optional ContextBundle woven into the prompt as advisory
+    background. Returns None if no LLM available or call fails.
     """
-    system_prompt, prompt = _build_alert_prompt(plan, incident)
+    system_prompt, prompt = _build_alert_prompt(plan, incident, context)
 
     # Try Ollama first (local, data stays in-country)
     if _ollama_available():

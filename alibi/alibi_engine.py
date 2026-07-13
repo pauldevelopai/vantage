@@ -26,18 +26,23 @@ from alibi.llm_service import generate_alert_text, generate_shift_report_narrati
 
 def build_incident_plan(
     incident: Incident,
-    config: Optional[AlibiConfig] = None
+    config: Optional[AlibiConfig] = None,
+    context=None,
 ) -> IncidentPlan:
     """
     Analyze an incident and create a plan with recommendations.
-    
+
     This function applies deterministic logic to assess severity, confidence,
     and recommended actions based on the incident's events.
-    
+
     Args:
         incident: The incident to analyze
         config: Optional configuration (uses DEFAULT_CONFIG if not provided)
-        
+        context: Optional ContextBundle of external context. Applied
+            CAUTION-ONLY: it may add risk flags or force human review, but can
+            never lower severity, change the recommended action, or downgrade a
+            review requirement.
+
     Returns:
         IncidentPlan with analysis and recommendations
     """
@@ -113,6 +118,15 @@ def build_incident_plan(
         f"(severity {max_severity}, confidence {avg_confidence:.2f})"
     )
     
+    # Caution-only fusion of external context. Never lowers severity, never
+    # changes the recommended action, never downgrades review - only tightens.
+    if context is not None:
+        for flag in context.caution_flags:
+            if flag not in action_risk_flags:
+                action_risk_flags.append(flag)
+        if context.requires_review:
+            requires_human_approval = True
+
     return IncidentPlan(
         incident_id=incident.incident_id,
         summary_1line=summary_1line,
@@ -129,40 +143,47 @@ def build_incident_plan(
 def compile_alert(
     plan: IncidentPlan,
     incident: Incident,
-    config: Optional[AlibiConfig] = None
+    config: Optional[AlibiConfig] = None,
+    context=None,
 ) -> AlertMessage:
     """
     Compile an alert message from a validated incident plan.
-    
+
     Uses LLM if available, otherwise generates deterministic text.
     ALL output must be neutral and avoid accusations.
-    
+
     Args:
         plan: The validated incident plan
         incident: The source incident
         config: Optional configuration
-        
+        context: Optional ContextBundle of external context. Woven into the
+            narrative and stored on the incident for audit; advisory only.
+
     Returns:
         AlertMessage ready for operator review
     """
     if config is None:
         config = DEFAULT_CONFIG
-    
+
+    # Record context on the incident for the audit log (advisory provenance).
+    if context is not None and not context.is_empty():
+        incident.metadata["external_context"] = context.to_audit_dict()
+
     # Attempt LLM generation if available
     llm_result = None
     if config.openai_api_key:
         try:
-            llm_result = generate_alert_text(plan, incident, config)
+            llm_result = generate_alert_text(plan, incident, config, context)
         except Exception as e:
             # Fail-safe: fall through to deterministic generation
             print(f"LLM generation failed, using fallback: {e}")
-    
+
     if llm_result:
         title, body = llm_result
     else:
         # Deterministic fallback
         title = _generate_deterministic_title(plan, incident)
-        body = _generate_deterministic_body(plan, incident)
+        body = _generate_deterministic_body(plan, incident, context)
     
     # Build operator actions
     operator_actions = []
@@ -187,7 +208,13 @@ def compile_alert(
         disclaimer = (
             "⚠️ Possible watchlist match detected. Verify identity before action."
         )
-    
+
+    # Never let an unreachable context source read as reassurance.
+    if context is not None and context.unavailable_items:
+        names = ", ".join(sorted({i.label for i in context.unavailable_items}))
+        note = f"ℹ️ Context source(s) could not be verified: {names}. Do not assume 'all clear'."
+        disclaimer = f"{disclaimer} {note}".strip() if disclaimer else note
+
     return AlertMessage(
         incident_id=incident.incident_id,
         title=title,
@@ -339,6 +366,10 @@ def log_incident_processing(
         },
         "alert_generated": alert is not None,
     }
+
+    # Include external-context provenance if it was gathered (audit trail).
+    if incident.metadata.get("external_context"):
+        log_entry["external_context"] = incident.metadata["external_context"]
     
     with open(log_file, "a") as f:
         f.write(json.dumps(log_entry) + "\n")
@@ -359,7 +390,7 @@ def _generate_deterministic_title(plan: IncidentPlan, incident: Incident) -> str
     return f"{prefix}: Incident {incident.incident_id} (Severity {plan.severity})"
 
 
-def _generate_deterministic_body(plan: IncidentPlan, incident: Incident) -> str:
+def _generate_deterministic_body(plan: IncidentPlan, incident: Incident, context=None) -> str:
     """Generate neutral, deterministic alert body"""
     lines = [
         f"Incident: {incident.incident_id}",
@@ -372,23 +403,29 @@ def _generate_deterministic_body(plan: IncidentPlan, incident: Incident) -> str:
         f"  • Confidence: {plan.confidence:.2f}",
         f"  • Events: {len(incident.events)}",
     ]
-    
+
     if plan.evidence_refs:
         lines.append(f"  • Evidence: {len(plan.evidence_refs)} item(s) available")
     else:
         lines.append(f"  • Evidence: No video clips available")
-    
+
     if plan.uncertainty_notes != "None":
         lines.append(f"")
         lines.append(f"Notes: {plan.uncertainty_notes}")
-    
+
     if plan.action_risk_flags:
         lines.append(f"")
         lines.append(f"Risk Flags: {', '.join(plan.action_risk_flags)}")
-    
+
+    if context is not None and not context.is_empty():
+        rendered = context.render_for_prompt()
+        if rendered:
+            lines.append(f"")
+            lines.append(rendered)
+
     lines.append(f"")
     lines.append(f"Recommended Action: {plan.recommended_next_step.value}")
-    
+
     return "\n".join(lines)
 
 
