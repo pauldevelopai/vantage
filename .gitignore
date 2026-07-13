@@ -95,3 +95,7 @@ alibi/data/training_agent.jsonl
 alibi/data/fine_tuning_history.jsonl
 alibi/data/security_training_dataset.jsonl
 cvat/
+
+# Runtime secrets (must never be committed)
+alibi/data/.encryption_key
+alibi/data/.jwt_secret
