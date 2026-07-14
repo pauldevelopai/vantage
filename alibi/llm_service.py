@@ -4,8 +4,8 @@ Vantage LLM Service
 Optional LLM integration for generating alert text and reports.
 MUST be fail-safe - all functions return None on failure.
 
-Prefers local Ollama when available (data stays in-country),
-falls back to OpenAI if configured.
+Cloud tier order: local Ollama first (data stays in-country), then Claude
+(Anthropic) as the preferred cloud model, then OpenAI as an optional fallback.
 """
 
 from typing import Optional, Tuple
@@ -55,6 +55,41 @@ def _call_ollama(prompt: str, system_prompt: str, max_tokens: int = 500, tempera
         return content if content else None
     except Exception as e:
         print(f"[LLM] Ollama call failed: {e}")
+        return None
+
+
+def _call_anthropic(
+    system_prompt: str,
+    prompt: str,
+    api_key: str,
+    model: str,
+    max_tokens: int = 500,
+) -> Optional[str]:
+    """Call Claude (Anthropic Messages API) for text generation.
+
+    Returns generated text or None on failure. Temperature is intentionally
+    omitted — the current Opus models reject sampling params (400), and steering
+    is done through the prompt instead. No thinking is requested: these outputs
+    are short, so adaptive thinking would only add latency and cost.
+    """
+    try:
+        import anthropic
+
+        client = anthropic.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            system=system_prompt,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = "".join(
+            block.text
+            for block in response.content
+            if getattr(block, "type", None) == "text"
+        ).strip()
+        return text or None
+    except Exception as e:
+        print(f"[LLM] Anthropic call failed: {e}")
         return None
 
 
@@ -161,7 +196,21 @@ def generate_alert_text(
             if result:
                 return result
 
-    # Fall back to OpenAI
+    # Preferred cloud tier: Claude (Anthropic)
+    if config.anthropic_api_key:
+        content = _call_anthropic(
+            system_prompt,
+            prompt,
+            api_key=config.anthropic_api_key,
+            model=config.anthropic_model,
+            max_tokens=config.anthropic_max_tokens,
+        )
+        if content:
+            result = _parse_alert_response(content)
+            if result:
+                return result
+
+    # Fall back to OpenAI (optional)
     if not config.openai_api_key:
         return None
 
@@ -220,7 +269,19 @@ Write a professional summary for the shift supervisor. Focus on key patterns and
         if content:
             return content
 
-    # Fall back to OpenAI
+    # Preferred cloud tier: Claude (Anthropic)
+    if config.anthropic_api_key:
+        content = _call_anthropic(
+            system_prompt,
+            prompt,
+            api_key=config.anthropic_api_key,
+            model=config.anthropic_model,
+            max_tokens=300,
+        )
+        if content:
+            return content.strip()
+
+    # Fall back to OpenAI (optional)
     if not config.openai_api_key:
         return _fallback_narrative(incidents, decisions, kpis)
 

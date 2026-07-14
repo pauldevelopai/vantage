@@ -68,8 +68,11 @@ sentence-transformers>=2.2.0  # Hugging Face embeddings
 textstat>=0.7.0               # Readability metrics
 textblob>=0.17.0              # Sentiment analysis
 
+# Cloud LLM/Vision — Claude (Anthropic) is the preferred cloud tier
+anthropic>=0.40.0             # Claude Messages API (text alerts/reports + vision scene analysis)
+
 # Vision AI for scene understanding (mobile camera support)
-openai>=1.12.0                # OpenAI Vision API (GPT-4 Vision)
+openai>=1.12.0                # OpenAI Vision API (GPT-4 Vision) — optional fallback
 
 # Training data collection from Hugging Face
 datasets>=2.14.0              # Hugging Face datasets (COCO, Open Images, etc.)

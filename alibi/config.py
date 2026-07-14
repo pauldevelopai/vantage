@@ -19,6 +19,14 @@ class VantageConfig:
     high_severity_threshold: int = 4  # >= this requires human approval
     
     # LLM settings (optional)
+    # Cloud tier: Anthropic (Claude) is preferred; OpenAI remains an optional
+    # fallback. Local Ollama is always tried first for data sovereignty.
+    anthropic_api_key: Optional[str] = None
+    anthropic_model: str = "claude-opus-4-8"        # text (alerts, reports)
+    anthropic_vision_model: str = "claude-opus-4-8"  # scene analysis
+    anthropic_max_tokens: int = 500
+
+    # OpenAI (optional fallback only)
     openai_api_key: Optional[str] = None
     openai_model: str = "gpt-4o-mini"
     openai_max_tokens: int = 500
@@ -44,6 +52,12 @@ class VantageConfig:
             high_severity_threshold=int(
                 os.getenv("ALIBI_HIGH_SEVERITY_THRESHOLD", "4")
             ),
+            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
+            anthropic_model=os.getenv("ANTHROPIC_TEXT_MODEL", "claude-opus-4-8"),
+            anthropic_vision_model=os.getenv(
+                "ANTHROPIC_VISION_MODEL", "claude-opus-4-8"
+            ),
+            anthropic_max_tokens=int(os.getenv("ANTHROPIC_MAX_TOKENS", "500")),
             openai_api_key=os.getenv("OPENAI_API_KEY"),
             openai_model=os.getenv("ALIBI_OPENAI_MODEL", "gpt-4o-mini"),
             log_dir=os.getenv("ALIBI_LOG_DIR", "alibi/data"),

@@ -20,26 +20,32 @@ class SceneAnalyzer:
     Analyzes camera frames and provides natural language descriptions.
     
     Supports:
-    - OpenAI Vision API (GPT-4 Vision)
-    - Google Cloud Vision
-    - Local BLIP/CLIP models
+    - Local Ollama vision (data stays in-country — preferred)
+    - Claude (Anthropic) Vision — preferred cloud model
+    - OpenAI Vision API (optional fallback)
+    - Google Cloud Vision (optional fallback)
     - Fallback to basic CV descriptions
     """
-    
+
     def __init__(self, mode: str = "auto"):
         """
         Initialize scene analyzer.
 
         Args:
-            mode: "openai", "google", "ollama", "local", or "auto" (try in order)
-                  In auto mode, prefers local Ollama over cloud APIs for data sovereignty.
+            mode: "claude", "openai", "google", "ollama", "local", or "auto"
+                  (try in order). In auto mode, prefers local Ollama, then Claude,
+                  for data sovereignty and quality.
         """
         self.mode = mode
+        self.claude_available = False
         self.openai_available = False
         self.google_available = False
         self.ollama_available = False
         self.ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
         self.ollama_vision_model = os.getenv("OLLAMA_VISION_MODEL", "llama3.2-vision")
+        self.anthropic_vision_model = os.getenv(
+            "ANTHROPIC_VISION_MODEL", "claude-opus-4-8"
+        )
 
         # Try Ollama (local, data never leaves the network)
         try:
@@ -50,7 +56,18 @@ class SceneAnalyzer:
         except Exception:
             pass
 
-        # Try to import OpenAI
+        # Try to import Anthropic (Claude) — preferred cloud model
+        try:
+            import anthropic
+            self.anthropic_api_key = os.getenv('ANTHROPIC_API_KEY')
+            if self.anthropic_api_key:
+                self.anthropic_client = anthropic.Anthropic(api_key=self.anthropic_api_key)
+                self.claude_available = True
+                print("[SceneAnalyzer] Claude Vision available (cloud — data leaves network)")
+        except ImportError:
+            pass
+
+        # Try to import OpenAI (optional fallback)
         try:
             import openai
             self.openai_api_key = os.getenv('OPENAI_API_KEY')
@@ -70,8 +87,8 @@ class SceneAnalyzer:
         except:
             pass
 
-        if not self.ollama_available and not self.openai_available and not self.google_available:
-            print("[SceneAnalyzer] Using basic computer vision (install Ollama for local AI, or OpenAI for cloud)")
+        if not (self.ollama_available or self.claude_available or self.openai_available or self.google_available):
+            print("[SceneAnalyzer] Using basic computer vision (install Ollama for local AI, or set ANTHROPIC_API_KEY for Claude)")
     
     def analyze_frame(self, frame: np.ndarray, prompt: str = "describe_scene") -> Dict[str, Any]:
         """
@@ -92,9 +109,12 @@ class SceneAnalyzer:
             }
         """
         if self.mode == "auto":
-            # Prefer local Ollama (data stays in-country) over cloud APIs
+            # Prefer local Ollama (data stays in-country); then Claude, the
+            # preferred cloud model; then OpenAI/Google as optional fallbacks.
             if self.ollama_available:
                 return self._analyze_with_ollama(frame, prompt)
+            elif self.claude_available:
+                return self._analyze_with_claude(frame, prompt)
             elif self.openai_available:
                 return self._analyze_with_openai(frame, prompt)
             elif self.google_available:
@@ -103,6 +123,8 @@ class SceneAnalyzer:
                 return self._analyze_with_basic_cv(frame, prompt)
         elif self.mode == "ollama":
             return self._analyze_with_ollama(frame, prompt)
+        elif self.mode == "claude":
+            return self._analyze_with_claude(frame, prompt)
         elif self.mode == "openai":
             return self._analyze_with_openai(frame, prompt)
         elif self.mode == "google":
@@ -187,24 +209,18 @@ class SceneAnalyzer:
                 return self._analyze_with_openai(frame, prompt)
             return self._analyze_with_basic_cv(frame, prompt)
 
-    def _analyze_with_openai(self, frame: np.ndarray, prompt: str) -> Dict[str, Any]:
-        """Analyze using OpenAI Vision API with South African context"""
-        try:
-            # Import SA context and learning system
-            from alibi.vision.south_african_context import enhance_prompt_for_sa_context
-            from alibi.continuous_learning import get_learning_system
+    def _scene_system_prompt(self, prompt: str) -> str:
+        """Build the vision system prompt for a request type, including the
+        South-African/Namibian regional context, any learned context, and
+        few-shot training examples. Shared by the Claude and OpenAI paths."""
+        if prompt == "detect_activity":
+            return "Describe any human activity you see. If no humans, say 'No human activity detected'."
+        if prompt == "count_people":
+            return "Count the number of people visible. Format: 'X people visible' or 'No people visible'."
+        if prompt != "describe_scene":
+            return "Describe what you see in this security camera frame."
 
-            # Get learned context
-            learning_system = get_learning_system()
-            learned_context = learning_system.get_enhanced_prompt_context()
-
-            # Encode frame to base64
-            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-            base64_image = base64.b64encode(buffer).decode('utf-8')
-            
-            # Construct prompt based on request type
-            if prompt == "describe_scene":
-                system_prompt = """You are a security camera analyst operating in South Africa and Namibia.
+        system_prompt = """You are a security camera analyst operating in South Africa and Namibia.
 
 Regional Context:
 - Common vehicles: Minibus taxis (Toyota Quantum), bakkies (pickup trucks)
@@ -242,26 +258,103 @@ Examples:
 
 Be descriptive, factual, and include visual details about people."""
 
-                # Add learned context if available
-                if learned_context:
-                    system_prompt += f"\n\n{learned_context}"
+        # Add learned context if available
+        try:
+            from alibi.continuous_learning import get_learning_system
+            learned_context = get_learning_system().get_enhanced_prompt_context()
+            if learned_context:
+                system_prompt += f"\n\n{learned_context}"
+        except Exception:
+            pass  # Fall back to base prompt if learning system unavailable
 
-                # Inject few-shot training examples for improved analysis
-                try:
-                    from alibi.training_selector import get_training_selector
-                    training_context = get_training_selector().get_context_for_scene(system_prompt)
-                    if training_context:
-                        system_prompt += training_context
-                except Exception:
-                    pass  # Fall back to base prompt if selector fails
+        # Inject few-shot training examples for improved analysis
+        try:
+            from alibi.training_selector import get_training_selector
+            training_context = get_training_selector().get_context_for_scene(system_prompt)
+            if training_context:
+                system_prompt += training_context
+        except Exception:
+            pass  # Fall back to base prompt if selector fails
 
-            elif prompt == "detect_activity":
-                system_prompt = "Describe any human activity you see. If no humans, say 'No human activity detected'."
-            elif prompt == "count_people":
-                system_prompt = "Count the number of people visible. Format: 'X people visible' or 'No people visible'."
-            else:
-                system_prompt = "Describe what you see in this security camera frame."
-            
+        return system_prompt
+
+    def _analyze_with_claude(self, frame: np.ndarray, prompt: str) -> Dict[str, Any]:
+        """Analyze using Claude (Anthropic) Vision — the preferred cloud model.
+
+        Claude reads images natively via the Messages API. Sampling params
+        (temperature) are omitted — the current Opus models reject them (400) —
+        and no thinking is requested, since these are short real-time outputs.
+        """
+        try:
+            # Encode frame to base64
+            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            base64_image = base64.b64encode(buffer).decode('utf-8')
+
+            system_prompt = self._scene_system_prompt(prompt)
+
+            response = self.anthropic_client.messages.create(
+                model=self.anthropic_vision_model,
+                max_tokens=150,
+                system=system_prompt,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": "image/jpeg",
+                                    "data": base64_image,
+                                },
+                            },
+                            {"type": "text", "text": "Describe this security camera frame."},
+                        ],
+                    }
+                ],
+            )
+
+            description = "".join(
+                block.text
+                for block in response.content
+                if getattr(block, "type", None) == "text"
+            ).strip()
+
+            if not description:
+                return self._analyze_with_basic_cv(frame, prompt)
+
+            safety_keywords = ["fight", "weapon", "attack", "theft", "break", "suspicious", "danger", "emergency"]
+            safety_concern = any(keyword in description.lower() for keyword in safety_keywords)
+
+            common_objects = ["person", "car", "cat", "dog", "bike", "motorcycle", "truck", "door", "window"]
+            detected_objects = [obj for obj in common_objects if obj in description.lower()]
+
+            return {
+                "description": description,
+                "confidence": 0.85,  # Claude doesn't provide a numeric confidence
+                "detected_objects": detected_objects,
+                "detected_activities": self._extract_activities(description),
+                "safety_concern": safety_concern,
+                "method": "claude_vision",
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+
+        except Exception as e:
+            print(f"[SceneAnalyzer] Claude error: {e}")
+            # Fall back to OpenAI if available, then basic CV
+            if self.openai_available:
+                return self._analyze_with_openai(frame, prompt)
+            return self._analyze_with_basic_cv(frame, prompt)
+
+    def _analyze_with_openai(self, frame: np.ndarray, prompt: str) -> Dict[str, Any]:
+        """Analyze using OpenAI Vision API (optional fallback)."""
+        try:
+            # Encode frame to base64
+            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            base64_image = base64.b64encode(buffer).decode('utf-8')
+
+            system_prompt = self._scene_system_prompt(prompt)
+
             # Call OpenAI Vision API
             response = self.openai_client.chat.completions.create(
                 model="gpt-4o-mini",  # Fast and cheap for real-time analysis
@@ -283,7 +376,7 @@ Be descriptive, factual, and include visual details about people."""
                 max_tokens=150,
                 temperature=0.3
             )
-            
+
             description = response.choices[0].message.content.strip()
             
             # Extract safety concerns
