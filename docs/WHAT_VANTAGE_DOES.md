@@ -40,7 +40,7 @@ intelligence. **One product, two doors** (shared engine):
 ## 4. Connect the dots — Pattern Detection *(Phase 2)*
 - ✅ **Same vehicle/person matched across cameras by appearance** (ReID, no plate needed). *(OSNet, `cameras/appearance_reid.py`, `tests/test_cross_camera_reid.py`.)*
 - 🟡 **"What's been happening in the last hour / 24h / week"** — windowed activity summary (people, vehicles, plate reads, watchlist hits, busiest camera + time). *(`patterns/activity_patterns.py`, `tests/test_activity_patterns.py`. Needs wiring into the console.)*
-- ⬜ **Co-occurrence** — "this vehicle was near 3 incidents this week".
+- ✅ **Co-occurrence** — "this vehicle/person was near N incidents" (same camera, within a time window). *(`patterns/co_occurrence.py`, `tests/test_co_occurrence.py`.)*
 - ⬜ **"Why flagged" explainer** on every alert — grounded, cited, human-in-the-loop.
 
 ## 5. Read behaviour — Behaviour & Threat *(Phase 3)*
