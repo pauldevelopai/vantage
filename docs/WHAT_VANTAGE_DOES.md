@@ -18,6 +18,13 @@ intelligence. **One product, two doors** (shared engine):
 
 *(Two-door front end not built yet — the engine below is shared by both.)*
 
+**AI model tier (natural-language alerts, shift reports, scene descriptions):**
+local **Ollama** first (data stays in-country) → **Claude / Anthropic** as the
+preferred cloud model → OpenAI as an optional fallback. Set `ANTHROPIC_API_KEY`
+to enable the cloud tier; `ANTHROPIC_TEXT_MODEL` / `ANTHROPIC_VISION_MODEL`
+override the default (`claude-opus-4-8`). *(`llm_service.py`,
+`vision/scene_analyzer.py`, `tests/test_claude_llm.py`.)*
+
 ---
 
 ## 1. See — detection & tracking
