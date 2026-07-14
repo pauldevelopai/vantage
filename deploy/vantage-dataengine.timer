@@ -1,0 +1,30 @@
+# Weekly timer for the Vantage data-engine refresh (§9).
+#
+# Install:
+#   sudo cp deploy/vantage-dataengine.service /etc/systemd/system/
+#   sudo cp deploy/vantage-dataengine.timer   /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now vantage-dataengine.timer
+#
+# Check / run / inspect:
+#   systemctl list-timers vantage-dataengine     # when it next fires
+#   sudo systemctl start vantage-dataengine      # run it now, once
+#   journalctl -u vantage-dataengine -n 50       # what it did
+#
+# WEEKLY, not daily, on purpose: POI data is stable and retention is 180 days, so
+# the freshness gate (--min-age-days 30) will skip most areas anyway. Weekly keeps
+# Apify credit spend near zero while still catching new cameras/areas promptly.
+
+[Unit]
+Description=Weekly Vantage data-engine refresh
+Requires=vantage-dataengine.service
+
+[Timer]
+OnCalendar=Sun 03:30
+# If the box was off when it was due, run shortly after boot rather than skipping.
+Persistent=true
+# Spread the load / avoid a thundering herd against Apify.
+RandomizedDelaySec=1800
+
+[Install]
+WantedBy=timers.target
