@@ -68,25 +68,36 @@ override the default (`claude-opus-4-8`). *(`llm_service.py`,
 - ✅ **Human review before dispatch** — high-risk actions require a person. *(validator rules.)*
 - ✅ **Auditable** — append-only logs of decisions. *(`alibi_store.py`.)*
 - ✅ **Encrypted at rest**. *(`encryption.py`.)*
-- ⬜ **Lawful-data boundary** — Vantage does NOT scrape or compile personal data
-  on individuals. External ingest is limited to non-personal / official-reference
-  data (see §9); personal watchlist entries come only from lawful, consented,
-  purpose-bound official feeds. Every ingested record carries source +
-  lawful-basis + retention-until + audit trail (POPIA/GDPR-aligned).
+- ✅ **Lawful-data boundary — enforced in code, not just policy.** Vantage does
+  NOT scrape or compile personal data on individuals. Defence in depth:
+  `DataDomain` has no personal member (a source can't be declared for it) →
+  normalisers are allowlist-based (undeclared fields dropped) → `guard.py`
+  fail-closes on anything person-identifying (ID numbers, DOB, surnames,
+  emails, biometrics, social profiles), rejections audited. Personal watchlist
+  entries come only from lawful, consented, purpose-bound official feeds.
+  *(`dataengine/guard.py`, `tests/test_dataengine.py::TestPersonalDataGuard`.)*
 
 ## 9. Ingest external data — Apify Data Engine *(Phase 6)*
 > A scheduled ingestion layer (Apify actors → normalise → provenance/retention-
 > tagged store) that enriches Vantage. **Scoped to lawful, non-personal data** —
 > it is explicitly NOT a people-dossier database. Bright line in §8.
-- ⬜ **Places / context data** (non-personal) — area crime stats, neighbourhood
-  risk, POI/business/landmark data, roads/geography, load-shedding, weather.
+- ✅ **Ingestion scaffold** — Apify actor → normalise (allowlist) → personal-data
+  guard → provenance/lawful-basis/retention-tagged append-only store + audit.
+  Runs against fixtures with no token; with no `APIFY_TOKEN` it reports an honest
+  empty result rather than inventing data. *(`dataengine/`, `tests/test_dataengine.py`.)*
+- ✅ **Ingestion discipline** — every record tagged with source, lawful basis and
+  retention-until (retention enforced on read *and* by `prune()`); append-only
+  audit incl. every personal-data rejection; content-hash ids so re-runs don't
+  duplicate; honest empty states. *(`dataengine/store.py`, `dataengine/ingest.py`.)*
+- 🟡 **Places / context data** (non-personal) — sources declared
+  (`places.area_crime_stats`, `places.poi`) with normalisers + lawful basis +
+  retention; **needs a real Apify actor wired** (`APIFY_TOKEN` + actor id).
   Feeds the "why flagged" context (§4) and the Security Advisor (§6).
-- ⬜ **Detection reference data** — vehicle make/model catalogs, plate-format
-  rules, official stolen-vehicle / registration registries. Improves plates (§3)
-  and make/model (§3).
-- ⬜ **Ingestion discipline** — every record tagged with source, lawful basis,
-  and retention-until; append-only audit; scheduled refresh + honest empty
-  states (no-fake-data rule). Personal-data scraping is out of scope by design.
+- 🟡 **Detection reference data** — sources declared
+  (`reference.vehicle_models`, `reference.plate_formats`); **needs a real Apify
+  actor wired**. Improves plates (§3) and make/model (§3).
+- ⬜ **Scheduled refresh** — cron/systemd timer to re-run sources and prune.
+- ⬜ **Consumers** — wire the context store into the §4 explainer and §6 advisor.
 
 ---
 

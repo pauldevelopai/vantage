@@ -51,6 +51,8 @@ Thumbs.db
 alibi/data/incidents.jsonl
 alibi/data/decisions.jsonl
 alibi/data/audit.jsonl
+alibi/data/dataengine.jsonl
+alibi/data/dataengine_audit.jsonl
 alibi/data/watchlist.jsonl
 alibi/data/hotlist_plates.jsonl
 alibi/data/plate_registry.jsonl

@@ -1,0 +1,148 @@
+"""
+Vantage Data Engine — ingest orchestrator (§9).
+
+Pipeline for every item:
+
+    Apify actor -> normalise (allowlist) -> GUARD (reject personal data)
+                -> tag (source + lawful basis + retention) -> append-only store
+                -> audit
+
+Rejections are counted and audited, never silently swallowed — if a source starts
+emitting personal data you will see it in the result and the audit log.
+
+Fail-safe: a source with no live Apify token yields an honest empty result
+(fetched=0), never fabricated records.
+"""
+
+import hashlib
+import json
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from alibi.dataengine.apify import ApifyClient
+from alibi.dataengine.guard import PersonalDataRejected, assert_non_personal
+from alibi.dataengine.schemas import IngestRecord, SourceSpec, build_record
+from alibi.dataengine.sources import get_source
+from alibi.dataengine.store import DataEngineStore
+
+
+@dataclass
+class IngestResult:
+    source_id: str
+    fetched: int = 0
+    stored: int = 0
+    skipped: int = 0            # normaliser returned None (incomplete item)
+    rejected_personal: int = 0  # blocked by the §8 guard
+    rejections: List[str] = field(default_factory=list)
+    error: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "source_id": self.source_id,
+            "fetched": self.fetched,
+            "stored": self.stored,
+            "skipped": self.skipped,
+            "rejected_personal": self.rejected_personal,
+            "rejections": self.rejections[:20],  # cap the noise
+            "error": self.error,
+        }
+
+
+def _record_id(source_id: str, payload: Dict[str, Any]) -> str:
+    """Stable id from the content, so re-running a source doesn't duplicate."""
+    blob = json.dumps(payload, sort_keys=True, default=str)
+    digest = hashlib.sha256(f"{source_id}:{blob}".encode()).hexdigest()[:16]
+    return f"{source_id}:{digest}"
+
+
+def ingest_items(
+    spec: SourceSpec,
+    items: List[Dict[str, Any]],
+    store: DataEngineStore,
+    now: Optional[datetime] = None,
+) -> IngestResult:
+    """Normalise -> guard -> tag -> store a batch of raw items.
+
+    This is the testable core: it takes items directly, so the pipeline can be
+    exercised against fixtures without any network or Apify token.
+    """
+    result = IngestResult(source_id=spec.source_id)
+    seen: set = set()
+
+    for item in items:
+        result.fetched += 1
+
+        # 1. Normalise — allowlist; unknown fields (incl. any personal ones) dropped.
+        payload = spec.normaliser(item) if spec.normaliser else dict(item)
+        if not payload:
+            result.skipped += 1
+            continue
+
+        # 2. GUARD — fail-closed on anything person-identifying that survived.
+        try:
+            assert_non_personal(payload)
+        except PersonalDataRejected as e:
+            result.rejected_personal += 1
+            result.rejections.extend(e.violations)
+            store.append_audit("rejected_personal_data", {
+                "source_id": spec.source_id,
+                "violations": e.violations,
+            })
+            continue
+
+        # 3. Tag with provenance + lawful basis + retention, and store.
+        rid = _record_id(spec.source_id, payload)
+        if rid in seen:
+            result.skipped += 1  # duplicate within this batch
+            continue
+        seen.add(rid)
+
+        record = build_record(
+            record_id=rid,
+            spec=spec,
+            payload=payload,
+            provenance={
+                "source_id": spec.source_id,
+                "apify_actor": spec.apify_actor,
+                "source_url": payload.get("source_url"),
+                "fetched_at": (now or datetime.utcnow()).isoformat(),
+            },
+            now=now,
+        )
+        store.append(record)
+        result.stored += 1
+
+    store.append_audit("ingest_run", result.to_dict())
+    return result
+
+
+def run_source(
+    source_id: str,
+    store: Optional[DataEngineStore] = None,
+    client: Optional[ApifyClient] = None,
+    now: Optional[datetime] = None,
+) -> IngestResult:
+    """Run one declared source end-to-end via Apify. Never raises.
+
+    With no APIFY_TOKEN this returns an honest empty result (fetched=0) rather
+    than inventing data.
+    """
+    spec = get_source(source_id)
+    if not spec:
+        return IngestResult(source_id=source_id, error=f"unknown source '{source_id}'")
+
+    store = store or DataEngineStore()
+    client = client or ApifyClient()
+
+    if not spec.apify_actor:
+        return IngestResult(
+            source_id=source_id,
+            error="no Apify actor wired for this source yet",
+        )
+
+    items = client.run_actor_sync(spec.apify_actor, spec.actor_input)
+    if items is None:
+        return IngestResult(source_id=source_id, error="Apify fetch failed or no token")
+
+    return ingest_items(spec, items, store, now=now)
