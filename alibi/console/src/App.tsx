@@ -10,6 +10,7 @@ import { VehicleSearchPage } from './pages/VehicleSearchPage';
 import { CamerasPage } from './pages/CamerasPage';
 import { WatchlistPage } from './pages/WatchlistPage';
 import { SearchPage } from './pages/SearchPage';
+import PatternsPage from './pages/PatternsPage';
 import { isAuthenticated, getUser, logout, hasRole } from './lib/auth';
 
 type LayoutMode = 'standard' | 'control-room';
@@ -88,6 +89,7 @@ function Layout({ children }: { children: React.ReactNode }) {
               {extLink(apiBase + '/camera/secure-stream', 'Camera')}
               <div className="w-px h-5 bg-white/10 mx-1.5 flex-shrink-0" />
               {navLink('/incidents', 'Incidents')}
+              {navLink('/patterns', 'Patterns')}
               {navLink('/reports', 'Reports')}
               {navLink('/search', 'Search')}
               {navLink('/metrics', 'Metrics')}
@@ -145,6 +147,7 @@ function App() {
                   <Route path="/" element={<Navigate to="/incidents" replace />} />
                   <Route path="/incidents" element={<IncidentsPage />} />
                   <Route path="/incidents/:id" element={<IncidentDetailPage />} />
+                  <Route path="/patterns" element={<PatternsPage />} />
                   <Route path="/reports" element={<ReportsPage />} />
                   <Route path="/metrics" element={<MetricsPage />} />
                   <Route path="/search" element={<SearchPage />} />
