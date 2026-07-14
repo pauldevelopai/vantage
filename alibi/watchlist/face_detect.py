@@ -1,78 +1,128 @@
 """
 Face Detection
 
-Lightweight face detection using OpenCV DNN with pre-trained models.
+Detects faces in frames. Primary backend is InsightFace SCRFD (ONNX, via
+onnxruntime) — accurate, and it does NOT depend on the legacy OpenCV APIs
+(cv2.dnn.readNetFromCaffe, cv2.CascadeClassifier) that OpenCV 5.0 removed.
+Falls back to those OpenCV detectors only where they still exist.
 """
+
+import os
 
 import cv2
 import numpy as np
 from typing import List, Tuple, Optional
 from pathlib import Path
 
+# SCRFD detector lives in the same InsightFace pack as the ArcFace recogniser.
+DEFAULT_ARCFACE_PACK = os.getenv("VANTAGE_ARCFACE_MODEL", "buffalo_l")
+_SCRFD_FILE = "det_10g.onnx"
+
 
 class FaceDetector:
-    """
-    Face detector using OpenCV DNN with Caffe model.
-    
-    Uses res10_300x300_ssd_iter_140000.caffemodel (lightweight, fast).
-    """
-    
+    """Face detector: InsightFace SCRFD primary, OpenCV DNN/Haar fallback."""
+
     def __init__(
         self,
         confidence_threshold: float = 0.5,
-        model_path: Optional[str] = None
+        model_path: Optional[str] = None,
+        arcface_pack: str = DEFAULT_ARCFACE_PACK,
     ):
         """
-        Initialize face detector.
-        
         Args:
-            confidence_threshold: Minimum confidence for detection
-            model_path: Path to model files (optional, uses OpenCV built-in)
+            confidence_threshold: Minimum confidence for detection.
+            model_path: Optional path (unused by the SCRFD backend).
+            arcface_pack: InsightFace pack that holds the SCRFD model.
         """
         self.confidence_threshold = confidence_threshold
-        
-        # Try to load OpenCV's built-in face detector
+        self.arcface_pack = arcface_pack
+        self._scrfd = None
+        self.net = None
+        self.face_cascade = None
+
+        # 1) InsightFace SCRFD (preferred, OpenCV-5 safe)
+        if self._init_scrfd():
+            self.method = "scrfd"
+            print("[FaceDetector] Using InsightFace SCRFD face detector")
+            return
+
+        # 2) OpenCV DNN (Caffe) — only if this OpenCV build still has it
         try:
-            # OpenCV DNN face detector (Caffe model)
-            # This is lightweight and included with OpenCV
-            prototxt = cv2.data.haarcascades + "../deploy.prototxt"
-            model = cv2.data.haarcascades + "../res10_300x300_ssd_iter_140000.caffemodel"
-            
-            # Try loading from OpenCV data directory
-            # If not available, fall back to Haar Cascades
-            try:
+            if hasattr(cv2, "dnn") and hasattr(cv2.dnn, "readNetFromCaffe"):
+                prototxt = cv2.data.haarcascades + "../deploy.prototxt"
+                model = cv2.data.haarcascades + "../res10_300x300_ssd_iter_140000.caffemodel"
                 self.net = cv2.dnn.readNetFromCaffe(prototxt, model)
                 self.method = "dnn"
                 print("[FaceDetector] Using OpenCV DNN face detector")
-            except:
-                # Fall back to Haar Cascades (always available)
+                return
+        except Exception:
+            self.net = None
+
+        # 3) Haar cascade — only if this OpenCV build still has it
+        try:
+            if hasattr(cv2, "CascadeClassifier"):
                 cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
                 self.face_cascade = cv2.CascadeClassifier(cascade_path)
                 self.method = "haar"
                 print("[FaceDetector] Using Haar Cascade face detector")
-        
+                return
+        except Exception:
+            self.face_cascade = None
+
+        # 4) Nothing available — detect() returns [] instead of crashing
+        self.method = "none"
+        print("[FaceDetector] WARNING: no face detector available. "
+              "Install insightface for detection: pip install insightface onnxruntime")
+
+    def _init_scrfd(self) -> bool:
+        """Load the SCRFD detection model (downloads the pack on first use)."""
+        try:
+            import insightface
+            home = os.path.expanduser("~/.insightface/models")
+            det_path = os.path.join(home, self.arcface_pack, _SCRFD_FILE)
+            if not os.path.exists(det_path):
+                from insightface.app import FaceAnalysis
+                FaceAnalysis(name=self.arcface_pack,
+                             allowed_modules=["detection", "recognition"]).prepare(ctx_id=-1)
+            det = insightface.model_zoo.get_model(det_path, providers=["CPUExecutionProvider"])
+            det.prepare(ctx_id=-1, input_size=(640, 640))
+            det.det_thresh = self.confidence_threshold  # SCRFD threshold is an attribute
+            self._scrfd = det
+            return True
         except Exception as e:
-            print(f"[FaceDetector] Warning: {e}")
-            # Fall back to Haar Cascades
-            cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-            self.face_cascade = cv2.CascadeClassifier(cascade_path)
-            self.method = "haar"
-            print("[FaceDetector] Using Haar Cascade face detector (fallback)")
-    
+            self._scrfd = None
+            print(f"[FaceDetector] SCRFD unavailable ({e}); falling back")
+            return False
+
     def detect(self, image: np.ndarray) -> List[Tuple[int, int, int, int]]:
         """
-        Detect faces in image.
-        
-        Args:
-            image: Input image (BGR format)
-            
+        Detect faces in a BGR image.
+
         Returns:
-            List of bounding boxes [(x, y, w, h), ...]
+            List of bounding boxes [(x, y, w, h), ...].
         """
+        if image is None or getattr(image, "size", 0) == 0:
+            return []
+        if self.method == "scrfd":
+            return self._detect_scrfd(image)
         if self.method == "dnn":
             return self._detect_dnn(image)
-        else:
+        if self.method == "haar":
             return self._detect_haar(image)
+        return []
+
+    def _detect_scrfd(self, image: np.ndarray) -> List[Tuple[int, int, int, int]]:
+        """Detect using InsightFace SCRFD; returns (x, y, w, h) boxes."""
+        h, w = image.shape[:2]
+        bboxes, _kpss = self._scrfd.detect(image, metric="default")
+        faces = []
+        for det in bboxes:
+            x1, y1, x2, y2 = det[:4]
+            x = max(0, int(x1)); y = max(0, int(y1))
+            bw = min(w - x, int(x2 - x1)); bh = min(h - y, int(y2 - y1))
+            if bw > 0 and bh > 0:
+                faces.append((x, y, bw, bh))
+        return faces
     
     def _detect_dnn(self, image: np.ndarray) -> List[Tuple[int, int, int, int]]:
         """Detect using DNN"""

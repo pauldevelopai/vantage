@@ -57,6 +57,11 @@ fast-alpr>=0.4.0        # Plate detection + OCR (open-image-models + fast-plate-
 onnxruntime>=1.17.0     # ONNX inference backend for FastALPR
 easyocr>=1.7.0          # Legacy fallback OCR (used if FastALPR unavailable)
 
+# Face recognition — ArcFace (InsightFace, ONNX) for the Digital Watchlist.
+# 512-d deep embeddings; the watchlist FaceEmbedder auto-selects it and falls
+# back to face_recognition/HOG otherwise. Downloads its model pack on first use.
+insightface>=0.7.3      # ArcFace face-recognition (runs on onnxruntime, above)
+
 # NLP / Embeddings (optional but recommended for full features)
 # These enable local semantic search - FREE, FAST, OFFLINE
 sentence-transformers>=2.2.0  # Hugging Face embeddings
