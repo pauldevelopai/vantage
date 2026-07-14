@@ -19,12 +19,13 @@ class PlateRegistryEntry:
     expected_model: str
     source_ref: str  # Reference to source data
     added_ts: str  # ISO timestamp
+    expected_color: str = ""  # registered colour (enables colour-mismatch checks)
     metadata: Optional[Dict[str, Any]] = None
-    
+
     def __post_init__(self):
         if self.metadata is None:
             self.metadata = {}
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON storage"""
         return {
@@ -33,9 +34,10 @@ class PlateRegistryEntry:
             "expected_model": self.expected_model,
             "source_ref": self.source_ref,
             "added_ts": self.added_ts,
+            "expected_color": self.expected_color,
             "metadata": self.metadata
         }
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'PlateRegistryEntry':
         """Create from dictionary"""
@@ -45,6 +47,7 @@ class PlateRegistryEntry:
             expected_model=data["expected_model"],
             source_ref=data["source_ref"],
             added_ts=data["added_ts"],
+            expected_color=data.get("expected_color", ""),
             metadata=data.get("metadata", {})
         )
 
