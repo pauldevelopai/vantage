@@ -59,6 +59,21 @@ export interface IncidentDetail {
   };
 }
 
+export interface ExplanationReason {
+  factor: string;
+  detail: string;
+  citation: Record<string, unknown>;
+}
+
+export interface IncidentExplanation {
+  incident_id: string;
+  rationale: string;
+  reasons: ExplanationReason[];
+  method: 'claude' | 'ollama' | 'openai' | 'template';
+  grounded: boolean;
+  disclaimer: string;
+}
+
 export interface DecisionRequest {
   action_taken: string;
   operator_notes: string;

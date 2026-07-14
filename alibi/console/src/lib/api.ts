@@ -1,6 +1,6 @@
 // API client for Alibi backend
 
-import type { IncidentSummary, IncidentDetail, DecisionRequest, Settings, ShiftReport, Camera, TrailEntry } from './types';
+import type { IncidentSummary, IncidentDetail, IncidentExplanation, DecisionRequest, Settings, ShiftReport, Camera, TrailEntry } from './types';
 import { getToken } from './auth';
 
 const API_BASE = '/api';
@@ -55,6 +55,12 @@ export const api = {
   async getIncident(incidentId: string): Promise<IncidentDetail> {
     const res = await fetchWithAuth(`${API_BASE}/incidents/${incidentId}`);
     if (!res.ok) throw new Error(`Failed to fetch incident: ${res.statusText}`);
+    return res.json();
+  },
+
+  async getIncidentExplanation(incidentId: string): Promise<IncidentExplanation> {
+    const res = await fetchWithAuth(`${API_BASE}/incidents/${incidentId}/explanation`);
+    if (!res.ok) throw new Error(`Failed to fetch explanation: ${res.statusText}`);
     return res.json();
   },
 
