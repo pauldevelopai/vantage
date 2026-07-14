@@ -97,7 +97,14 @@ override the default (`claude-opus-4-8`). *(`llm_service.py`,
   (`reference.vehicle_models`, `reference.plate_formats`); **needs a real Apify
   actor wired**. Improves plates (§3) and make/model (§3).
 - ⬜ **Scheduled refresh** — cron/systemd timer to re-run sources and prune.
-- ⬜ **Consumers** — wire the context store into the §4 explainer and §6 advisor.
+- ✅ **Consumer: area background on every alert** — a camera's `area` resolves to
+  cited place-context shown on the incident, **structurally separate from the
+  reasons**: area stats are background about a PLACE, never a reason the person
+  was flagged and never attributed to them (no profiling-by-neighbourhood).
+  Honest empty state when no area is set or nothing is ingested.
+  *(`dataengine/context.py`, `tests/test_area_context.py::TestContextNeverBecomesAReason`.)*
+- ⬜ **Consumer: Security Advisor (§6)** — feed the same context store into
+  coverage/blind-spot recommendations.
 
 ---
 

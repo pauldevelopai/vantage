@@ -49,6 +49,10 @@ class Explanation:
     method: str                # claude|ollama|openai|template
     grounded: bool = True
     disclaimer: str = DISCLAIMER
+    # Area background (§9). Deliberately SEPARATE from `reasons`: it is context
+    # about a PLACE, never a reason the person/vehicle was flagged, and never
+    # attributed to them. See dataengine/context.py.
+    area_context: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -182,24 +186,41 @@ def _template_rationale(reasons: List[Reason], plan: IncidentPlan) -> str:
 
 
 def _build_explanation_prompt(
-    incident: Incident, plan: IncidentPlan, reasons: List[Reason]
+    incident: Incident,
+    plan: IncidentPlan,
+    reasons: List[Reason],
+    context=None,
 ) -> tuple[str, str]:
-    """System + user prompt that lets the LLM only phrase the extracted facts."""
+    """System + user prompt that lets the LLM only phrase the extracted facts.
+
+    ``context`` is an optional AreaContext (§9). It is passed as BACKGROUND ONLY,
+    with an explicit instruction never to attribute it to the detected individual
+    or treat it as a reason for the flag — area stats must not become
+    profiling-by-neighbourhood.
+    """
     facts = "\n".join(f"  - {r.detail}" for r in reasons)
+
+    context_block = ""
+    if context is not None and not context.is_empty():
+        context_block = "\n\n" + context.render_for_prompt()
+
     system_prompt = (
         "You explain, in neutral and cautious language, why a security incident "
         "was flagged for a human reviewer. You may ONLY restate the facts given "
         "to you — do not add, infer, or speculate beyond them. Never use "
         "accusatory words (suspect, criminal, perpetrator, intruder, thief). Use "
         "'possible', 'appears', 'may indicate', 'needs review'. Make no identity "
-        "or intent claims."
+        "or intent claims. If AREA BACKGROUND is provided, it describes the "
+        "PLACE only: never attribute it to the detected person or vehicle, never "
+        "present it as a reason they were flagged, and never treat absent "
+        "background as reassurance."
     )
     user_prompt = (
         f"Incident {incident.incident_id} was flagged. The ONLY established "
-        f"facts are:\n{facts}\n\n"
+        f"facts that caused the flag are:\n{facts}{context_block}\n\n"
         "Write a single short paragraph (2-4 sentences) that explains why it was "
-        "flagged, using only those facts, in neutral reviewer-facing language. "
-        "End by noting it requires human review."
+        "flagged, using only the established facts above, in neutral "
+        "reviewer-facing language. End by noting it requires human review."
     )
     return system_prompt, user_prompt
 
@@ -208,17 +229,23 @@ def explain_incident(
     incident: Incident,
     plan: IncidentPlan,
     config: Optional[VantageConfig] = None,
+    context=None,
 ) -> Explanation:
     """Produce the grounded, cited "why flagged" explanation.
 
     Reasons (and their citations) are always deterministic. The rationale prose
     is LLM-phrased when a provider is available and passes the safety check;
     otherwise a deterministic template is used. Never raises.
+
+    ``context`` is an optional AreaContext (§9) — advisory background about the
+    PLACE. It is attached to the result separately and is NEVER merged into
+    `reasons`: area statistics must not become a reason a person was flagged.
     """
     config = config or VantageConfig.from_env()
     reasons = extract_reasons(incident, plan)
+    area_context = context.to_dict() if context is not None and not context.is_empty() else None
 
-    system_prompt, user_prompt = _build_explanation_prompt(incident, plan, reasons)
+    system_prompt, user_prompt = _build_explanation_prompt(incident, plan, reasons, context)
 
     def _accept(text: Optional[str]) -> Optional[str]:
         """Guard LLM prose: must be non-empty and free of accusatory language."""
@@ -234,7 +261,8 @@ def explain_incident(
         if _ollama_available():
             prose = _accept(_call_ollama(user_prompt, system_prompt, max_tokens=250, temperature=0.2))
             if prose:
-                return Explanation(incident.incident_id, prose, reasons, "ollama")
+                return Explanation(incident.incident_id, prose, reasons, "ollama",
+                                   area_context=area_context)
 
         if config.anthropic_api_key:
             prose = _accept(_call_anthropic(
@@ -244,7 +272,8 @@ def explain_incident(
                 max_tokens=250,
             ))
             if prose:
-                return Explanation(incident.incident_id, prose, reasons, "claude")
+                return Explanation(incident.incident_id, prose, reasons, "claude",
+                                   area_context=area_context)
     except Exception:
         pass  # fail-safe: fall through to the deterministic template
 
@@ -254,4 +283,5 @@ def explain_incident(
         _template_rationale(reasons, plan),
         reasons,
         "template",
+        area_context=area_context,
     )

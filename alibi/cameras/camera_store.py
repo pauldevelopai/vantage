@@ -23,6 +23,7 @@ class Camera:
     source_type: str        # "rtsp" | "onvif" | "milestone" | "genetec" | "mobile"
     enabled: bool = True
     location: str = ""      # Free text e.g. "Building A, Gate 1"
+    area: str = ""          # Area/suburb name, links this camera to place-context (§9)
     status: str = "unknown"  # "online" | "offline" | "unknown"
     last_seen: Optional[str] = None  # ISO timestamp
     vms_config: Optional[Dict[str, Any]] = field(default_factory=dict)
@@ -35,6 +36,7 @@ class Camera:
             "source_type": self.source_type,
             "enabled": self.enabled,
             "location": self.location,
+            "area": self.area,
             "status": self.status,
             "last_seen": self.last_seen,
             "vms_config": self.vms_config or {},
@@ -49,6 +51,7 @@ class Camera:
             source_type=data.get("source_type", "rtsp"),
             enabled=data.get("enabled", True),
             location=data.get("location", ""),
+            area=data.get("area", ""),
             status=data.get("status", "unknown"),
             last_seen=data.get("last_seen"),
             vms_config=data.get("vms_config", {}),

@@ -65,6 +65,20 @@ export interface ExplanationReason {
   citation: Record<string, unknown>;
 }
 
+export interface ContextItem {
+  kind: string;
+  detail: string;
+  citation: Record<string, unknown>;
+}
+
+/** Area background (§9) — about the PLACE only. Never a reason for the flag,
+ *  never attributed to the detected individual. */
+export interface AreaContext {
+  area: string;
+  items: ContextItem[];
+  rule: string;
+}
+
 export interface IncidentExplanation {
   incident_id: string;
   rationale: string;
@@ -72,6 +86,7 @@ export interface IncidentExplanation {
   method: 'claude' | 'ollama' | 'openai' | 'template';
   grounded: boolean;
   disclaimer: string;
+  area_context?: AreaContext | null;
 }
 
 export interface DecisionRequest {
