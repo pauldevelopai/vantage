@@ -1,39 +1,100 @@
 """
-Network Camera Scanner
+Network Camera Scanner — multi-strategy LAN camera discovery.
 
-Discovers IP cameras on the local network using:
-1. WS-Discovery (ONVIF standard multicast probe)
-2. RTSP port scanning (TCP 554)
-3. mDNS/Bonjour service discovery (optional, requires zeroconf)
+Runs several detection methods and merges results per host, then scores a
+confidence + is_camera verdict for each:
 
-Designed for minimal admin: scan → one-click add.
+1. ONVIF WS-Discovery  (multicast UDP 239.255.255.250:3702)  -> ONVIF NVTs
+2. mDNS / Bonjour       (_onvif._tcp, _rtsp._tcp, _axis-video._tcp, ...) -> cams that advertise
+3. Subnet sweep         (TCP connect to common camera ports)  -> everything, incl. locked-down cams
+4. RTSP OPTIONS probe   (confirms a host actually speaks RTSP + grabs Server banner)
+5. MAC/OUI fingerprint  (ARP table -> vendor)                 -> brand even without ONVIF
+
+Kept synchronous (ThreadPoolExecutor) to match the existing architecture and the
+endpoint that calls it. zeroconf (mDNS) is optional and degrades gracefully.
+
+Public contract (unchanged, relied on by the API + console):
+    get_network_scanner() -> NetworkScanner
+    scanner.scan_all(timeout, verify) -> List[DiscoveredCamera]
+    scanner.is_scanning / scanner.progress
+    DiscoveredCamera.to_dict()
 """
 
-import asyncio
+import ipaddress
+import re
 import socket
 import struct
+import time
 import uuid
-import re
-import ipaddress
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any, Set
-from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+from alibi.cameras.oui_prefixes import vendor_for_mac
+
+# Ports commonly exposed by IP cameras / NVRs.
+# 554/8554 RTSP, 80/8000/8080/8899 HTTP+ONVIF, 88 Reolink, 443 TLS,
+# 34567 Dahua/XM, 37777 Dahua.
+CAMERA_PORTS = (554, 8554, 80, 8000, 8080, 8899, 88, 443, 34567, 37777)
+RTSP_PORTS = (554, 8554)
+
+# mDNS service types that cameras advertise.
+MDNS_TYPES = (
+    "_onvif._tcp.local.",
+    "_rtsp._tcp.local.",
+    "_axis-video._tcp.local.",
+    "_amcrest._tcp.local.",
+    "_http._tcp.local.",
+)
+
+# Common RTSP paths tried during optional cv2 verification.
+RTSP_PATHS = [
+    "/stream1", "/live", "/cam/realmonitor?channel=1&subtype=0", "/h264",
+    "/Streaming/Channels/101", "/live/ch00_1", "/live.sdp", "/videoMain", "/11",
+]
 
 
 @dataclass
 class DiscoveredCamera:
-    """A camera found on the network."""
+    """A camera candidate found on the network."""
     ip: str
     port: int = 554
     source_type: str = "rtsp"           # "onvif" | "rtsp" | "mdns"
     rtsp_url: str = ""
     name: str = ""
-    manufacturer: str = ""
+    manufacturer: str = ""              # from ONVIF scopes or OUI vendor
     model: str = ""
     resolution: str = ""
-    discovery_method: str = ""          # "onvif" | "rtsp_scan" | "mdns"
+    discovery_method: str = ""          # primary method (back-compat)
     already_registered: bool = False
+    # Richer signal from the multi-strategy merge:
+    vendor: str = ""                    # OUI-fingerprinted vendor
+    mac: str = ""
+    open_ports: List[int] = field(default_factory=list)
+    rtsp_confirmed: bool = False        # spoke RTSP to an OPTIONS probe
+    rtsp_banner: str = ""
+    onvif_xaddr: str = ""
+    found_by: Set[str] = field(default_factory=set)
+    confidence: float = 0.0
+    is_camera: bool = False
+
+    def score(self) -> None:
+        """Compute confidence + is_camera from the evidence collected."""
+        c = 0.0
+        if "onvif" in self.found_by:
+            c += 0.6                     # ONVIF NVT = almost certainly a camera
+        if "mdns" in self.found_by:
+            c += 0.5
+        if self.rtsp_confirmed:
+            c += 0.4
+        if self.vendor:                  # known camera-vendor OUI
+            c += 0.3
+        if any(p in self.open_ports for p in RTSP_PORTS):
+            c += 0.2
+        self.confidence = round(min(c, 1.0), 2)
+        self.is_camera = bool(
+            self.confidence >= 0.5 or self.onvif_xaddr or self.rtsp_confirmed
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -42,33 +103,39 @@ class DiscoveredCamera:
             "source_type": self.source_type,
             "rtsp_url": self.rtsp_url,
             "name": self.name,
-            "manufacturer": self.manufacturer,
+            "manufacturer": self.manufacturer or self.vendor,
             "model": self.model,
             "resolution": self.resolution,
             "discovery_method": self.discovery_method,
             "already_registered": self.already_registered,
+            "vendor": self.vendor,
+            "mac": self.mac,
+            "open_ports": self.open_ports,
+            "rtsp_confirmed": self.rtsp_confirmed,
+            "confidence": self.confidence,
+            "is_camera": self.is_camera,
+            "found_by": sorted(self.found_by),
         }
 
 
-# Common RTSP paths used by various camera manufacturers
-RTSP_PATHS = [
-    "",
-    "/stream1",
-    "/live",
-    "/cam/realmonitor?channel=1&subtype=0",
-    "/h264",
-    "/video1",
-    "/Streaming/Channels/101",       # Hikvision
-    "/live/ch00_1",                   # Dahua
-    "/MediaInput/h264",              # Sony
-    "/live.sdp",                     # Axis
-    "/videoMain",                    # Foscam
-    "/11",                           # Samsung
-]
+# --------------------------------------------------------------------------- #
+# Pure helpers (unit-testable without a network)
+# --------------------------------------------------------------------------- #
+
+def parse_rtsp_options(text: str) -> Tuple[bool, Optional[str]]:
+    """Parse an RTSP OPTIONS response: return (speaks_rtsp, server_banner)."""
+    if not text:
+        return False, None
+    first_line = text.split("\r\n", 1)[0]
+    alive = text.startswith("RTSP/") and ("200" in first_line or "Public:" in text)
+    banner = None
+    m = re.search(r"Server:\s*(.+)", text)
+    if m:
+        banner = m.group(1).strip()
+    return alive, banner
 
 
 def get_local_ip() -> str:
-    """Get the local IP address of this machine."""
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -80,21 +147,26 @@ def get_local_ip() -> str:
 
 
 def get_local_subnet() -> str:
-    """Get the local /24 subnet."""
-    local_ip = get_local_ip()
-    network = ipaddress.IPv4Network(f"{local_ip}/24", strict=False)
-    return str(network)
+    return str(ipaddress.IPv4Network(f"{get_local_ip()}/24", strict=False))
+
+
+def _read_arp_table() -> Dict[str, str]:
+    """Map ip -> mac from the kernel ARP cache (Linux /proc/net/arp)."""
+    table: Dict[str, str] = {}
+    try:
+        with open("/proc/net/arp") as fh:
+            next(fh)  # header
+            for line in fh:
+                parts = line.split()
+                if len(parts) >= 4 and parts[3] != "00:00:00:00:00:00":
+                    table[parts[0]] = parts[3].lower()
+    except Exception:
+        pass
+    return table
 
 
 class NetworkScanner:
-    """
-    Discovers cameras on the local network.
-
-    Uses multiple discovery methods for maximum coverage:
-    - WS-Discovery multicast (ONVIF cameras)
-    - RTSP port scan (any camera with RTSP)
-    - mDNS/Bonjour (consumer cameras)
-    """
+    """Discovers cameras on the local network via several strategies."""
 
     def __init__(self):
         self._scanning = False
@@ -108,364 +180,274 @@ class NetworkScanner:
     def progress(self) -> Dict:
         return dict(self._progress)
 
-    def scan_onvif(self, timeout: float = 5.0) -> List[DiscoveredCamera]:
-        """
-        Discover cameras using WS-Discovery multicast probe (ONVIF standard).
+    # --- Strategy 1: ONVIF WS-Discovery ---------------------------------- #
 
-        Sends a SOAP multicast to 239.255.255.250:3702 and listens for responses.
-        Most IP cameras (Hikvision, Dahua, Axis, etc.) respond to this.
-        """
-        cameras = []
-
-        # WS-Discovery SOAP probe for network video devices
-        probe_id = str(uuid.uuid4())
-        probe_message = f"""<?xml version="1.0" encoding="utf-8"?>
+    def scan_onvif(self, timeout: float = 5.0) -> Dict[str, dict]:
+        """Multicast Probe; return {ip: {xaddr, name, model}} for responders."""
+        found: Dict[str, dict] = {}
+        probe = f"""<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope"
-               xmlns:wsa="http://schemas.xmlsoap.org/ws/2004/08/addressing"
-               xmlns:wsd="http://schemas.xmlsoap.org/ws/2005/04/discovery"
-               xmlns:dn="http://www.onvif.org/ver10/network/wsdl">
-  <soap:Header>
-    <wsa:Action>http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe</wsa:Action>
-    <wsa:MessageID>urn:uuid:{probe_id}</wsa:MessageID>
-    <wsa:To>urn:schemas-xmlsoap-org:ws:2005:04:discovery</wsa:To>
-  </soap:Header>
-  <soap:Body>
-    <wsd:Probe>
-      <wsd:Types>dn:NetworkVideoTransmitter</wsd:Types>
-    </wsd:Probe>
-  </soap:Body>
+ xmlns:wsa="http://schemas.xmlsoap.org/ws/2004/08/addressing"
+ xmlns:wsd="http://schemas.xmlsoap.org/ws/2005/04/discovery"
+ xmlns:dn="http://www.onvif.org/ver10/network/wsdl">
+ <soap:Header>
+  <wsa:Action>http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe</wsa:Action>
+  <wsa:MessageID>urn:uuid:{uuid.uuid4()}</wsa:MessageID>
+  <wsa:To>urn:schemas-xmlsoap-org:ws:2005:04:discovery</wsa:To>
+ </soap:Header>
+ <soap:Body><wsd:Probe><wsd:Types>dn:NetworkVideoTransmitter</wsd:Types></wsd:Probe></soap:Body>
 </soap:Envelope>"""
-
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
             sock.settimeout(timeout)
-
-            # Join multicast group
-            mreq = struct.pack(
-                "4sl",
-                socket.inet_aton("239.255.255.250"),
-                socket.INADDR_ANY,
-            )
+            mreq = struct.pack("4sl", socket.inet_aton("239.255.255.250"), socket.INADDR_ANY)
             sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-
-            # Send probe
-            sock.sendto(
-                probe_message.encode("utf-8"),
-                ("239.255.255.250", 3702),
-            )
-
-            print(f"[NetworkScanner] ONVIF WS-Discovery probe sent, waiting {timeout}s...")
-
-            seen_ips: Set[str] = set()
-
+            for _ in range(2):
+                sock.sendto(probe.encode(), ("239.255.255.250", 3702))
+                time.sleep(0.2)
+            seen: Set[str] = set()
             while True:
                 try:
                     data, addr = sock.recvfrom(65535)
-                    ip = addr[0]
-
-                    if ip in seen_ips:
-                        continue
-                    seen_ips.add(ip)
-
-                    # Parse response for device info
-                    response_text = data.decode("utf-8", errors="ignore")
-                    camera = self._parse_onvif_response(ip, response_text)
-                    if camera:
-                        cameras.append(camera)
-                        print(f"[NetworkScanner] ONVIF found: {ip} - {camera.name or camera.manufacturer or 'Unknown'}")
-
                 except socket.timeout:
                     break
-
+                ip = addr[0]
+                if ip in seen:
+                    continue
+                seen.add(ip)
+                found[ip] = self._parse_onvif_scopes(data.decode(errors="ignore"))
             sock.close()
-
         except Exception as e:
             print(f"[NetworkScanner] ONVIF scan error: {e}")
+        return found
 
-        return cameras
+    @staticmethod
+    def _parse_onvif_scopes(xml_text: str) -> dict:
+        info: dict = {}
+        m = re.search(r"XAddrs>([^<]+)<", xml_text)
+        if m:
+            info["xaddr"] = m.group(1).split()[0]
+        for k, v in re.findall(r"onvif://www\.onvif\.org/(\w+)/([^\s<]+)", xml_text):
+            if k in ("name", "hardware", "manufacturer"):
+                info[k] = v.replace("%20", " ")
+        return info
 
-    def _parse_onvif_response(self, ip: str, xml_text: str) -> Optional[DiscoveredCamera]:
-        """Extract camera info from WS-Discovery response XML."""
-        camera = DiscoveredCamera(
-            ip=ip,
-            port=80,
-            source_type="onvif",
-            discovery_method="onvif",
-        )
+    # --- Strategy 3: subnet sweep (multi-port) --------------------------- #
 
-        # Extract XAddrs (service URL)
-        xaddrs_match = re.search(r"<[^>]*XAddrs[^>]*>([^<]+)</", xml_text)
-        if xaddrs_match:
-            xaddrs = xaddrs_match.group(1).strip()
-            # Extract port from URL
-            port_match = re.search(r":(\d+)/", xaddrs)
-            if port_match:
-                camera.port = int(port_match.group(1))
-
-        # Extract scopes (contains manufacturer, model info)
-        scopes_match = re.search(r"<[^>]*Scopes[^>]*>([^<]+)</", xml_text)
-        if scopes_match:
-            scopes = scopes_match.group(1).strip()
-            # Parse ONVIF scopes
-            for scope in scopes.split():
-                if "hardware" in scope.lower():
-                    camera.model = scope.split("/")[-1]
-                elif "name" in scope.lower():
-                    camera.name = scope.split("/")[-1].replace("%20", " ")
-                elif "manufacturer" in scope.lower() or "mfr" in scope.lower():
-                    camera.manufacturer = scope.split("/")[-1].replace("%20", " ")
-
-        # Build default RTSP URL for ONVIF cameras
-        camera.rtsp_url = f"rtsp://{ip}:{554}/stream1"
-
-        if not camera.name:
-            camera.name = f"ONVIF Camera ({ip})"
-
-        return camera
-
-    def scan_rtsp(self, subnet: Optional[str] = None, timeout: float = 1.5, max_workers: int = 50) -> List[DiscoveredCamera]:
-        """
-        Scan local subnet for open RTSP ports (TCP 554).
-
-        Args:
-            subnet: CIDR notation (e.g., "192.168.1.0/24"). Auto-detected if None.
-            timeout: Connection timeout per host in seconds.
-            max_workers: Max concurrent connections.
-        """
-        if subnet is None:
-            subnet = get_local_subnet()
-
+    def subnet_sweep(
+        self, subnet: Optional[str] = None, ports=CAMERA_PORTS,
+        timeout: float = 1.0, max_workers: int = 100,
+    ) -> Dict[str, List[int]]:
+        """TCP connect scan across all camera ports. Return {ip: [open_ports]}."""
+        subnet = subnet or get_local_subnet()
         network = ipaddress.IPv4Network(subnet, strict=False)
         local_ip = get_local_ip()
-        hosts = [str(ip) for ip in network.hosts() if str(ip) != local_ip]
+        targets = [(str(ip), p) for ip in network.hosts()
+                   if str(ip) != local_ip for p in ports]
 
-        cameras = []
-        self._progress["total"] = len(hosts)
+        found: Dict[str, List[int]] = {}
+        self._progress["total"] = len(targets)
         self._progress["scanned"] = 0
 
-        print(f"[NetworkScanner] RTSP scanning {len(hosts)} hosts on {subnet}...")
-
-        def check_host(ip: str) -> Optional[DiscoveredCamera]:
-            """Check if host has RTSP port open."""
+        def _check(ip: str, port: int) -> Optional[Tuple[str, int]]:
             try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(timeout)
-                result = sock.connect_ex((ip, 554))
-                sock.close()
-
-                if result == 0:
-                    return DiscoveredCamera(
-                        ip=ip,
-                        port=554,
-                        source_type="rtsp",
-                        rtsp_url=f"rtsp://{ip}:554/stream1",
-                        name=f"Camera ({ip})",
-                        discovery_method="rtsp_scan",
-                    )
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.settimeout(timeout)
+                    if s.connect_ex((ip, port)) == 0:
+                        return (ip, port)
             except Exception:
                 pass
             return None
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(check_host, ip): ip for ip in hosts}
-
-            for future in as_completed(futures):
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            futures = [ex.submit(_check, ip, p) for ip, p in targets]
+            for fut in as_completed(futures):
                 self._progress["scanned"] += 1
-                try:
-                    result = future.result()
-                    if result:
-                        cameras.append(result)
-                        self._progress["found"] = len(cameras)
-                        print(f"[NetworkScanner] RTSP found: {result.ip}:554")
-                except Exception:
-                    pass
+                res = fut.result()
+                if res:
+                    ip, port = res
+                    found.setdefault(ip, []).append(port)
+                    self._progress["found"] = len(found)
+        for ip in found:
+            found[ip].sort()
+        return found
 
-        return cameras
+    # --- Strategy 4: RTSP OPTIONS probe ---------------------------------- #
 
-    def scan_rtsp_verify(self, cameras: List[DiscoveredCamera], timeout: float = 3.0) -> List[DiscoveredCamera]:
-        """
-        Verify RTSP cameras by attempting to connect and trying common paths.
-        Updates rtsp_url and resolution on each camera.
-        """
+    def rtsp_probe(self, ip: str, port: int = 554, timeout: float = 2.5) -> Tuple[bool, Optional[str]]:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(timeout)
+                s.connect((ip, port))
+                s.sendall(
+                    f"OPTIONS rtsp://{ip}:{port}/ RTSP/1.0\r\n"
+                    f"CSeq: 1\r\nUser-Agent: Vantage-Scanner\r\n\r\n".encode()
+                )
+                data = s.recv(2048)
+            return parse_rtsp_options(data.decode(errors="ignore"))
+        except Exception:
+            return False, None
+
+    # --- Strategy 2: mDNS (optional) ------------------------------------- #
+
+    def scan_mdns(self, timeout: float = 3.0) -> Dict[str, dict]:
+        found: Dict[str, dict] = {}
+        try:
+            from zeroconf import Zeroconf, ServiceBrowser
+        except ImportError:
+            print("[NetworkScanner] zeroconf not installed, skipping mDNS")
+            return found
+
+        class Listener:
+            def add_service(self, zc, stype, name):
+                info = zc.get_service_info(stype, name)
+                if info and info.addresses:
+                    ip = socket.inet_ntoa(info.addresses[0])
+                    found[ip] = {"name": name.split(".")[0]}
+
+            def remove_service(self, *a):
+                pass
+
+            def update_service(self, *a):
+                pass
+
+        try:
+            zc = Zeroconf()
+            for stype in MDNS_TYPES:
+                ServiceBrowser(zc, stype, Listener())
+            time.sleep(timeout)
+            zc.close()
+        except Exception as e:
+            print(f"[NetworkScanner] mDNS scan error: {e}")
+        return found
+
+    # --- optional cv2 frame verification --------------------------------- #
+
+    def scan_rtsp_verify(self, cameras: List[DiscoveredCamera], timeout: float = 3.0):
         try:
             import cv2
         except ImportError:
-            print("[NetworkScanner] OpenCV not available for RTSP verification")
-            return cameras
-
-        verified = []
-
-        for camera in cameras:
-            found = False
+            return
+        for cam in cameras:
             for path in RTSP_PATHS:
-                url = f"rtsp://{camera.ip}:{camera.port}{path}" if path.startswith("/") else f"rtsp://{camera.ip}:{camera.port}/{path}"
-
+                url = f"rtsp://{cam.ip}:{cam.port}{path}"
                 try:
                     cap = cv2.VideoCapture(url)
                     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-
                     if cap.isOpened():
                         ret, frame = cap.read()
                         if ret and frame is not None:
                             h, w = frame.shape[:2]
-                            camera.rtsp_url = url
-                            camera.resolution = f"{w}x{h}"
-                            found = True
-                            print(f"[NetworkScanner] Verified: {url} ({w}x{h})")
-                        cap.release()
-                        if found:
+                            cam.rtsp_url = url
+                            cam.resolution = f"{w}x{h}"
+                            cap.release()
                             break
-                    else:
-                        cap.release()
+                    cap.release()
                 except Exception:
                     pass
 
-            if found:
-                verified.append(camera)
+    # --- Orchestrator ---------------------------------------------------- #
 
-        return verified
-
-    def scan_mdns(self, timeout: float = 3.0) -> List[DiscoveredCamera]:
-        """
-        Discover cameras via mDNS/Bonjour (requires zeroconf library).
-        Looks for _rtsp._tcp services.
-        """
-        cameras = []
-
-        try:
-            from zeroconf import Zeroconf, ServiceBrowser
-
-            class Listener:
-                def __init__(self):
-                    self.found = []
-
-                def add_service(self, zc, service_type, name):
-                    info = zc.get_service_info(service_type, name)
-                    if info:
-                        ip = socket.inet_ntoa(info.addresses[0]) if info.addresses else None
-                        if ip:
-                            self.found.append(DiscoveredCamera(
-                                ip=ip,
-                                port=info.port or 554,
-                                source_type="rtsp",
-                                rtsp_url=f"rtsp://{ip}:{info.port or 554}/",
-                                name=name.replace("._rtsp._tcp.local.", ""),
-                                discovery_method="mdns",
-                            ))
-
-                def remove_service(self, zc, service_type, name):
-                    pass
-
-                def update_service(self, zc, service_type, name):
-                    pass
-
-            zc = Zeroconf()
-            listener = Listener()
-            browser = ServiceBrowser(zc, "_rtsp._tcp.local.", listener)
-
-            import time
-            time.sleep(timeout)
-
-            zc.close()
-            cameras = listener.found
-            print(f"[NetworkScanner] mDNS found {len(cameras)} cameras")
-
-        except ImportError:
-            print("[NetworkScanner] zeroconf not installed, skipping mDNS scan")
-        except Exception as e:
-            print(f"[NetworkScanner] mDNS scan error: {e}")
-
-        return cameras
-
-    def scan_all(self, timeout: float = 10.0, verify: bool = False) -> List[DiscoveredCamera]:
-        """
-        Run all discovery methods and return deduplicated results.
-
-        Args:
-            timeout: Total timeout for scanning
-            verify: If True, verify RTSP connections by reading a frame (slower but more accurate)
-        """
+    def scan_all(self, timeout: float = 15.0, verify: bool = False) -> List[DiscoveredCamera]:
         self._scanning = True
         self._progress = {"status": "scanning", "found": 0, "scanned": 0, "total": 0}
+        cams: Dict[str, DiscoveredCamera] = {}
 
-        all_cameras: Dict[str, DiscoveredCamera] = {}
+        def _get(ip: str) -> DiscoveredCamera:
+            return cams.setdefault(ip, DiscoveredCamera(ip=ip))
 
         try:
-            # Phase 1: ONVIF discovery (fast, multicast)
+            # 1. ONVIF WS-Discovery
             self._progress["status"] = "onvif_discovery"
-            onvif_cameras = self.scan_onvif(timeout=min(timeout / 2, 5.0))
-            for cam in onvif_cameras:
-                all_cameras[cam.ip] = cam
+            for ip, info in self.scan_onvif(timeout=min(timeout / 3, 5.0)).items():
+                cam = _get(ip)
+                cam.found_by.add("onvif")
+                cam.discovery_method = cam.discovery_method or "onvif"
+                cam.source_type = "onvif"
+                cam.onvif_xaddr = info.get("xaddr", "")
+                cam.name = cam.name or info.get("name", "")
+                cam.model = cam.model or info.get("hardware", "")
+                cam.manufacturer = cam.manufacturer or info.get("manufacturer", "")
 
-            # Phase 2: RTSP port scan (covers non-ONVIF cameras)
-            self._progress["status"] = "rtsp_scanning"
-            rtsp_cameras = self.scan_rtsp(timeout=min(timeout / 4, 1.5))
-            for cam in rtsp_cameras:
-                if cam.ip not in all_cameras:
-                    all_cameras[cam.ip] = cam
-
-            # Phase 3: mDNS (bonus, if available)
+            # 2. mDNS
             self._progress["status"] = "mdns_discovery"
-            mdns_cameras = self.scan_mdns(timeout=min(timeout / 4, 3.0))
-            for cam in mdns_cameras:
-                if cam.ip not in all_cameras:
-                    all_cameras[cam.ip] = cam
+            for ip, info in self.scan_mdns(timeout=min(timeout / 4, 3.0)).items():
+                cam = _get(ip)
+                cam.found_by.add("mdns")
+                cam.discovery_method = cam.discovery_method or "mdns"
+                cam.name = cam.name or info.get("name", "")
 
-            # Phase 4: Optional RTSP verification
-            if verify and all_cameras:
+            # 3. Subnet sweep (all camera ports)
+            self._progress["status"] = "rtsp_scanning"
+            for ip, ports in self.subnet_sweep(timeout=min(timeout / 4, 1.5)).items():
+                cam = _get(ip)
+                cam.found_by.add("sweep")
+                cam.discovery_method = cam.discovery_method or "rtsp_scan"
+                cam.open_ports = sorted(set(cam.open_ports) | set(ports))
+
+            # 4. RTSP OPTIONS confirmation
+            self._progress["status"] = "rtsp_confirm"
+            for cam in cams.values():
+                rtsp_port = next((p for p in RTSP_PORTS if p in cam.open_ports), None)
+                if rtsp_port is None and cam.onvif_xaddr:
+                    rtsp_port = 554
+                if rtsp_port:
+                    cam.rtsp_confirmed, cam.rtsp_banner = self.rtsp_probe(cam.ip, rtsp_port)
+                    cam.port = rtsp_port
+                    if not cam.rtsp_url:
+                        cam.rtsp_url = f"rtsp://{cam.ip}:{rtsp_port}/stream1"
+
+            # 5. MAC / vendor fingerprint + score
+            arp = _read_arp_table()
+            for ip, cam in cams.items():
+                cam.mac = arp.get(ip, "")
+                cam.vendor = vendor_for_mac(cam.mac) or ""
+                if cam.vendor and not cam.manufacturer:
+                    cam.manufacturer = cam.vendor
+                if not cam.name:
+                    cam.name = f"{cam.vendor or 'Camera'} ({ip})"
+                cam.score()
+
+            if verify:
                 self._progress["status"] = "verifying"
-                unverified = [c for c in all_cameras.values() if not c.resolution]
-                verified = self.scan_rtsp_verify(unverified)
-                for cam in verified:
-                    all_cameras[cam.ip] = cam
+                self.scan_rtsp_verify([c for c in cams.values() if not c.resolution])
 
-            # Mark already registered cameras
-            self._mark_registered(list(all_cameras.values()))
-
+            self._mark_registered(list(cams.values()))
             self._progress["status"] = "complete"
-            self._progress["found"] = len(all_cameras)
-
+            self._progress["found"] = len(cams)
         except Exception as e:
             print(f"[NetworkScanner] Scan error: {e}")
             self._progress["status"] = f"error: {e}"
-
         finally:
             self._scanning = False
 
-        cameras = list(all_cameras.values())
-        print(f"[NetworkScanner] Total discovered: {len(cameras)} cameras")
-        return cameras
+        # Cameras first, then by confidence, then IP.
+        return sorted(
+            cams.values(),
+            key=lambda c: (not c.is_camera, -c.confidence, ipaddress.ip_address(c.ip)),
+        )
 
     def _mark_registered(self, cameras: List[DiscoveredCamera]):
-        """Mark cameras that are already in the CameraStore."""
         try:
             from alibi.cameras.camera_store import get_camera_store
-
-            store = get_camera_store()
-            registered = store.list_all()
             registered_ips = set()
-
-            for cam in registered:
-                # Extract IP from source URL
+            for cam in get_camera_store().list_all():
                 if cam.source and "://" in cam.source:
-                    match = re.search(r"://([^:/]+)", cam.source)
-                    if match:
-                        registered_ips.add(match.group(1))
-
+                    m = re.search(r"://(?:[^@/]+@)?([^:/]+)", cam.source)
+                    if m:
+                        registered_ips.add(m.group(1))
             for cam in cameras:
                 cam.already_registered = cam.ip in registered_ips
-
         except Exception:
             pass
 
 
-# Global singleton
 _scanner: Optional[NetworkScanner] = None
 
 
 def get_network_scanner() -> NetworkScanner:
-    """Get the global NetworkScanner instance."""
     global _scanner
     if _scanner is None:
         _scanner = NetworkScanner()
