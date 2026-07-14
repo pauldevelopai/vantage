@@ -1,0 +1,144 @@
+[{
+  "title": "Saps Sandton Police Station",
+  "subTitle": null,
+  "description": null,
+  "price": null,
+  "categoryName": "State police",
+  "address": "2 Summit Rd, Morningside, Sandton, 2196, South Africa",
+  "neighborhood": "Morningside",
+  "street": "2 Summit Rd",
+  "city": "Sandton",
+  "postalCode": "2196",
+  "state": null,
+  "countryCode": "ZA",
+  "website": "https://www.saps.gov.za/contacts/stationdetails.php?sid=171&sname=Sandton%20(Gauteng)",
+  "phone": "+27 11 722 4355",
+  "phoneUnformatted": "+27117224355",
+  "claimThisBusiness": true,
+  "location": {
+    "lat": -26.0800918,
+    "lng": 28.0616641
+  },
+  "locatedIn": null,
+  "floor": null,
+  "plusCode": "W396+XM Sandton, South Africa",
+  "menu": null,
+  "servicesLink": null,
+  "totalScore": null,
+  "permanentlyClosed": false,
+  "temporarilyClosed": false,
+  "placeId": "ChIJ07z0OxxzlR4RAZVxnRKcvUE",
+  "categories": [
+    "State police"
+  ],
+  "fid": "0x1e95731c3bf4bcd3:0x41bd9c129d719501",
+  "cid": "4737113986828440833",
+  "reviewsCount": null,
+  "imagesCount": 22,
+  "imageCategories": [
+    "All",
+    "Street View & 360°"
+  ],
+  "scrapedAt": "2026-07-14T13:17:45.200Z",
+  "reserveTableUrl": null,
+  "googleFoodUrl": null,
+  "hotelStars": null,
+  "hotelDescription": null,
+  "checkInDate": null,
+  "checkOutDate": null,
+  "hotelAds": [],
+  "popularTimesLiveText": null,
+  "popularTimesLivePercent": null,
+  "popularTimesHistogram": {},
+  "openingHours": [
+    {
+      "day": "Monday",
+      "hours": "Open 24 hours"
+    },
+    {
+      "day": "Tuesday",
+      "hours": "Open 24 hours"
+    },
+    {
+      "day": "Wednesday",
+      "hours": "Open 24 hours"
+    },
+    {
+      "day": "Thursday",
+      "hours": "Open 24 hours"
+    },
+    {
+      "day": "Friday",
+      "hours": "Open 24 hours"
+    },
+    {
+      "day": "Saturday",
+      "hours": "Open 24 hours"
+    },
+    {
+      "day": "Sunday",
+      "hours": "Open 24 hours"
+    }
+  ],
+  "peopleAlsoSearch": [
+    {
+      "category": "People also search for",
+      "title": "SAPS Douglasdale Police Station",
+      "reviewsCount": 0,
+      "totalScore": 0
+    },
+    {
+      "category": "People also search for",
+      "title": "Gov Docs Made Simple",
+      "reviewsCount": 21,
+      "totalScore": 4.6
+    },
+    {
+      "category": "People also search for",
+      "title": "Alexandra SAPS FCS",
+      "reviewsCount": 0,
+      "totalScore": 0
+    },
+    {
+      "category": "People also search for",
+      "title": "Sheriff Sandton South",
+      "reviewsCount": 51,
+      "totalScore": 3.2
+    },
+    {
+      "category": "People also search for",
+      "title": "Sandton Precinct",
+      "reviewsCount": 0,
+      "totalScore": 0
+    }
+  ],
+  "placesTags": [],
+  "reviewsTags": [],
+  "additionalInfo": {
+    "Accessibility": [
+      {
+        "Wheelchair accessible entrance": true
+      },
+      {
+        "Wheelchair accessible parking lot": true
+      }
+    ],
+    "Parking": [
+      {
+        "Free parking lot": true
+      },
+      {
+        "Free street parking": true
+      }
+    ]
+  },
+  "gasPrices": [],
+  "url": "https://www.google.com/maps/search/?api=1&query=Saps%20Sandton%20Police%20Station&query_place_id=ChIJ07z0OxxzlR4RAZVxnRKcvUE",
+  "searchPageUrl": "https://www.google.com/maps/search/police%20station%20Sandton%20Johannesburg?hl=en",
+  "searchString": "police station Sandton Johannesburg",
+  "language": "en",
+  "rank": 1,
+  "isAdvertisement": false,
+  "imageUrl": "https://lh3.googleusercontent.com/gps-cs-s/AHRPTWnyD6Hb-w4KWbO-ZS26SAJQbQnoChm2tOicLtNbpGEJS86lIx-8Tx84LH4HjvTAhUkuTn4LtOTSt5ZkxRJjZwvI9ywWscY32eihOcU0wPumvPdqRSBz8_V7CDRuaaNf0LYm3PY=w408-h306-k-no",
+  "kgmid": "/g/1tdsmc1m"
+}]

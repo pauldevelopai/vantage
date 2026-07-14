@@ -122,11 +122,18 @@ def run_source(
     store: Optional[DataEngineStore] = None,
     client: Optional[ApifyClient] = None,
     now: Optional[datetime] = None,
+    input_overrides: Optional[Dict[str, Any]] = None,
 ) -> IngestResult:
     """Run one declared source end-to-end via Apify. Never raises.
 
-    With no APIFY_TOKEN this returns an honest empty result (fetched=0) rather
-    than inventing data.
+    `input_overrides` is merged over the source's declared `actor_input` for
+    per-run parameters (e.g. which area to search). The source's safety-relevant
+    input (reviews off, no personal data) stays in the declaration, so a caller
+    cannot accidentally turn personal-data collection back on by forgetting it —
+    they would have to override it explicitly.
+
+    With no APIFY_TOKEN this returns an honest empty result rather than inventing
+    data.
     """
     spec = get_source(source_id)
     if not spec:
@@ -141,8 +148,42 @@ def run_source(
             error="no Apify actor wired for this source yet",
         )
 
-    items = client.run_actor_sync(spec.apify_actor, spec.actor_input)
+    actor_input = {**(spec.actor_input or {}), **(input_overrides or {})}
+
+    items = client.run_actor_sync(spec.apify_actor, actor_input)
     if items is None:
         return IngestResult(source_id=source_id, error="Apify fetch failed or no token")
 
     return ingest_items(spec, items, store, now=now)
+
+
+def run_poi_for_area(
+    area: str,
+    store: Optional[DataEngineStore] = None,
+    client: Optional[ApifyClient] = None,
+    max_places: int = 20,
+    now: Optional[datetime] = None,
+) -> IngestResult:
+    """Ingest security-relevant points of interest for one area.
+
+    Searches for the categories a reviewer actually cares about — where the
+    nearest police/emergency response is — not people.
+    """
+    if not area:
+        return IngestResult(source_id="places.poi", error="no area given")
+
+    searches = [
+        f"police station {area}",
+        f"hospital {area}",
+        f"fire station {area}",
+    ]
+    return run_source(
+        "places.poi",
+        store=store,
+        client=client,
+        now=now,
+        input_overrides={
+            "searchStringsArray": searches,
+            "maxCrawledPlacesPerSearch": max_places,
+        },
+    )

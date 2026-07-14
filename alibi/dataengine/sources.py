@@ -39,21 +39,41 @@ def normalise_area_crime_stats(item: Dict[str, Any]) -> Optional[Dict[str, Any]]
     return payload
 
 
-POI_FIELDS = [
-    "place_name", "category", "latitude", "longitude", "address",
-    "opening_hours", "source_url",
-]
-
-
 def normalise_poi(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Points of interest — police stations, hospitals, businesses, landmarks.
 
-    `place_name`/`address` describe a PLACE, not a person (see guard.py).
+    Maps the Google-Places actor's raw shape (compass/crawler-google-places) to
+    our canonical, non-personal payload. `place_name` / `address` / `phone`
+    describe a PLACE, not a person (see guard.py).
+
+    Written against a real captured response —
+    `tests/fixtures/apify_google_places_sample.json` (57 raw keys; we keep 10).
+
+    Deliberately NOT carried over:
+      * `website` — for many businesses this is a Facebook page, which would trip
+        the social-URL guard. We don't need it for security context, so it never
+        enters the payload.
+      * reviews / reviewer names — not even fetched (see the actor input below).
     """
-    payload = _pick(item, POI_FIELDS)
-    if not payload.get("place_name"):
+    title = item.get("title")
+    if not title:
         return None
-    return payload
+
+    loc = item.get("location") or {}
+    payload: Dict[str, Any] = {
+        "place_name": title,
+        "category": item.get("categoryName"),
+        # `area` is what a camera's configured area matches against (§9 context).
+        "area": item.get("city"),
+        "neighborhood": item.get("neighborhood"),
+        "address": item.get("address"),
+        "latitude": loc.get("lat"),
+        "longitude": loc.get("lng"),
+        "phone": item.get("phone"),          # a PLACE's phone, not a person's
+        "opening_hours": item.get("openingHours"),
+        "source_url": item.get("url"),
+    }
+    return {k: v for k, v in payload.items() if v is not None}
 
 
 # --------------------------------------------------------------------------- #
@@ -126,6 +146,19 @@ register(SourceSpec(
     lawful_basis=LawfulBasis.LEGITIMATE_INTEREST_NON_PERSONAL,
     retention_days=180,
     description="Points of interest — police stations, hospitals, businesses, landmarks.",
+    apify_actor="compass/crawler-google-places",
+    # Personal data is NOT FETCHED — not merely dropped later. Reviews carry
+    # reviewer names, so we turn them off at the source (§8 boundary: don't
+    # collect what you must not hold).
+    actor_input={
+        "maxCrawledPlacesPerSearch": 20,
+        "language": "en",
+        "maxReviews": 0,
+        "maxImages": 0,
+        "scrapeReviewerName": False,
+        "scrapeReviewsPersonalData": False,
+        # `searchStringsArray` is supplied per run — see run_poi_for_area().
+    },
     normaliser=normalise_poi,
 ))
 
