@@ -93,6 +93,25 @@ export const api = {
     return res.json();
   },
 
+  // Patterns (Phase 2)
+  async getActivity(window: string = '24h'): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/patterns/activity?window=${encodeURIComponent(window)}`);
+    if (!res.ok) throw new Error(`Failed to fetch activity: ${res.statusText}`);
+    return res.json();
+  },
+
+  async getPlateIncidents(plate: string, windowMinutes: number = 30): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/patterns/plate/${encodeURIComponent(plate)}/incidents?window_minutes=${windowMinutes}`);
+    if (!res.ok) throw new Error(`Failed to fetch plate incidents: ${res.statusText}`);
+    return res.json();
+  },
+
+  async getPersonHistory(sightingId: string): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/patterns/person-history/${encodeURIComponent(sightingId)}`);
+    if (!res.ok) throw new Error(`Failed to fetch person history: ${res.statusText}`);
+    return res.json();
+  },
+
   // Simulator endpoints
   async startSimulator(config: {
     scenario: string;

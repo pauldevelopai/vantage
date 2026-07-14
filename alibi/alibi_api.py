@@ -133,6 +133,10 @@ app.include_router(mobile_camera_enhanced_router)
 from alibi.camera_insights import router as camera_insights_router
 app.include_router(camera_insights_router)
 
+# Include patterns router (Phase 2 — activity, co-occurrence, person history)
+from alibi.patterns.api import router as patterns_router
+app.include_router(patterns_router)
+
 # Include camera training router for improving AI vision
 from alibi.camera_training import router as camera_training_router
 app.include_router(camera_training_router)
