@@ -155,7 +155,12 @@ class PlateVehicleMismatchDetector(Detector):
                 observed_make_confidence=vehicle_attrs.make_model_confidence,
                 observed_model_confidence=vehicle_attrs.make_model_confidence,
                 min_confidence=self.vehicle_confidence_threshold,
-                min_score=self.mismatch_min_score
+                min_score=self.mismatch_min_score,
+                # Colour is the reliable signal — fires even when make/model
+                # can't be classified.
+                expected_color=registry_entry.expected_color,
+                observed_color=vehicle_attrs.color,
+                observed_color_confidence=vehicle_attrs.color_confidence,
             )
             
             if not mismatch_result:

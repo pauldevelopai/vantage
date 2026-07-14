@@ -19,6 +19,35 @@ class MismatchResult:
     observed_model: str
     plate_text: str
     explanation: str
+    expected_color: str = ""
+    observed_color: str = ""
+
+
+def compute_color_mismatch(
+    expected_color: str,
+    observed_color: str,
+    observed_color_confidence: float,
+) -> Tuple[float, str]:
+    """
+    Compare the registered colour against the observed colour.
+
+    Colour is the most reliably classified vehicle attribute, and a colour
+    change is exactly the SMARTGUARD example (plate registered to a black car,
+    camera sees a white one). Returns (score, explanation).
+    """
+    exp = (expected_color or "").lower().strip()
+    obs = (observed_color or "").lower().strip()
+    if not exp or exp == "unknown" or not obs or obs == "unknown":
+        return 0.0, "Cannot determine colour mismatch: colour unknown"
+    if exp == obs:
+        return 0.0, "No colour mismatch"
+    # Treat near-neutral pairs as weak signals (silver/gray/white are easily
+    # confused under different lighting); distinct hues are a strong signal.
+    neutrals = {"gray", "silver", "white", "black"}
+    weak = exp in neutrals and obs in neutrals
+    base = 0.5 if weak else 0.85
+    score = base * float(observed_color_confidence)
+    return score, f"Colour mismatch: registered {exp}, observed {obs}"
 
 
 def normalize_make_model(make: str, model: str) -> Tuple[str, str]:
@@ -113,7 +142,11 @@ def check_mismatch(
     observed_make_confidence: float,
     observed_model_confidence: float,
     min_confidence: float = 0.5,
-    min_score: float = 0.3
+    min_score: float = 0.3,
+    expected_color: str = "",
+    observed_color: str = "",
+    observed_color_confidence: float = 0.0,
+    color_min_confidence: float = 0.35,
 ) -> Optional[MismatchResult]:
     """
     Check for plate-vehicle mismatch.
@@ -132,25 +165,34 @@ def check_mismatch(
     Returns:
         MismatchResult if mismatch detected, None otherwise
     """
-    # Check confidence thresholds
-    if observed_make_confidence < min_confidence or observed_model_confidence < min_confidence:
-        return None
-    
-    # Compute mismatch score
-    mismatch_score, explanation = compute_mismatch_score(
-        expected_make=expected_make,
-        expected_model=expected_model,
-        observed_make=observed_make,
-        observed_model=observed_model,
-        observed_make_confidence=observed_make_confidence,
-        observed_model_confidence=observed_model_confidence
-    )
-    
-    # Check if score exceeds threshold
+    # Make/model mismatch — only when the observed make/model is confident
+    # enough (the classifier is optional, so this may be skipped).
+    mm_score, mm_expl = 0.0, ""
+    if (observed_make_confidence >= min_confidence
+            and observed_model_confidence >= min_confidence):
+        mm_score, mm_expl = compute_mismatch_score(
+            expected_make=expected_make,
+            expected_model=expected_model,
+            observed_make=observed_make,
+            observed_model=observed_model,
+            observed_make_confidence=observed_make_confidence,
+            observed_model_confidence=observed_model_confidence,
+        )
+
+    # Colour mismatch — reliable and independent of make/model.
+    col_score, col_expl = 0.0, ""
+    if observed_color_confidence >= color_min_confidence:
+        col_score, col_expl = compute_color_mismatch(
+            expected_color, observed_color, observed_color_confidence)
+
+    # Combine — strongest signal wins; explanation names whatever fired.
+    mismatch_score = max(mm_score, col_score)
     if mismatch_score < min_score:
         return None
-    
-    # Return mismatch result
+
+    parts = [p for p in (mm_expl, col_expl) if p and "No " not in p and "Cannot" not in p]
+    explanation = "; ".join(parts) if parts else mm_expl or col_expl
+
     return MismatchResult(
         is_mismatch=True,
         mismatch_score=mismatch_score,
@@ -159,5 +201,7 @@ def check_mismatch(
         observed_make=observed_make,
         observed_model=observed_model,
         plate_text=plate_text,
-        explanation=explanation
+        explanation=explanation,
+        expected_color=expected_color,
+        observed_color=observed_color,
     )

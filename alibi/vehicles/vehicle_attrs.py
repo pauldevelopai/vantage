@@ -124,9 +124,19 @@ class VehicleAttributeExtractor:
         """
         if vehicle_crop.size == 0:
             return VehicleColor.UNKNOWN.value, 0.0
-        
+
+        # Sample the central body region only — the crop edges are mostly
+        # background/road/sky, which would pollute the colour histogram. The
+        # centre 60% is dominated by the vehicle body.
+        h, w = vehicle_crop.shape[:2]
+        y0, y1 = int(h * 0.25), int(h * 0.85)
+        x0, x1 = int(w * 0.20), int(w * 0.80)
+        body = vehicle_crop[y0:y1, x0:x1]
+        if body.size == 0:
+            body = vehicle_crop
+
         # Convert to HSV
-        hsv = cv2.cvtColor(vehicle_crop, cv2.COLOR_BGR2HSV)
+        hsv = cv2.cvtColor(body, cv2.COLOR_BGR2HSV)
         
         # Calculate percentage of pixels matching each color
         color_scores = {}
