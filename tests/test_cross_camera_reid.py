@@ -47,7 +47,7 @@ def test_same_entity_linked_across_cameras(tmp_path):
     assert cosine_similarity(cam_a, cam_b) > 0.9
     assert not np.array_equal(cam_a, cam_b)
 
-    now = datetime(2026, 7, 12, 10, 0, 0)
+    now = datetime.now()  # relative — cross-camera retention is 24h
     id_a, _ = t.record_appearance_sighting(
         "cam_a", "vehicle", cam_a, now.isoformat(), match_threshold=0.6)
     id_b, alerts = t.record_appearance_sighting(
@@ -81,7 +81,7 @@ def test_different_entities_not_merged(tmp_path):
     v2 = _emb(None, seed=99)   # unrelated entity
     assert cosine_similarity(v1, v2) < 0.6
 
-    now = datetime(2026, 7, 12, 11, 0, 0)
+    now = datetime.now()  # relative — cross-camera retention is 24h
     id1, _ = t.record_appearance_sighting(
         "cam_a", "vehicle", v1, now.isoformat(), match_threshold=0.6)
     id2, _ = t.record_appearance_sighting(
@@ -96,7 +96,7 @@ def test_gallery_running_mean_keeps_matching(tmp_path):
     views of the same entity (running-mean refinement stays stable)."""
     t = _tracker(tmp_path)
     base = _emb(None, seed=5)
-    now = datetime(2026, 7, 12, 12, 0, 0)
+    now = datetime.now()  # relative — cross-camera retention is 24h
 
     first_id = None
     for i in range(5):
@@ -130,7 +130,7 @@ def test_reappearance_alert_via_appearance(tmp_path):
 def test_missing_embedding_mints_new_identity(tmp_path):
     """A None embedding cannot be matched; it must still record safely."""
     t = _tracker(tmp_path)
-    now = datetime(2026, 7, 12, 13, 0, 0)
+    now = datetime.now()  # relative — cross-camera retention is 24h
     eid, alerts = t.record_appearance_sighting(
         "cam_a", "vehicle", None, now.isoformat())
     assert eid.startswith("vehicle_")

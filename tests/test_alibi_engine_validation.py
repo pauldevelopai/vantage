@@ -1,5 +1,5 @@
 """
-Comprehensive validation tests for Alibi engine.
+Comprehensive validation tests for Vantage engine.
 
 Tests all hard safety rules with NO EXCEPTIONS.
 """
@@ -15,7 +15,7 @@ from alibi.schemas import (
     RecommendedAction,
     ValidationStatus,
 )
-from alibi.config import AlibiConfig
+from alibi.config import VantageConfig
 from alibi.alibi_engine import build_incident_plan
 from alibi.validator import (
     validate_incident_plan,
@@ -161,7 +161,7 @@ class TestValidationRules:
         event = create_test_event(confidence=0.65)
         incident = create_test_incident(events=[event])
         
-        config = AlibiConfig(min_confidence_for_notify=0.75)
+        config = VantageConfig(min_confidence_for_notify=0.75)
         plan = build_incident_plan(incident, config)
         
         # Engine should automatically set monitor
@@ -176,7 +176,7 @@ class TestValidationRules:
         event = create_test_event(severity=5, confidence=0.85)
         incident = create_test_incident(events=[event])
         
-        config = AlibiConfig(high_severity_threshold=4)
+        config = VantageConfig(high_severity_threshold=4)
         
         # Manually create plan that violates rule
         plan = IncidentPlan(
@@ -201,7 +201,7 @@ class TestValidationRules:
         event = create_test_event(severity=5, confidence=0.85)
         incident = create_test_incident(events=[event])
         
-        config = AlibiConfig(high_severity_threshold=4)
+        config = VantageConfig(high_severity_threshold=4)
         
         # Create plan with wrong action
         plan = IncidentPlan(
@@ -350,7 +350,7 @@ class TestEngineIntegration:
         event = create_test_event(confidence=0.60, severity=4)
         incident = create_test_incident(events=[event])
         
-        config = AlibiConfig(min_confidence_for_notify=0.75)
+        config = VantageConfig(min_confidence_for_notify=0.75)
         plan = build_incident_plan(incident, config)
         validation = validate_incident_plan(plan, incident, config)
         
@@ -366,7 +366,7 @@ class TestEngineIntegration:
         )
         incident = create_test_incident(events=[event])
         
-        config = AlibiConfig(high_severity_threshold=4)
+        config = VantageConfig(high_severity_threshold=4)
         plan = build_incident_plan(incident, config)
         validation = validate_incident_plan(plan, incident, config)
         
@@ -481,7 +481,7 @@ class TestEdgeCases:
     
     def test_confidence_boundary(self):
         """Test confidence exactly at threshold"""
-        config = AlibiConfig(min_confidence_for_notify=0.75)
+        config = VantageConfig(min_confidence_for_notify=0.75)
         
         # Just below threshold
         event = create_test_event(confidence=0.74, severity=3)
@@ -497,7 +497,7 @@ class TestEdgeCases:
     
     def test_severity_boundary(self):
         """Test severity exactly at threshold"""
-        config = AlibiConfig(high_severity_threshold=4)
+        config = VantageConfig(high_severity_threshold=4)
         
         # Just below threshold
         event = create_test_event(confidence=0.85, severity=3, clip_url="http://clip.mp4")

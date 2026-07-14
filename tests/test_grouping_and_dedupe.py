@@ -10,21 +10,21 @@ import pytest
 from datetime import datetime, timedelta
 
 from alibi.schemas import CameraEvent, IncidentStatus
-from alibi.alibi_store import AlibiStore
-from alibi.settings import AlibiSettings
+from alibi.alibi_store import VantageStore
+from alibi.settings import VantageSettings
 from alibi.incident_grouper import IncidentGrouper, process_camera_event
 
 
 @pytest.fixture
 def temp_store(tmp_path):
     """Create temporary store for testing"""
-    return AlibiStore(data_dir=str(tmp_path / "data"))
+    return VantageStore(data_dir=str(tmp_path / "data"))
 
 
 @pytest.fixture
 def settings():
     """Create settings with default values"""
-    return AlibiSettings()
+    return VantageSettings()
 
 
 @pytest.fixture
