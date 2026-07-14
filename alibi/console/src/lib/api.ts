@@ -244,6 +244,7 @@ export const api = {
     source?: string;
     source_type?: string;
     location?: string;
+    area?: string;
     vms_config?: Record<string, any>;
   }): Promise<Camera> {
     const res = await fetchWithAuth(`${API_BASE}/cameras`, {

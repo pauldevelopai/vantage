@@ -61,6 +61,7 @@ export function CamerasPage() {
   const [formId, setFormId] = useState('');
   const [formName, setFormName] = useState('');
   const [formLocation, setFormLocation] = useState('');
+  const [formArea, setFormArea] = useState('');
   const [formSourceType, setFormSourceType] = useState('rtsp');
   const [formSource, setFormSource] = useState('');
   const [formHost, setFormHost] = useState('');
@@ -92,6 +93,7 @@ export function CamerasPage() {
     setFormId('');
     setFormName('');
     setFormLocation('');
+    setFormArea('');
     setFormSourceType('rtsp');
     setFormSource('');
     setFormHost('');
@@ -124,6 +126,7 @@ export function CamerasPage() {
         source,
         source_type: formSourceType,
         location: formLocation,
+        area: formArea,
         vms_config,
       });
       resetForm();
@@ -308,6 +311,22 @@ export function CamerasPage() {
                 placeholder="Building A, Gate 1"
                 className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
               />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Area / Suburb
+              </label>
+              <input
+                type="text"
+                value={formArea}
+                onChange={(e) => setFormArea(e.target.value)}
+                placeholder="Sandton"
+                className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                Optional. Enables area background (nearest police station, hospital,
+                fire station) on this camera's incidents. Leave blank for none.
+              </p>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Source Type</label>
@@ -551,6 +570,14 @@ export function CamerasPage() {
                     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${SOURCE_BADGE[cam.source_type] || 'bg-gray-100 text-gray-800'}`}>
                       {cam.source_type}
                     </span>
+                    {cam.area && (
+                      <span
+                        className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700"
+                        title="Area background is enabled for this camera's incidents"
+                      >
+                        {cam.area}
+                      </span>
+                    )}
                   </div>
                   <div className="text-sm text-gray-500 truncate">
                     {cam.location && <span>{cam.location}</span>}

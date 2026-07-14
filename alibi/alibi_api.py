@@ -1112,6 +1112,7 @@ class CameraCreateRequest(BaseModel):
     source_type: str = "rtsp"  # rtsp | onvif | milestone | genetec | mobile
     enabled: bool = True
     location: str = ""
+    area: str = ""  # Suburb/area — links this camera to place-context (§9)
     vms_config: dict = Field(default_factory=dict)
 
 
@@ -1122,6 +1123,7 @@ class CameraUpdateRequest(BaseModel):
     source_type: Optional[str] = None
     enabled: Optional[bool] = None
     location: Optional[str] = None
+    area: Optional[str] = None  # Suburb/area — links this camera to place-context (§9)
     vms_config: Optional[dict] = None
 
 
@@ -1149,6 +1151,7 @@ async def add_camera(
         source_type=req.source_type,
         enabled=req.enabled,
         location=req.location,
+        area=req.area,
         vms_config=req.vms_config,
     )
     store.add(camera)
