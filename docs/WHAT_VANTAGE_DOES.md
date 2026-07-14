@@ -68,6 +68,25 @@ override the default (`claude-opus-4-8`). *(`llm_service.py`,
 - ✅ **Human review before dispatch** — high-risk actions require a person. *(validator rules.)*
 - ✅ **Auditable** — append-only logs of decisions. *(`alibi_store.py`.)*
 - ✅ **Encrypted at rest**. *(`encryption.py`.)*
+- ⬜ **Lawful-data boundary** — Vantage does NOT scrape or compile personal data
+  on individuals. External ingest is limited to non-personal / official-reference
+  data (see §9); personal watchlist entries come only from lawful, consented,
+  purpose-bound official feeds. Every ingested record carries source +
+  lawful-basis + retention-until + audit trail (POPIA/GDPR-aligned).
+
+## 9. Ingest external data — Apify Data Engine *(Phase 6)*
+> A scheduled ingestion layer (Apify actors → normalise → provenance/retention-
+> tagged store) that enriches Vantage. **Scoped to lawful, non-personal data** —
+> it is explicitly NOT a people-dossier database. Bright line in §8.
+- ⬜ **Places / context data** (non-personal) — area crime stats, neighbourhood
+  risk, POI/business/landmark data, roads/geography, load-shedding, weather.
+  Feeds the "why flagged" context (§4) and the Security Advisor (§6).
+- ⬜ **Detection reference data** — vehicle make/model catalogs, plate-format
+  rules, official stolen-vehicle / registration registries. Improves plates (§3)
+  and make/model (§3).
+- ⬜ **Ingestion discipline** — every record tagged with source, lawful basis,
+  and retention-until; append-only audit; scheduled refresh + honest empty
+  states (no-fake-data rule). Personal-data scraping is out of scope by design.
 
 ---
 
