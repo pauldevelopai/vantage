@@ -138,6 +138,8 @@ export interface Camera {
   source_type: string;
   enabled: boolean;
   location: string;
+  /** Suburb/area — links this camera to place-context (§9). Empty = no context. */
+  area: string;
   status: string;
   last_seen: string | null;
   vms_config: Record<string, any>;
