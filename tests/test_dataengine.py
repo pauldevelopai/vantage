@@ -176,7 +176,7 @@ class TestRetention:
     def test_expired_records_are_not_returned(self, store):
         spec = get_source("places.poi")
         past = datetime.utcnow() - timedelta(days=400)  # retention is 180d
-        ingest_items(spec, [{"place_name": "Old Station"}], store, now=past)
+        ingest_items(spec, [{"title": "Old Station", "city": "Sandton"}], store, now=past)
 
         assert store.query() == []                       # enforced on read
         assert len(store.query(include_expired=True)) == 1
@@ -184,8 +184,8 @@ class TestRetention:
     def test_prune_removes_expired(self, store):
         spec = get_source("places.poi")
         past = datetime.utcnow() - timedelta(days=400)
-        ingest_items(spec, [{"place_name": "Old Station"}], store, now=past)
-        ingest_items(spec, [{"place_name": "New Station"}], store)
+        ingest_items(spec, [{"title": "Old Station", "city": "Sandton"}], store, now=past)
+        ingest_items(spec, [{"title": "New Station", "city": "Sandton"}], store)
 
         removed = store.prune()
         assert removed == 1

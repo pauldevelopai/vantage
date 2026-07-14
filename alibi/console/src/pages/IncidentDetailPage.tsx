@@ -542,6 +542,41 @@ export function IncidentDetailPage() {
                     </ul>
                   )}
 
+                  {/* Area background — deliberately SEPARATE from the reasons above.
+                      Context about the place, never a reason the person was flagged. */}
+                  {explanation.area_context && explanation.area_context.items.length > 0 && (
+                    <div className="mt-5 rounded-md border border-gray-200 bg-gray-50 p-4">
+                      <div className="flex items-baseline gap-2">
+                        <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500">
+                          Area background — {explanation.area_context.area}
+                        </h3>
+                        <span className="text-[10px] font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">
+                          not a reason for the flag
+                        </span>
+                      </div>
+                      <p className="mt-1 text-[11px] text-gray-500">
+                        {explanation.area_context.rule}
+                      </p>
+                      <ul className="mt-3 space-y-1.5">
+                        {explanation.area_context.items.map((c, i) => (
+                          <li key={i} className="text-sm text-gray-600">
+                            {c.detail}
+                            {typeof c.citation?.source_url === 'string' && (
+                              <a
+                                href={c.citation.source_url as string}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="ml-2 text-[11px] text-indigo-500 hover:underline"
+                              >
+                                source
+                              </a>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
                   <p className="mt-4 text-xs italic text-gray-400">{explanation.disclaimer}</p>
                 </>
               )}

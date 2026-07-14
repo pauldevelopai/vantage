@@ -734,8 +734,24 @@ async def get_incident_explanation(
     plan_md = incident_data.get("_metadata", {}).get("plan") or {}
     plan = _plan_from_metadata(incident_id, plan_md)
 
+    # Area background (§9) — advisory context about the PLACE only. Never a
+    # reason for the flag, never attributed to the detected individual.
+    # Honest empty state when the camera has no area set or nothing is ingested.
+    area_context = None
+    try:
+        from alibi.dataengine.context import get_area_context, resolve_area_for_camera
+        camera_id = events[0].camera_id if events else None
+        area = resolve_area_for_camera(camera_id) if camera_id else ""
+        if area:
+            ctx = get_area_context(area)
+            area_context = ctx if not ctx.is_empty() else None
+    except Exception:
+        area_context = None  # fail-safe: explanation still works without context
+
     from alibi.explainer import explain_incident
-    explanation = explain_incident(incident, plan, VantageConfig.from_env())
+    explanation = explain_incident(
+        incident, plan, VantageConfig.from_env(), context=area_context
+    )
     return explanation.to_dict()
 
 
