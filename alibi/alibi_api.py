@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 from pydantic import BaseModel, Field
 
-from fastapi import FastAPI, HTTPException, status, Depends, UploadFile, File, Body, Form
+from fastapi import FastAPI, HTTPException, status, Depends, UploadFile, File, Body, Form, Header, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -2007,6 +2007,144 @@ async def add_discovered_camera(
 
     store.add(camera)
     return {"status": "ok", "camera": camera.to_dict()}
+
+
+# ── Camera Bridge (scan a user's own WiFi via a local agent) ─────
+#
+# A cloud-hosted Vantage cannot scan the user's LAN. A small "bridge" agent runs
+# on that network, connects OUTBOUND, and does the scan locally. Admin mints a
+# pairing code; the agent redeems it; the console enqueues scan jobs the agent
+# polls and answers. See alibi/cameras/bridge.py.
+
+def _require_bridge(
+    x_bridge_id: str = Header(None),
+    x_bridge_token: str = Header(None),
+):
+    """Authenticate an agent request via its bridge id + token headers."""
+    from alibi.cameras.bridge import get_bridge_registry
+    if not (x_bridge_id and x_bridge_token) or not get_bridge_registry().authenticate(
+        x_bridge_id, x_bridge_token
+    ):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid bridge credentials")
+    return x_bridge_id
+
+
+class BridgeRegisterRequest(BaseModel):
+    code: str
+    name: str = "Vantage Bridge"
+    site_hint: str = ""
+
+
+class BridgeScanRequest(BaseModel):
+    cidr: Optional[str] = None
+
+
+class BridgeResultsRequest(BaseModel):
+    cameras: List[dict] = Field(default_factory=list)
+    error: str = ""
+
+
+# --- Admin (console) side ---------------------------------------- #
+
+@app.post("/api/cameras/bridge/pair", tags=["Camera Bridge"])
+async def bridge_pair(current_user: User = Depends(require_role([Role.ADMIN]))):
+    """Mint a single-use pairing code + the one-line setup command for the agent."""
+    from alibi.cameras.bridge import get_bridge_registry, PAIRING_TTL_MINUTES
+    pc = get_bridge_registry().create_pairing_code(created_by=current_user.username)
+    return {
+        "code": pc.code,
+        "expires_at": pc.expires_at,
+        "expires_in_minutes": PAIRING_TTL_MINUTES,
+        # The agent binary/script is a later slice; this is the intended shape.
+        "setup_hint": f"Run the Vantage Bridge on the network you want to scan and pair it with code {pc.code}.",
+    }
+
+
+@app.get("/api/cameras/bridge", tags=["Camera Bridge"])
+async def bridge_list(current_user: User = Depends(get_current_user)):
+    """List paired bridges + their online status."""
+    from alibi.cameras.bridge import get_bridge_registry
+    return {"bridges": get_bridge_registry().list_bridges()}
+
+
+@app.post("/api/cameras/bridge/{bridge_id}/scan", tags=["Camera Bridge"])
+async def bridge_scan(
+    bridge_id: str,
+    req: BridgeScanRequest,
+    current_user: User = Depends(require_role([Role.ADMIN])),
+):
+    """Enqueue a scan on a bridge. The agent picks it up and reports back."""
+    from alibi.cameras.bridge import get_bridge_registry
+    reg = get_bridge_registry()
+    bridge = reg.get_bridge(bridge_id)
+    if not bridge:
+        raise HTTPException(status_code=404, detail="Bridge not found")
+    if not bridge.is_online():
+        raise HTTPException(status_code=409, detail="Bridge is offline — start the Vantage Bridge on that network")
+    job = reg.enqueue_scan(bridge_id, params={"cidr": req.cidr} if req.cidr else {})
+    return {"job_id": job.job_id, "status": job.status}
+
+
+@app.get("/api/cameras/bridge/scan/{job_id}", tags=["Camera Bridge"])
+async def bridge_scan_status(
+    job_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Poll a scan job for status + discovered cameras."""
+    from alibi.cameras.bridge import get_bridge_registry
+    job = get_bridge_registry().get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job.public_dict()
+
+
+# --- Agent (bridge) side ----------------------------------------- #
+
+@app.post("/api/cameras/bridge/register", tags=["Camera Bridge"])
+async def bridge_register(req: BridgeRegisterRequest):
+    """Agent redeems a pairing code -> receives its bridge id + token (once)."""
+    from alibi.cameras.bridge import get_bridge_registry
+    creds = get_bridge_registry().redeem_pairing_code(
+        req.code, name=req.name, site_hint=req.site_hint
+    )
+    if not creds:
+        raise HTTPException(status_code=400, detail="Invalid or expired pairing code")
+    return creds  # {bridge_id, token} — token shown only here
+
+
+@app.post("/api/cameras/bridge/heartbeat", tags=["Camera Bridge"])
+async def bridge_heartbeat(
+    payload: dict = Body(default={}),
+    bridge_id: str = Depends(_require_bridge),
+):
+    """Agent keep-alive."""
+    from alibi.cameras.bridge import get_bridge_registry
+    get_bridge_registry().heartbeat(bridge_id, site_hint=payload.get("site_hint"))
+    return {"status": "ok"}
+
+
+@app.get("/api/cameras/bridge/jobs", tags=["Camera Bridge"])
+async def bridge_next_job(bridge_id: str = Depends(_require_bridge)):
+    """Agent polls for the next pending scan job (also refreshes heartbeat)."""
+    from alibi.cameras.bridge import get_bridge_registry
+    reg = get_bridge_registry()
+    reg.heartbeat(bridge_id)
+    job = reg.claim_next_job(bridge_id)
+    return {"job": job.public_dict() if job else None}
+
+
+@app.post("/api/cameras/bridge/jobs/{job_id}/results", tags=["Camera Bridge"])
+async def bridge_submit_results(
+    job_id: str,
+    req: BridgeResultsRequest,
+    bridge_id: str = Depends(_require_bridge),
+):
+    """Agent posts scan results (discovered cameras) for a job."""
+    from alibi.cameras.bridge import get_bridge_registry
+    ok = get_bridge_registry().submit_results(bridge_id, job_id, req.cameras, error=req.error)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Job not found for this bridge")
+    return {"status": "ok"}
 
 
 # ── System Storage ──────────────────────────────────────────────
