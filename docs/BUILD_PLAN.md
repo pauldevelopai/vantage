@@ -3,12 +3,25 @@
 > The AI intelligence layer for cameras that prevents crime and helps people
 > and police act on what their cameras see. Concept note: `guard.pptx`.
 
-**Positioning note (2026-07):** the original concept is police/CCTV. The newer
-feature requests ("your wifi", "in your house", "any phone camera", "improve
-*your* security") add a **home / consumer / SME** dimension. Much of the engine
-is shared, but the UX, onboarding, and trust model differ between "police
-control room" and "homeowner with a phone." Decide whether Vantage is one
-product with two doors (like BE AI READY / GROUNDED) or two products.
+**Positioning — DECIDED (2026-07): one product, two doors** (the
+GROUNDED / BE AI READY model — host-switched doors onto one shared engine).
+
+- **Police / Control-Room door** — the SMARTGUARD concept: control room,
+  watchlists, VMS integration, officer mobile scan, on-prem deployment.
+- **Home / Consumer door** — homeowner or SME: connect a phone or WiFi
+  cameras in minutes, "who/what's been around", simpler UX, personal security
+  advisor.
+
+**What's shared vs. per-door:**
+- *Shared* — the whole engine: detection (D-FINE), face ReID (ArcFace), plates
+  (FastALPR), cross-camera ReID, patterns, behaviour, advisor, ingest.
+- *Per-door* — onboarding, which features are surfaced, framing/trust model,
+  and deployment (police = on-prem/controlled; home = easy cloud/phone).
+- *Mechanism* — host-switched front door (like `beaiready.*` vs `grounded.*`),
+  one backend + engine, door-aware UX. Not a fork.
+
+Every capability below is built once in the shared engine; each door decides
+how (and whether) to expose it.
 
 ---
 
