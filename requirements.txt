@@ -71,6 +71,10 @@ textblob>=0.17.0              # Sentiment analysis
 # Cloud LLM/Vision — Claude (Anthropic) is the preferred cloud tier
 anthropic>=0.40.0             # Claude Messages API (text alerts/reports + vision scene analysis)
 
+# Camera auto-discovery (LAN scanner) — both optional, imported gracefully
+zeroconf>=0.130.0            # mDNS/Bonjour discovery (scanner degrades without it)
+onvif-zeep-async>=3.1.12     # ONVIF credential -> RTSP URL resolution (optional)
+
 # Vision AI for scene understanding (mobile camera support)
 openai>=1.12.0                # OpenAI Vision API (GPT-4 Vision) — optional fallback
 

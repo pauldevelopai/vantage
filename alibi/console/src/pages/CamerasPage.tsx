@@ -35,6 +35,13 @@ interface DiscoveredCamera {
   resolution: string;
   discovery_method: string;
   already_registered: boolean;
+  // Multi-strategy signal (added by the upgraded scanner)
+  vendor?: string;
+  open_ports?: number[];
+  rtsp_confirmed?: boolean;
+  confidence?: number;
+  is_camera?: boolean;
+  found_by?: string[];
 }
 
 const DISCOVERY_BADGE: Record<string, string> = {
@@ -516,12 +523,32 @@ export function CamerasPage() {
                         <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${DISCOVERY_BADGE[cam.discovery_method] || 'bg-gray-100 text-gray-800'}`}>
                           {cam.discovery_method === 'rtsp_scan' ? 'RTSP' : cam.discovery_method.toUpperCase()}
                         </span>
-                        {cam.manufacturer && (
-                          <span className="text-xs text-gray-500">{cam.manufacturer} {cam.model}</span>
+                        {typeof cam.confidence === 'number' && (
+                          <span
+                            title={cam.found_by?.length ? `Found by: ${cam.found_by.join(', ')}` : undefined}
+                            className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                              cam.confidence >= 0.8 ? 'bg-green-100 text-green-800'
+                                : cam.confidence >= 0.5 ? 'bg-yellow-100 text-yellow-800'
+                                : 'bg-gray-100 text-gray-600'
+                            }`}
+                          >
+                            {Math.round(cam.confidence * 100)}% match
+                          </span>
+                        )}
+                        {cam.rtsp_confirmed && (
+                          <span className="inline-flex items-center rounded-full bg-blue-100 text-blue-800 px-2 py-0.5 text-xs font-medium">
+                            RTSP ✓
+                          </span>
+                        )}
+                        {(cam.vendor || cam.manufacturer) && (
+                          <span className="text-xs text-gray-500">{cam.vendor || cam.manufacturer} {cam.model}</span>
                         )}
                       </div>
                       <div className="text-xs text-gray-500 font-mono mt-0.5">
                         {cam.ip}:{cam.port}
+                        {cam.open_ports && cam.open_ports.length > 0 && (
+                          <span className="ml-2 text-gray-400">ports {cam.open_ports.join(', ')}</span>
+                        )}
                         {cam.rtsp_url && <span className="ml-2 text-gray-400">{cam.rtsp_url}</span>}
                         {cam.resolution && <span className="ml-2">{cam.resolution}</span>}
                       </div>

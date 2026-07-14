@@ -59,8 +59,16 @@ override the default (`claude-opus-4-8`). *(`llm_service.py`,
 
 ## 7. Connect anything — Universal Ingest *(Phase 5)*
 - 🟡 **RTSP / IP cameras**. *(`video/rtsp_reader.py`.)*
-- ⬜ **Auto-discover cameras on your WiFi** (ONVIF/RTSP LAN scan, one-click connect).
-- 🟡 **Use a phone as a camera**. *(`mobile_camera*.py`.)*
+- ✅ **Auto-discover cameras on your WiFi** — multi-strategy LAN scan (ONVIF
+  WS-Discovery + mDNS + multi-port sweep + RTSP OPTIONS confirmation + MAC/OUI
+  vendor fingerprint), each host scored with a confidence + is-camera verdict,
+  one-click add. *(`cameras/network_scanner.py`, `cameras/oui_prefixes.py`,
+  `/api/cameras/scan`, console Cameras page; `tests/test_network_scanner.py`.)*
+  Note: runs on the LAN where Vantage is hosted — a cloud box sees no cameras;
+  on-prem or a mesh-VPN (Phase 6) is required for discovery to find anything.
+- 🟡 **Use a phone as a camera**. *(`mobile_camera*.py`; a WebRTC/WHIP path
+  — MediaMTX + coturn → RTSP, QR join — is planned but needs an infra decision:
+  the box runs systemd, not docker-compose, so those services need adapting.)*
 - ⬜ **Connect any other device in the house**.
 
 ## 8. Stay safe — always-on guarantees
