@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { canPerformAction, hasRole } from '../lib/auth';
-import type { IncidentDetail } from '../lib/types';
+import type { IncidentDetail, IncidentExplanation } from '../lib/types';
 
 export function IncidentDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -15,10 +15,13 @@ export function IncidentDetailPage() {
   const [showApproveModal, setShowApproveModal] = useState(false);
   const [approveNotes, setApproveNotes] = useState('');
   const [exportPath, setExportPath] = useState<string | null>(null);
+  const [explanation, setExplanation] = useState<IncidentExplanation | null>(null);
+  const [explanationLoading, setExplanationLoading] = useState(false);
 
   useEffect(() => {
     if (id) {
       loadIncident(id);
+      loadExplanation(id);
     }
   }, [id]);
 
@@ -31,6 +34,18 @@ export function IncidentDetailPage() {
       console.error('Failed to load incident:', error);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadExplanation(incidentId: string) {
+    setExplanationLoading(true);
+    try {
+      setExplanation(await api.getIncidentExplanation(incidentId));
+    } catch (error) {
+      console.error('Failed to load explanation:', error);
+      setExplanation(null);
+    } finally {
+      setExplanationLoading(false);
     }
   }
 
@@ -494,6 +509,45 @@ export function IncidentDetailPage() {
 
         {/* Incident Plan & Alert */}
         <div className="space-y-6">
+          {/* Why flagged — grounded, cited, human-in-the-loop explainer */}
+          {(explanationLoading || explanation) && (
+            <div className="bg-white shadow rounded-lg p-6 border-l-4 border-indigo-400">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-lg font-medium text-gray-900">Why was this flagged?</h2>
+                {explanation && (
+                  <span className="text-[10px] uppercase tracking-wider text-gray-400" title="How the explanation was phrased">
+                    {explanation.method}
+                  </span>
+                )}
+              </div>
+
+              {explanationLoading && !explanation && (
+                <p className="text-sm text-gray-500">Generating explanation…</p>
+              )}
+
+              {explanation && (
+                <>
+                  <p className="text-sm text-gray-800 whitespace-pre-wrap">{explanation.rationale}</p>
+
+                  {explanation.reasons.length > 0 && (
+                    <ul className="mt-4 space-y-2">
+                      {explanation.reasons.map((r, i) => (
+                        <li key={i} className="flex gap-2 text-sm">
+                          <span className="mt-0.5 inline-block whitespace-nowrap rounded bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700">
+                            {r.factor}
+                          </span>
+                          <span className="text-gray-700">{r.detail}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  <p className="mt-4 text-xs italic text-gray-400">{explanation.disclaimer}</p>
+                </>
+              )}
+            </div>
+          )}
+
           {incident.plan && (
             <div className="bg-white shadow rounded-lg p-6">
               <h2 className="text-lg font-medium text-gray-900 mb-4">Incident Plan</h2>

@@ -48,7 +48,7 @@ override the default (`claude-opus-4-8`). *(`llm_service.py`,
 - ✅ **Same vehicle/person matched across cameras by appearance** (ReID, no plate needed). *(OSNet, `cameras/appearance_reid.py`, `tests/test_cross_camera_reid.py`.)*
 - ✅ **"What's been happening in the last hour / 24h / week"** — windowed activity summary (people, vehicles, plate reads, watchlist hits, busiest camera + time), shown in the Control Room's **Patterns** page. *(`patterns/activity_patterns.py` + `patterns/api.py` + console `PatternsPage.tsx`; `tests/test_activity_patterns.py`.)*
 - ✅ **Co-occurrence** — "this vehicle/person was near N incidents" (same camera, within a time window). *(`patterns/co_occurrence.py`, `tests/test_co_occurrence.py`.)*
-- ⬜ **"Why flagged" explainer** on every alert — grounded, cited, human-in-the-loop.
+- ✅ **"Why flagged" explainer** on every alert — grounded, cited, human-in-the-loop. Reasons are extracted deterministically from the incident's real signals (each cited to an event/evidence/plan field); the LLM only phrases them, guarded by the forbidden-language validator with a real-data template fallback. *(`explainer.py`, `/incidents/{id}/explanation`, IncidentDetailPage "Why was this flagged?" panel, `tests/test_explainer.py`.)*
 
 ## 5. Read behaviour — Behaviour & Threat *(Phase 3)*
 - ⬜ **Suspicious behaviour vs. just walking** (running, loitering, following, fighting).

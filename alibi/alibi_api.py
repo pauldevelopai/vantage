@@ -20,6 +20,8 @@ from alibi.schemas import (
     CameraEvent,
     Incident,
     IncidentStatus,
+    IncidentPlan,
+    RecommendedAction,
     Decision,
 )
 from alibi.alibi_store import get_store
@@ -678,6 +680,63 @@ async def get_incident(
         alert=metadata.get("alert"),
         validation=metadata.get("validation"),
     )
+
+
+def _plan_from_metadata(incident_id: str, plan_md: dict) -> IncidentPlan:
+    """Rebuild an IncidentPlan from the stored plan metadata dict."""
+    step = plan_md.get("recommended_next_step") or "notify"
+    try:
+        recommended = RecommendedAction(step)
+    except ValueError:
+        recommended = RecommendedAction.NOTIFY
+    return IncidentPlan(
+        incident_id=incident_id,
+        summary_1line=plan_md.get("summary", ""),
+        severity=int(plan_md.get("severity", 1)),
+        confidence=float(plan_md.get("confidence", 0.0)),
+        uncertainty_notes=plan_md.get("uncertainty_notes", ""),
+        recommended_next_step=recommended,
+        requires_human_approval=bool(plan_md.get("requires_human_approval", True)),
+        action_risk_flags=plan_md.get("action_risk_flags", []) or [],
+        evidence_refs=plan_md.get("evidence_refs", []) or [],
+    )
+
+
+@app.get("/incidents/{incident_id}/explanation", tags=["Incidents"])
+async def get_incident_explanation(
+    incident_id: str,
+    current_user: User = Depends(get_current_user)  # All police personnel can view
+):
+    """
+    "Why flagged" explainer: a grounded, cited, human-in-the-loop rationale for
+    why this incident was flagged. Reasons are derived from the incident's real
+    signals (each cited to an event/evidence/plan field); the prose is phrased by
+    the LLM tier when available and safety-checked, else a deterministic template.
+    """
+    store = get_store()
+    incident_data = store.get_incident_with_metadata(incident_id)
+    if not incident_data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Incident {incident_id} not found"
+        )
+
+    event_ids = incident_data.get("event_ids", [])
+    events = store.get_events_by_ids(event_ids)
+
+    incident = Incident(
+        incident_id=incident_data["incident_id"],
+        status=IncidentStatus(incident_data["status"]),
+        created_ts=datetime.fromisoformat(incident_data["created_ts"]),
+        updated_ts=datetime.fromisoformat(incident_data["updated_ts"]),
+        events=events,
+    )
+    plan_md = incident_data.get("_metadata", {}).get("plan") or {}
+    plan = _plan_from_metadata(incident_id, plan_md)
+
+    from alibi.explainer import explain_incident
+    explanation = explain_incident(incident, plan, VantageConfig.from_env())
+    return explanation.to_dict()
 
 
 @app.post("/incidents/{incident_id}/decision", status_code=status.HTTP_201_CREATED)
