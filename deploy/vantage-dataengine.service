@@ -1,0 +1,26 @@
+# One-shot job: refresh Vantage place-context (§9) for camera areas, then prune
+# expired records. Fired by vantage-dataengine.timer — see that file for install.
+#
+# Cost note: Apify bills per result. This job is bounded by design (freshness
+# gate + --max-areas + --max-places). Check what it WOULD do without spending
+# credit:
+#   cd /home/ubuntu/vantage && .venv/bin/python -m alibi.dataengine.refresh --dry-run
+#
+# Requires APIFY_TOKEN in production.env. Without it the job still runs, prunes,
+# and reports honestly that there is no live source — it never invents data.
+
+[Unit]
+Description=Vantage data-engine refresh (place-context ingest + prune)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/vantage
+EnvironmentFile=-/home/ubuntu/vantage/alibi/config/production.env
+ExecStart=/home/ubuntu/vantage/.venv/bin/python -m alibi.dataengine.refresh
+# Apify run-sync can be slow for several areas; give it room but don't hang forever.
+TimeoutStartSec=1800
+# A failed refresh must never take the box down — the app is unaffected.
+Restart=no

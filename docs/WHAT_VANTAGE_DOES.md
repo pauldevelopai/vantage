@@ -96,7 +96,13 @@ override the default (`claude-opus-4-8`). *(`llm_service.py`,
 - 🟡 **Detection reference data** — sources declared
   (`reference.vehicle_models`, `reference.plate_formats`); **needs a real Apify
   actor wired**. Improves plates (§3) and make/model (§3).
-- ⬜ **Scheduled refresh** — cron/systemd timer to re-run sources and prune.
+- ✅ **Scheduled refresh** — weekly systemd timer re-ingests place-context for the
+  areas we actually have cameras in, then prunes expired records. **Cost-bounded
+  by design** (Apify bills per result): areas come only from configured cameras, a
+  freshness gate skips areas already held, hard caps defer the rest (never a
+  silent truncation), and `--dry-run` reports the plan spending nothing. Missing
+  token → honest report, prune still runs. *(`dataengine/refresh.py`,
+  `deploy/vantage-dataengine.{service,timer}`, `tests/test_dataengine_refresh.py`.)*
 - ✅ **Consumer: area background on every alert** — a camera's `area` resolves to
   cited place-context shown on the incident, **structurally separate from the
   reasons**: area stats are background about a PLACE, never a reason the person
