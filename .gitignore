@@ -15,8 +15,10 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+# Anchored to repo root — the bare "lib/" also matched alibi/console/src/lib/,
+# which silently dropped the console's auth.ts/sse.ts from the repo.
+/lib/
+/lib64/
 parts/
 sdist/
 var/

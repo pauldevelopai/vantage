@@ -1,15 +1,37 @@
 # Caddy block for Vantage (vantage.developai.co.za) — dedicated box.
 #
-# Vantage's FastAPI app serves EVERYTHING on 127.0.0.1:8600: the mobile UI
-# (dashboard at /, the /camera/* pages), the JSON API, and /docs. So Caddy
-# just reverse-proxies the whole domain to it — same origin, no CORS, no
-# static-file serving needed. Caddy provisions HTTPS automatically once DNS
-# for vantage.developai.co.za points at this box and ports 80+443 are open.
+# Serves the React CONSOLE (the Control Room) as the primary UI, statically
+# from its build output, and reverse-proxies the API + the backend's own
+# surfaces to the FastAPI app on :8600. Same origin, no CORS.
 #
-# Install (single-site box): copy to /etc/caddy/Caddyfile, then
-#   sudo systemctl restart caddy
+#   /api/*                          -> FastAPI (prefix stripped, matches the
+#                                      console's relative /api client + SSE)
+#   /camera/*, /docs, /media, ...   -> FastAPI (mobile camera UI, API docs,
+#                                      stored media/evidence/snapshots)
+#   everything else                 -> console SPA (client-side routing)
+#
+# Requires the console to be built (alibi/console/dist) and Caddy to be able to
+# read it: `sudo chmod o+x /home/ubuntu`. Install to /etc/caddy/Caddyfile then
+# `sudo systemctl restart caddy`. HTTPS is provisioned automatically.
 
 vantage.developai.co.za {
     encode gzip zstd
-    reverse_proxy localhost:8600
+    root * /home/ubuntu/vantage/alibi/console/dist
+
+    # API (and the SSE stream at /api/stream/incidents) -> FastAPI, prefix stripped.
+    handle_path /api/* {
+        reverse_proxy localhost:8600
+    }
+
+    # Backend-owned surfaces: the mobile camera UI, API docs, and stored media.
+    @backend path /camera/* /docs /docs/* /openapi.json /redoc /redoc/* /media/* /evidence/* /camera_snapshots/*
+    handle @backend {
+        reverse_proxy localhost:8600
+    }
+
+    # Console SPA — client-side routing (/, /incidents, /watchlist, /settings, …).
+    handle {
+        try_files {path} /index.html
+        file_server
+    }
 }
