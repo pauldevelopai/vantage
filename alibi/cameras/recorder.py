@@ -112,6 +112,38 @@ def build_motion_command(
     ]
 
 
+def build_hls_command(
+    rtsp_url: str,
+    out_dir: str,
+    ffmpeg: str = FFMPEG,
+    max_width: int = 854,
+    seg_seconds: int = 2,
+    list_size: int = 6,
+) -> List[str]:
+    """RTSP -> H.264 HLS for on-demand live view in the browser.
+
+    Transcodes to H.264 (browsers can't play the camera's H.265) at a modest
+    width, audio dropped. A rolling live playlist (delete_segments) keeps only a
+    few seconds on disk. Only ever run while someone is watching — see
+    record_agent.HlsStreamer.
+    """
+    return [
+        ffmpeg, "-nostdin", "-loglevel", "error",
+        "-rtsp_transport", "tcp",
+        "-i", rtsp_url,
+        "-an",
+        "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
+        "-pix_fmt", "yuv420p", "-g", "50",
+        "-vf", f"scale='min(iw,{max_width})':-2",
+        "-f", "hls",
+        "-hls_time", str(seg_seconds),
+        "-hls_list_size", str(list_size),
+        "-hls_flags", "delete_segments+append_list+omit_endlist",
+        "-hls_segment_filename", os.path.join(out_dir, "seg%d.ts"),
+        os.path.join(out_dir, "index.m3u8"),
+    ]
+
+
 def ffmpeg_available(ffmpeg: str = FFMPEG, run: Callable = subprocess.run) -> bool:
     """True if ffmpeg is callable on this PC."""
     try:

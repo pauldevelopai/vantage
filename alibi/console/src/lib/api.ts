@@ -267,6 +267,13 @@ export const api = {
     return res.json();
   },
 
+  // Live view — tell the cloud a camera is being watched (heartbeat while open).
+  async watchCamera(cameraId: string): Promise<{ expires_at: number }> {
+    const res = await fetchWithAuth(`${API_BASE}/cameras/${cameraId}/watch`, { method: 'POST' });
+    if (!res.ok) throw new Error('Failed to start live view');
+    return res.json();
+  },
+
   async deleteCamera(cameraId: string): Promise<any> {
     const res = await fetchWithAuth(`${API_BASE}/cameras/${cameraId}`, {
       method: 'DELETE',
