@@ -2300,6 +2300,23 @@ async def get_site(site_id: str, current_user: User = Depends(get_current_user))
     return _site_payload(site)
 
 
+@app.get("/sites/{site_id}/brief", tags=["Sites"])
+async def get_site_brief(
+    site_id: str,
+    window_hours: int = 24,
+    current_user: User = Depends(get_current_user),
+):
+    """The site-tailored security brief — what has been happening in the window
+    and what may be worth a human look, grounded in this site's real incidents
+    and tuned to its posture. Honest empty state when the window is quiet."""
+    from alibi.security_brief import generate_brief_for_site
+    window_hours = max(1, min(int(window_hours or 24), 24 * 30))   # clamp 1h..30d
+    brief = generate_brief_for_site(site_id, window_hours=window_hours)
+    if brief is None:
+        raise HTTPException(status_code=404, detail="Site not found")
+    return brief.to_dict()
+
+
 @app.put("/sites/{site_id}", tags=["Sites"])
 async def update_site(
     site_id: str,
