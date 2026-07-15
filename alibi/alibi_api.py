@@ -1968,6 +1968,8 @@ class AddDiscoveredRequest(BaseModel):
     location: str = ""
     username: str = ""
     password: str = ""
+    vendor: str = ""       # brand hint from discovery, for URL resolution
+    manufacturer: str = ""
 
 
 @app.post("/cameras/add-discovered")
@@ -1975,17 +1977,31 @@ async def add_discovered_camera(
     req: AddDiscoveredRequest,
     current_user: User = Depends(get_current_user),
 ):
-    """One-click add a discovered camera to the registry."""
+    """One-click add a discovered camera to the registry.
+
+    Resolves the correct brand-specific RTSP URL from credentials where possible
+    (a default like /stream1 fails on most real cameras — Dahua/Hikvision/etc.
+    each use their own path)."""
     from alibi.cameras.camera_store import get_camera_store, Camera, slugify
+    from alibi.cameras.rtsp_resolver import resolve_for_discovered
 
     store = get_camera_store()
     camera_id = slugify(req.name or f"camera-{req.ip.replace('.', '-')}")
 
-    # Build RTSP URL with credentials if provided
+    from urllib.parse import quote
     rtsp_url = req.rtsp_url
-    if req.username and rtsp_url and "://" in rtsp_url:
-        # Insert credentials into URL
-        from urllib.parse import quote
+
+    # Prefer a resolved brand-specific URL when we have credentials + a brand.
+    resolved = resolve_for_discovered(
+        {"ip": req.ip, "port": req.port, "vendor": req.vendor,
+         "manufacturer": req.manufacturer, "name": req.name},
+        username=req.username, password=req.password, stream="main",
+    ) if req.username else None
+
+    if resolved:
+        rtsp_url = resolved
+    elif req.username and rtsp_url and "://" in rtsp_url:
+        # Fallback: inject credentials into the discovered URL as-is.
         cred = f"{quote(req.username)}:{quote(req.password)}@"
         rtsp_url = rtsp_url.replace("rtsp://", f"rtsp://{cred}", 1)
 
