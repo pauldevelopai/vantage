@@ -2211,6 +2211,124 @@ async def bridge_submit_results(
     return {"status": "ok"}
 
 
+# ── Sites (what Vantage is protecting) ──────────────────────────
+#
+# A "site" is the subject a deployment protects — a home, an office, or a
+# neighbourhood. The subject type carries a built-in intelligence *posture*
+# that tailors the whole intelligence layer (explainer, area context, patterns,
+# and the security brief). See alibi/site_profile.py.
+
+class SiteCreateRequest(BaseModel):
+    name: str
+    subject_type: str = "home"                 # home | office | neighbourhood
+    area: str = ""                             # suburb/area — links to place-context (§9)
+    address: str = ""
+    timezone: str = "Africa/Johannesburg"
+    normal_hours: dict = Field(default_factory=dict)
+    camera_ids: list = Field(default_factory=list)
+    notes: str = ""
+
+
+class SiteUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    subject_type: Optional[str] = None
+    area: Optional[str] = None
+    address: Optional[str] = None
+    timezone: Optional[str] = None
+    normal_hours: Optional[dict] = None
+    camera_ids: Optional[list] = None
+    notes: Optional[str] = None
+
+
+def _site_payload(site) -> dict:
+    """Serialize a SiteProfile plus its built-in posture (so the console can
+    show what the intelligence layer will focus on for this site)."""
+    from dataclasses import asdict
+    data = asdict(site)
+    data["posture"] = asdict(site.posture())
+    return data
+
+
+@app.get("/sites/postures", tags=["Sites"])
+async def list_site_postures(current_user: User = Depends(get_current_user)):
+    """The built-in intelligence postures per subject type — lets the console
+    show 'what this protects, and what the AI will focus on' before a site is
+    created."""
+    from dataclasses import asdict
+    from alibi.site_profile import POSTURES
+    return {"postures": {k: asdict(v) for k, v in POSTURES.items()}}
+
+
+@app.get("/sites", tags=["Sites"])
+async def list_sites(current_user: User = Depends(get_current_user)):
+    """List all protected sites with their postures."""
+    from alibi.site_profile import get_site_profile_store
+    sites = get_site_profile_store().list()
+    return {"sites": [_site_payload(s) for s in sites]}
+
+
+@app.post("/sites", tags=["Sites"])
+async def create_site(
+    req: SiteCreateRequest,
+    current_user: User = Depends(require_role([Role.ADMIN])),
+):
+    """Create a protected site (admin only)."""
+    from alibi.site_profile import get_site_profile_store
+    site = get_site_profile_store().create(
+        name=req.name,
+        subject_type=req.subject_type,
+        area=req.area,
+        address=req.address,
+        timezone=req.timezone,
+        normal_hours=req.normal_hours,
+        camera_ids=req.camera_ids,
+        notes=req.notes,
+    )
+    get_store().append_audit("site_created",
+                             {"site_id": site.site_id, "subject_type": site.subject_type,
+                              "user": current_user.username})
+    return _site_payload(site)
+
+
+@app.get("/sites/{site_id}", tags=["Sites"])
+async def get_site(site_id: str, current_user: User = Depends(get_current_user)):
+    """Get one protected site."""
+    from alibi.site_profile import get_site_profile_store
+    site = get_site_profile_store().get(site_id)
+    if site is None:
+        raise HTTPException(status_code=404, detail="Site not found")
+    return _site_payload(site)
+
+
+@app.put("/sites/{site_id}", tags=["Sites"])
+async def update_site(
+    site_id: str,
+    req: SiteUpdateRequest,
+    current_user: User = Depends(require_role([Role.ADMIN])),
+):
+    """Update a protected site (admin only)."""
+    from alibi.site_profile import get_site_profile_store
+    updates = {k: v for k, v in req.model_dump().items() if v is not None}
+    site = get_site_profile_store().update(site_id, **updates)
+    if site is None:
+        raise HTTPException(status_code=404, detail="Site not found")
+    return _site_payload(site)
+
+
+@app.delete("/sites/{site_id}", tags=["Sites"])
+async def delete_site(
+    site_id: str,
+    current_user: User = Depends(require_role([Role.ADMIN])),
+):
+    """Delete a protected site (admin only)."""
+    from alibi.site_profile import get_site_profile_store
+    if not get_site_profile_store().delete(site_id):
+        raise HTTPException(status_code=404, detail="Site not found")
+    get_store().append_audit("site_deleted",
+                             {"site_id": site_id, "user": current_user.username})
+    return {"status": "deleted", "site_id": site_id}
+
+
 # ── System Storage ──────────────────────────────────────────────
 
 @app.get("/system/storage")
