@@ -46,7 +46,8 @@ def test_motion_command_uses_scene_filter():
     assert "select='gt(scene,0.4)'" in vf       # ffmpeg does the motion detection
     assert "format=yuvj420p" in vf              # JPEG-range for the mjpeg encoder
     assert "scale=" in vf                       # small frames for cheap upload
-    assert cmd[-1].endswith("cam1_%Y%m%d_%H%M%S_%03d.jpg")
+    assert "-strftime" in cmd                   # so %Y%m%d… expands in the filename
+    assert cmd[-1].endswith("cam1_%Y%m%d_%H%M%S.jpg")
 
 
 def test_motion_threshold_clamped():
