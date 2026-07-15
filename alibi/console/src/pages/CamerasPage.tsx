@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import Hls from 'hls.js';
 import { api } from '../lib/api';
-import { hasRole } from '../lib/auth';
+import { hasRole, getToken } from '../lib/auth';
 import type { Camera } from '../lib/types';
 
 const SOURCE_TYPE_OPTIONS = [
@@ -30,9 +31,103 @@ interface DiscoveredCamera {
   found_by?: string[];
 }
 
+function CameraLiveView({ camera, onClose }: { camera: Camera; onClose: () => void }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [status, setStatus] = useState<'connecting' | 'live' | 'error'>('connecting');
+  const [message, setMessage] = useState('Starting the stream from your recording PC…');
+
+  useEffect(() => {
+    let hls: Hls | null = null;
+    let cancelled = false;
+    const token = getToken();
+    const src = `/api/cameras/${camera.camera_id}/hls/index.m3u8`;
+
+    // Heartbeat so the agent keeps streaming while this is open.
+    api.watchCamera(camera.camera_id).catch(() => {});
+    const beat = setInterval(() => api.watchCamera(camera.camera_id).catch(() => {}), 5000);
+
+    // If nothing plays within ~30s, the recording PC probably isn't running.
+    const giveUp = setTimeout(() => {
+      if (!cancelled && status !== 'live') {
+        setStatus('error');
+        setMessage('No video yet. Make sure the recorder is running on the camera’s network.');
+      }
+    }, 30000);
+
+    if (!Hls.isSupported()) {
+      setStatus('error');
+      setMessage('This browser can’t play the live stream.');
+    } else {
+      hls = new Hls({
+        xhrSetup: (xhr: XMLHttpRequest) => {
+          if (token) xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+        },
+        liveDurationInfinity: true,
+        lowLatencyMode: true,
+      });
+      hls.loadSource(src);
+      hls.attachMedia(videoRef.current!);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        if (cancelled) return;
+        setStatus('live');
+        videoRef.current?.play().catch(() => {});
+      });
+      hls.on(Hls.Events.ERROR, (_evt, data) => {
+        if (!data.fatal || cancelled) return;
+        // The playlist isn't there yet while the agent spins ffmpeg up — retry.
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          setTimeout(() => { if (!cancelled && hls) hls.loadSource(src); }, 1500);
+        } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          hls?.recoverMediaError();
+        } else {
+          setStatus('error');
+          setMessage('Live stream error.');
+        }
+      });
+    }
+
+    return () => {
+      cancelled = true;
+      clearInterval(beat);
+      clearTimeout(giveUp);
+      if (hls) hls.destroy();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [camera.camera_id]);
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-gray-900 rounded-lg overflow-hidden max-w-4xl w-full" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 bg-gray-800">
+          <div className="text-white font-medium flex items-center gap-2">
+            {camera.name}
+            {status === 'live' && <span className="text-xs px-2 py-0.5 rounded-full bg-red-600 text-white">● LIVE</span>}
+          </div>
+          <button onClick={onClose} className="text-gray-300 hover:text-white text-sm">Close ✕</button>
+        </div>
+        <div className="relative bg-black aspect-video flex items-center justify-center">
+          <video ref={videoRef} className="w-full h-full" muted playsInline controls />
+          {status !== 'live' && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-6 bg-black/60">
+              {status === 'connecting' && (
+                <svg className="animate-spin h-6 w-6 text-white mb-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+              )}
+              <p className="text-sm text-gray-200">{message}</p>
+            </div>
+          )}
+        </div>
+        <p className="px-4 py-2 text-xs text-gray-400 bg-gray-800">
+          Live only while this is open — streaming stops when you close it.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export function CamerasPage() {
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [loading, setLoading] = useState(true);
+  const [liveCamera, setLiveCamera] = useState<Camera | null>(null);
   const [showForm, setShowForm] = useState(false);
 
   // Network scan state
@@ -772,6 +867,13 @@ export function CamerasPage() {
               </div>
 
               <div className="flex items-center gap-2 flex-shrink-0 ml-4">
+                <button
+                  onClick={() => setLiveCamera(cam)}
+                  className="px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 flex items-center gap-1"
+                >
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                  Watch live
+                </button>
                 {isAdmin && (
                   <button
                     onClick={() => handleDelete(cam.camera_id)}
@@ -784,6 +886,10 @@ export function CamerasPage() {
             </div>
           ))}
         </div>
+      )}
+
+      {liveCamera && (
+        <CameraLiveView camera={liveCamera} onClose={() => setLiveCamera(null)} />
       )}
     </div>
   );

@@ -23,9 +23,13 @@ import os
 import time
 
 try:  # in-repo (tests, the cloud box)
-    from alibi.cameras.recorder import CameraRecorder, RetentionPolicy, ffmpeg_available
+    from alibi.cameras.recorder import (
+        CameraRecorder, RetentionPolicy, ffmpeg_available, build_hls_command,
+    )
 except ImportError:  # flat zipapp layout on the user's PC
-    from recorder import CameraRecorder, RetentionPolicy, ffmpeg_available
+    from recorder import (
+        CameraRecorder, RetentionPolicy, ffmpeg_available, build_hls_command,
+    )
 
 
 class RecordAgent:
@@ -99,6 +103,102 @@ class RecordAgent:
         return {"recording": sorted(self._recorders), "count": len(self._recorders)}
 
 
+class HlsStreamer:
+    """On-demand live view: runs one ffmpeg (RTSP -> H.264 HLS) per *watched*
+    camera and uploads the playlist + new segments to the cloud. Starts/stops
+    with the viewer, so nothing runs when nobody is watching.
+
+    Dependency-injected (spawn / upload / lister / reader / clock) so the
+    start/stop/upload logic unit-tests without ffmpeg or a network."""
+
+    def __init__(self, base_dir, upload, ffmpeg="ffmpeg", spawn=None,
+                 lister=None, reader=None, clock=time.time):
+        self.base_dir = base_dir
+        self._upload = upload                      # upload(camera_id, filename, bytes)
+        self.ffmpeg = ffmpeg
+        import subprocess as _sp
+        self._spawn = spawn or _sp.Popen
+        self._lister = lister or (lambda d: os.listdir(d) if os.path.isdir(d) else [])
+        self._reader = reader or (lambda p: open(p, "rb").read())
+        self._clock = clock
+        self._streams = {}                         # camera_id -> {proc, dir, sent}
+
+    def _cam_dir(self, camera_id):
+        return os.path.join(self.base_dir, camera_id)
+
+    def sync(self, watched):
+        """Start streams for newly-watched cameras, stop ones no longer watched."""
+        wanted = {w["camera_id"]: w["url"] for w in (watched or []) if w.get("url")}
+        for cid in list(self._streams):
+            if cid not in wanted:
+                self._stop(cid)
+        for cid, url in wanted.items():
+            if cid not in self._streams:
+                self._start(cid, url)
+
+    def _start(self, cid, url):
+        d = self._cam_dir(cid)
+        os.makedirs(d, exist_ok=True)
+        proc = self._spawn(build_hls_command(url, d, ffmpeg=self.ffmpeg))
+        self._streams[cid] = {"proc": proc, "dir": d, "sent": {}}
+
+    def _stop(self, cid):
+        s = self._streams.pop(cid, None)
+        if not s:
+            return
+        proc = s.get("proc")
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+            except (OSError, ValueError):
+                pass
+
+    def pump(self):
+        """Upload any playlist/segment files that changed since last time.
+        The playlist (.m3u8) is re-sent whenever it changes; segments once."""
+        for cid, s in self._streams.items():
+            d = s["dir"]
+            for name in self._lister(d):
+                if not (name.endswith(".ts") or name.endswith(".m3u8")):
+                    continue
+                path = os.path.join(d, name)
+                try:
+                    stamp = os.path.getmtime(path)
+                    size = os.path.getsize(path)
+                except OSError:
+                    continue
+                key = (stamp, size)
+                if s["sent"].get(name) == key:
+                    continue                       # unchanged -> already uploaded
+                try:
+                    data = self._reader(path)
+                except OSError:
+                    continue
+                if self._upload(cid, name, data):
+                    s["sent"][name] = key
+
+    def stop_all(self):
+        for cid in list(self._streams):
+            self._stop(cid)
+
+    @property
+    def active(self):
+        return sorted(self._streams)
+
+
+def hls_loop(streamer, fetch_watches, sleep, poll_seconds=2,
+             should_run=lambda: True):
+    """Drive an HlsStreamer: poll which cameras are watched, sync ffmpeg, upload
+    segments. Runs on its own thread alongside the recorder loop."""
+    while should_run():
+        try:
+            streamer.sync(fetch_watches())
+            streamer.pump()
+        except Exception as e:                     # never kill the thread
+            print(f"[live] stream pump failed: {e}")
+        sleep(poll_seconds)
+
+
 def run_loop(agent, fetch_targets, sleep, poll_seconds=15, refresh_seconds=60,
              clock=time.time, should_run=lambda: True):
     """Drive a RecordAgent: refresh targets every `refresh_seconds`, health-check
@@ -158,6 +258,30 @@ def main(argv=None):  # pragma: no cover
             return []
         return (body or {}).get("targets", [])
 
+    # --- on-demand live view (HLS) -------------------------------------- #
+    def fetch_watches():
+        status, body = ba._http("GET", "/api/cameras/bridge/watch-requests", headers=headers)
+        return (body or {}).get("cameras", []) if status == 200 else []
+
+    def upload_hls(camera_id, filename, data):
+        url = ba.VANTAGE_URL.rstrip("/") + f"/api/cameras/bridge/hls/{camera_id}/{filename}"
+        req = ba.urlrequest.Request(
+            url, data=data, method="PUT",
+            headers={**headers, "Content-Type": "application/octet-stream"},
+        )
+        try:
+            with ba.urlrequest.urlopen(req, timeout=15):
+                return True
+        except Exception:
+            return False
+
+    import threading
+    streamer = HlsStreamer(base_dir=os.path.join(args.dir, "_hls"), upload=upload_hls)
+    threading.Thread(
+        target=hls_loop, args=(streamer, fetch_watches, time.sleep),
+        daemon=True,
+    ).start()
+
     retention = None
     if args.max_gb or args.max_days:
         retention = RetentionPolicy(
@@ -174,6 +298,7 @@ def main(argv=None):  # pragma: no cover
         print("\n[record-agent] stopping…")
     finally:
         agent.stop_all()
+        streamer.stop_all()
     return 0
 
 

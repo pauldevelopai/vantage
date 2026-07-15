@@ -2334,6 +2334,72 @@ async def bridge_record_targets(bridge_id: str = Depends(_require_bridge)):
     return {"targets": _build_record_targets()}
 
 
+# ── Live view (on-demand HLS) ───────────────────────────────────
+#
+# The recording PC streams a camera to the cloud ONLY while a viewer is watching
+# it. The console pings /watch to keep it alive; the agent polls the active
+# watches, runs ffmpeg (RTSP -> H.264 HLS) for each, and PUTs the playlist +
+# segments; the browser plays them. Nothing runs when nobody is watching.
+# See alibi/cameras/hls_relay.py.
+
+def _record_url_for(camera_id: str) -> Optional[str]:
+    from alibi.cameras.camera_store import get_camera_store
+    cam = get_camera_store().get(camera_id)
+    if cam and (cam.source or "").lower().startswith("rtsp://"):
+        return cam.source
+    return None
+
+
+@app.post("/cameras/{camera_id}/watch", tags=["Cameras"])
+async def watch_camera(camera_id: str, current_user: User = Depends(get_current_user)):
+    """Register interest in a camera's live view (call repeatedly as a heartbeat
+    while the player is open). The agent starts streaming it within ~2s."""
+    from alibi.cameras.hls_relay import get_hls_relay
+    if _record_url_for(camera_id) is None:
+        raise HTTPException(status_code=404, detail="Camera not found or not an RTSP camera")
+    expiry = get_hls_relay().request_watch(camera_id)
+    return {"status": "watching", "camera_id": camera_id, "expires_at": expiry}
+
+
+@app.get("/cameras/{camera_id}/hls/{filename}", tags=["Cameras"])
+async def get_hls_file(camera_id: str, filename: str,
+                       current_user: User = Depends(get_current_user)):
+    """Serve an HLS playlist or segment for the browser player."""
+    from fastapi.responses import Response
+    from alibi.cameras.hls_relay import get_hls_relay, is_safe_hls_name
+    if not is_safe_hls_name(filename):
+        raise HTTPException(status_code=400, detail="Bad filename")
+    data = get_hls_relay().get_file(camera_id, filename)
+    if data is None:
+        # 404 while the agent is still spinning ffmpeg up — the player retries.
+        raise HTTPException(status_code=404, detail="Not ready")
+    media = "application/vnd.apple.mpegurl" if filename.endswith(".m3u8") else "video/mp2t"
+    return Response(content=data, media_type=media,
+                    headers={"Cache-Control": "no-store"})
+
+
+@app.get("/cameras/bridge/watch-requests", tags=["Camera Bridge"])
+async def bridge_watch_requests(bridge_id: str = Depends(_require_bridge)):
+    """The agent polls which cameras are being watched right now, each with its
+    RTSP URL, so it can start/stop the on-demand HLS stream."""
+    from alibi.cameras.hls_relay import get_hls_relay
+    watched = get_hls_relay().active_watches()
+    cams = [{"camera_id": cid, "url": _record_url_for(cid)}
+            for cid in watched if _record_url_for(cid)]
+    return {"cameras": cams}
+
+
+@app.put("/cameras/bridge/hls/{camera_id}/{filename}", tags=["Camera Bridge"])
+async def bridge_put_hls(camera_id: str, filename: str, request: Request,
+                         bridge_id: str = Depends(_require_bridge)):
+    """The agent uploads an HLS playlist/segment for a watched camera."""
+    from alibi.cameras.hls_relay import get_hls_relay
+    body = await request.body()
+    if not get_hls_relay().put_file(camera_id, filename, body):
+        raise HTTPException(status_code=400, detail="Bad filename")
+    return {"status": "ok", "bytes": len(body)}
+
+
 # ── Sites (what Vantage is protecting) ──────────────────────────
 #
 # A "site" is the subject a deployment protects — a home, an office, or a
