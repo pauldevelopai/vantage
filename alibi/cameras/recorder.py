@@ -119,13 +119,21 @@ def build_hls_command(
     max_width: int = 854,
     seg_seconds: int = 2,
     list_size: int = 6,
+    fps: int = 15,
+    crf: int = 26,
+    maxrate_kbps: int = 1200,
 ) -> List[str]:
     """RTSP -> H.264 HLS for on-demand live view in the browser.
 
-    Transcodes to H.264 (browsers can't play the camera's H.265) at a modest
-    width, audio dropped. A rolling live playlist (delete_segments) keeps only a
-    few seconds on disk. Only ever run while someone is watching — see
-    record_agent.HlsStreamer.
+    Transcodes to H.264 (browsers can't play the camera's H.265), bandwidth-tuned
+    for a monitoring preview:
+      * constant-quality encode (CRF) with a hard bitrate ceiling (maxrate/bufsize)
+        so a busy scene can't balloon the stream;
+      * framerate capped (security doesn't need 25 fps — halves the bitrate);
+      * modest width; audio dropped.
+    Point this at the camera's SUB stream (see the watch-requests endpoint) so the
+    source is already low-res — cheap to decode and send. A rolling live playlist
+    keeps only a few seconds on disk. Only ever run while someone is watching.
     """
     return [
         ffmpeg, "-nostdin", "-loglevel", "error",
@@ -133,7 +141,10 @@ def build_hls_command(
         "-i", rtsp_url,
         "-an",
         "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
-        "-pix_fmt", "yuv420p", "-g", "50",
+        "-crf", str(crf),
+        "-maxrate", f"{maxrate_kbps}k", "-bufsize", f"{maxrate_kbps * 2}k",
+        "-pix_fmt", "yuv420p", "-g", str(fps * 2),
+        "-r", str(fps),
         "-vf", f"scale='min(iw,{max_width})':-2",
         "-f", "hls",
         "-hls_time", str(seg_seconds),

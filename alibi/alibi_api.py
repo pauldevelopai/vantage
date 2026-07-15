@@ -2380,12 +2380,18 @@ async def get_hls_file(camera_id: str, filename: str,
 
 @app.get("/cameras/bridge/watch-requests", tags=["Camera Bridge"])
 async def bridge_watch_requests(bridge_id: str = Depends(_require_bridge)):
-    """The agent polls which cameras are being watched right now, each with its
-    RTSP URL, so it can start/stop the on-demand HLS stream."""
+    """The agent polls which cameras are being watched right now, each with the
+    RTSP URL to stream. We hand it the low-res SUB stream where we can derive it
+    (cheap to decode + send); otherwise the main stream."""
     from alibi.cameras.hls_relay import get_hls_relay
+    from alibi.cameras.rtsp_resolver import derive_substream_url
     watched = get_hls_relay().active_watches()
-    cams = [{"camera_id": cid, "url": _record_url_for(cid)}
-            for cid in watched if _record_url_for(cid)]
+    cams = []
+    for cid in watched:
+        main = _record_url_for(cid)
+        if not main:
+            continue
+        cams.append({"camera_id": cid, "url": derive_substream_url(main) or main})
     return {"cameras": cams}
 
 

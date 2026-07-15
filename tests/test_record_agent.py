@@ -138,6 +138,13 @@ def test_hls_command_transcodes_to_h264():
     assert "delete_segments" in cmd[cmd.index("-hls_flags") + 1]  # rolling live window
 
 
+def test_hls_command_is_bandwidth_tuned():
+    cmd = build_hls_command("rtsp://x/sub", "/hls/cam1", fps=15, maxrate_kbps=1200)
+    assert cmd[cmd.index("-r") + 1] == "15"              # framerate cap
+    assert cmd[cmd.index("-maxrate") + 1] == "1200k"     # hard bitrate ceiling
+    assert "-bufsize" in cmd and "-crf" in cmd           # quality target + smoothing
+
+
 class _FakeProc:
     def __init__(self, cmd): self.cmd = cmd; self._exit = None; self.terminated = False
     def poll(self): return self._exit
