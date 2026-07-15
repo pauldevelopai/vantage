@@ -64,6 +64,11 @@ export function CamerasPage() {
   const [addingCamera, setAddingCamera] = useState<string | null>(null);
   const [showScanResults, setShowScanResults] = useState(false);
 
+  // Camera Bridge state (scan the user's own WiFi via a local agent)
+  const [showBridge, setShowBridge] = useState(false);
+  const [bridges, setBridges] = useState<Array<{ bridge_id: string; name: string; online: boolean; site_hint: string; last_seen: string | null }>>([]);
+  const [downloadingAgent, setDownloadingAgent] = useState(false);
+
   // Form state
   const [formId, setFormId] = useState('');
   const [formName, setFormName] = useState('');
@@ -205,6 +210,68 @@ export function CamerasPage() {
     }
   }
 
+  async function loadBridges() {
+    try {
+      const data = await api.listBridges();
+      setBridges(data.bridges);
+    } catch (error) {
+      console.error('Failed to load bridges:', error);
+    }
+  }
+
+  // While the bridge panel is open, poll so a newly-started agent appears.
+  useEffect(() => {
+    if (!showBridge) return;
+    loadBridges();
+    const t = setInterval(loadBridges, 5000);
+    return () => clearInterval(t);
+  }, [showBridge]);
+
+  async function handleDownloadAgent() {
+    setDownloadingAgent(true);
+    try {
+      await api.downloadBridgeAgent();
+    } catch (error) {
+      console.error('Failed to download agent:', error);
+      alert('Failed to download the Vantage Bridge agent');
+    } finally {
+      setDownloadingAgent(false);
+    }
+  }
+
+  async function handleBridgeScan(bridgeId: string) {
+    setScanning(true);
+    setScanComplete(false);
+    setDiscovered([]);
+    setShowScanResults(true);
+    try {
+      const { job_id } = await api.scanViaBridge(bridgeId);
+      const poll = async () => {
+        try {
+          const status = await api.getBridgeScanStatus(job_id);
+          if (status.status === 'done') {
+            setDiscovered((status.results || []) as DiscoveredCamera[]);
+            setScanning(false);
+            setScanComplete(true);
+          } else if (status.status === 'error') {
+            setScanning(false);
+            setScanComplete(true);
+            alert(`Scan failed on the bridge: ${status.error || 'unknown error'}`);
+          } else {
+            setTimeout(poll, 2000);
+          }
+        } catch {
+          setScanning(false);
+          setScanComplete(true);
+        }
+      };
+      setTimeout(poll, 2000);
+    } catch (error: any) {
+      setScanning(false);
+      alert(error?.message || 'Failed to start the scan');
+    }
+  }
+
   async function handleAddDiscovered(cam: DiscoveredCamera) {
     setAddingCamera(cam.ip);
     try {
@@ -260,6 +327,7 @@ export function CamerasPage() {
             <button
               onClick={handleScanNetwork}
               disabled={scanning}
+              title="Scan the network this Vantage server is on (for on-premise installs). For cloud, use 'Add cameras on my network'."
               className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-md hover:bg-green-700 disabled:bg-green-300 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {scanning ? (
@@ -275,6 +343,14 @@ export function CamerasPage() {
               )}
             </button>
             <button
+              onClick={() => setShowBridge(!showBridge)}
+              className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md hover:bg-indigo-700 flex items-center gap-2"
+              title="Discover cameras on the WiFi where your cameras actually are"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+              {showBridge ? 'Close' : 'Add cameras on my network'}
+            </button>
+            <button
               onClick={() => { resetForm(); setShowForm(!showForm); }}
               className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700"
             >
@@ -283,6 +359,70 @@ export function CamerasPage() {
           </div>
         )}
       </div>
+
+      {/* Camera Bridge — scan the WiFi where the user's cameras are */}
+      {showBridge && isAdmin && (
+        <div className="bg-white shadow rounded-lg p-6 mb-6 border-l-4 border-indigo-400">
+          <h2 className="text-lg font-medium text-gray-900">Add cameras on your network</h2>
+          <p className="mt-1 text-sm text-gray-500">
+            Vantage runs in the cloud, so it can't see the WiFi your cameras are on.
+            Run the small <span className="font-medium">Vantage Bridge</span> on a computer on
+            that network — then scan from here and your cameras appear.
+          </p>
+
+          {(() => {
+            const online = bridges.filter(b => b.online);
+            if (online.length > 0) {
+              return (
+                <div className="mt-4 space-y-2">
+                  {online.map(b => (
+                    <div key={b.bridge_id} className="flex items-center justify-between rounded-md border border-green-200 bg-green-50 px-4 py-2.5">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-block w-2 h-2 rounded-full bg-green-500" />
+                          <span className="text-sm font-medium text-gray-900">{b.name}</span>
+                          <span className="text-xs text-gray-500">{b.site_hint}</span>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleBridgeScan(b.bridge_id)}
+                        disabled={scanning}
+                        className="px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:bg-indigo-300"
+                      >
+                        {scanning ? 'Scanning…' : 'Scan this network'}
+                      </button>
+                    </div>
+                  ))}
+                  <p className="text-xs text-gray-400">Bridge connected. Results appear below the scan.</p>
+                </div>
+              );
+            }
+            return (
+              <div className="mt-4 rounded-md border border-gray-200 bg-gray-50 p-4">
+                <ol className="text-sm text-gray-700 space-y-2 list-decimal list-inside">
+                  <li>
+                    <button
+                      onClick={handleDownloadAgent}
+                      disabled={downloadingAgent}
+                      className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:bg-indigo-300 align-middle mx-1"
+                    >
+                      {downloadingAgent ? 'Preparing…' : 'Download Vantage Bridge'}
+                    </button>
+                    onto a computer that's on the same WiFi as your cameras.
+                  </li>
+                  <li>Open it (<code className="text-xs bg-white px-1 rounded border">python3 vantage_bridge.py</code>). It pairs automatically — nothing to type.</li>
+                  <li>This panel updates the moment it connects; then hit <span className="font-medium">Scan this network</span>.</li>
+                </ol>
+                <p className="mt-3 text-xs text-gray-400 flex items-center gap-1.5">
+                  <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                  Waiting for a bridge to connect…
+                  {bridges.length > 0 && ' (a paired bridge is currently offline)'}
+                </p>
+              </div>
+            );
+          })()}
+        </div>
+      )}
 
       {/* Add Camera Form */}
       {showForm && (
