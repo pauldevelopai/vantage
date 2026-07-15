@@ -90,8 +90,16 @@ on the PC and in the cloud.
     (byte budget + age cap, oldest-first). stdlib-only, dependency-injected,
     unit-tested; a CLI (`python -m alibi.cameras.recorder`) records a real
     camera today. *(`cameras/recorder.py`; `tests/test_recorder.py`.)*
-  - ⬜ **Motion-frame upload** + cloud record-jobs (fold the recorder into the
-    auto-agent so the cloud hands it the camera list + resolved URLs).
+  - ✅ **Auto-agent** — the recorder folded into a one-file **zipapp** the PC
+    owner downloads from the portal and runs (`python vantage_recorder.pyz`): it
+    auto-pairs, pulls its **record-targets** from the cloud (each camera's
+    resolved main + derived sub URL), and manages one recorder per camera,
+    syncing as cameras change. Bundles recorder + bridge connection + agent;
+    proven end-to-end on a real interpreter. *(`cameras/record_agent.py`,
+    `GET /cameras/bridge/record-targets`, `GET /cameras/bridge/download-recorder`;
+    `tests/test_record_agent.py`, `tests/test_recorder_zipapp.py`.)*
+  - ⬜ **Motion-frame upload** → cloud detection → incidents (carry the motion
+    JPEGs the trigger writes up to the cloud so the brief narrates real events).
 - **Cloud:** runs the heavy AI (detection + Claude + the vast context) on events
   only → incidents + the site security brief. Clips pulled from the PC on demand.
 - Economical because spend follows **activity**, not the clock; the vast external

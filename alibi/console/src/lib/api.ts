@@ -396,6 +396,21 @@ export const api = {
     URL.revokeObjectURL(url);
   },
 
+  // The recording agent — a self-contained zipapp for the always-on PC.
+  async downloadRecorder(): Promise<void> {
+    const res = await fetchWithAuth(`${API_BASE}/cameras/bridge/download-recorder`);
+    if (!res.ok) throw new Error('Failed to download the recorder');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'vantage_recorder.pyz';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
+
   async scanViaBridge(bridgeId: string, cidr?: string): Promise<{ job_id: string; status: string }> {
     const res = await fetchWithAuth(`${API_BASE}/cameras/bridge/${bridgeId}/scan`, {
       method: 'POST',

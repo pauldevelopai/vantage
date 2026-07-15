@@ -101,7 +101,7 @@ export function SitesPage() {
   async function handleDownloadRecorder() {
     setDownloading(true);
     try {
-      await api.downloadBridgeAgent();
+      await api.downloadRecorder();
     } catch {
       alert('Failed to download the Vantage recorder');
     } finally {
@@ -265,7 +265,7 @@ export function SitesPage() {
             <span className="flex-none w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 font-medium flex items-center justify-center">2</span>
             <div>
               <p className="font-medium text-gray-900">Run it on the always-on PC</p>
-              <p className="text-gray-500">On that PC: <code className="px-1 py-0.5 bg-gray-100 rounded">python3 vantage_bridge.py</code>. It pairs itself and appears below.</p>
+              <p className="text-gray-500">On that PC (needs Python + ffmpeg): <code className="px-1 py-0.5 bg-gray-100 rounded">python vantage_recorder.pyz</code>. It pairs itself, records every camera to that PC, and appears below.</p>
             </div>
           </li>
           <li className="flex gap-3">
