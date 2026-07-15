@@ -10,20 +10,6 @@ const SOURCE_TYPE_OPTIONS = [
   { value: 'genetec', label: 'Genetec Security Center' },
 ];
 
-const STATUS_DOT: Record<string, string> = {
-  online: 'bg-green-400',
-  offline: 'bg-red-400',
-  unknown: 'bg-gray-400',
-};
-
-const SOURCE_BADGE: Record<string, string> = {
-  rtsp: 'bg-blue-100 text-blue-800',
-  onvif: 'bg-purple-100 text-purple-800',
-  milestone: 'bg-orange-100 text-orange-800',
-  genetec: 'bg-teal-100 text-teal-800',
-  mobile: 'bg-green-100 text-green-800',
-};
-
 interface DiscoveredCamera {
   ip: string;
   port: number;
@@ -44,18 +30,10 @@ interface DiscoveredCamera {
   found_by?: string[];
 }
 
-const DISCOVERY_BADGE: Record<string, string> = {
-  onvif: 'bg-purple-100 text-purple-800',
-  rtsp_scan: 'bg-blue-100 text-blue-800',
-  mdns: 'bg-green-100 text-green-800',
-};
-
 export function CamerasPage() {
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [testing, setTesting] = useState<string | null>(null);
-  const [testResult, setTestResult] = useState<Record<string, any> | null>(null);
 
   // Network scan state
   const [scanning, setScanning] = useState(false);
@@ -118,7 +96,6 @@ export function CamerasPage() {
     setFormGuid('');
     setFormUsername('');
     setFormPassword('');
-    setTestResult(null);
   }
 
   async function handleAdd() {
@@ -154,19 +131,6 @@ export function CamerasPage() {
       alert('Failed to add camera');
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function handleTest(cameraId: string) {
-    setTesting(cameraId);
-    setTestResult(null);
-    try {
-      const result = await api.testCamera(cameraId);
-      setTestResult({ cameraId, ...result });
-    } catch (error) {
-      setTestResult({ cameraId, ok: false, error: 'Test request failed' });
-    } finally {
-      setTesting(null);
     }
   }
 
@@ -348,9 +312,6 @@ export function CamerasPage() {
     }
   }
 
-  const onlineCount = cameras.filter(c => c.status === 'online').length;
-  const offlineCount = cameras.filter(c => c.status === 'offline').length;
-
   // Respect the scanner's verdict: is_camera === false are NOT cameras (routers,
   // IoT, computers with a web port). Treat undefined as a camera for safety.
   const discoveredCameras = discovered.filter(d => d.is_camera !== false);
@@ -365,57 +326,28 @@ export function CamerasPage() {
       }`}
     >
       <div className="flex items-center gap-3 min-w-0">
-        <div className={`flex-shrink-0 w-2.5 h-2.5 rounded-full ${cam.already_registered ? 'bg-gray-400' : 'bg-green-500'}`} />
+        <span className="flex-shrink-0 text-xl" role="img" aria-label="camera">📷</span>
         <div className="min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-medium text-gray-900 text-sm">{cam.name || cam.ip}</span>
-            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${DISCOVERY_BADGE[cam.discovery_method] || 'bg-gray-100 text-gray-800'}`}>
-              {cam.discovery_method === 'rtsp_scan' ? 'RTSP' : cam.discovery_method.toUpperCase()}
-            </span>
-            {typeof cam.confidence === 'number' && (
-              <span
-                title={cam.found_by?.length ? `Found by: ${cam.found_by.join(', ')}` : undefined}
-                className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-                  cam.confidence >= 0.8 ? 'bg-green-100 text-green-800'
-                    : cam.confidence >= 0.5 ? 'bg-yellow-100 text-yellow-800'
-                    : 'bg-gray-100 text-gray-600'
-                }`}
-              >
-                {Math.round(cam.confidence * 100)}% match
-              </span>
-            )}
-            {cam.rtsp_confirmed && (
-              <span className="inline-flex items-center rounded-full bg-blue-100 text-blue-800 px-2 py-0.5 text-xs font-medium">
-                RTSP ✓
-              </span>
-            )}
-            {(cam.vendor || cam.manufacturer) && (
-              <span className="text-xs text-gray-500">{cam.vendor || cam.manufacturer} {cam.model}</span>
-            )}
-          </div>
-          <div className="text-xs text-gray-500 font-mono mt-0.5">
-            {cam.ip}:{cam.port}
-            {cam.open_ports && cam.open_ports.length > 0 && (
-              <span className="ml-2 text-gray-400">ports {cam.open_ports.join(', ')}</span>
-            )}
-            {cam.rtsp_url && <span className="ml-2 text-gray-400">{cam.rtsp_url}</span>}
-            {cam.resolution && <span className="ml-2">{cam.resolution}</span>}
-          </div>
+          <span className="font-medium text-gray-900 text-sm truncate block">
+            {cam.name && cam.name !== cam.ip ? cam.name : 'Camera'}
+          </span>
+          <div className="text-xs text-gray-500 mt-0.5">at {cam.ip}</div>
         </div>
       </div>
 
       <div className="flex-shrink-0 ml-3">
         {cam.already_registered ? (
-          <span className="inline-flex items-center px-2.5 py-1 text-xs font-medium text-gray-500 bg-gray-100 rounded-md">
-            Already Added
+          <span className="inline-flex items-center px-2.5 py-1 text-xs font-medium text-green-700 bg-green-100 rounded-md">
+            ✓ Added
           </span>
         ) : (
           <button
             onClick={() => handleAddDiscovered(cam)}
-            disabled={addingCamera === cam.ip}
+            disabled={addingCamera === cam.ip || !camPass}
+            title={!camPass ? 'Enter the camera password above first' : undefined}
             className="px-3 py-1.5 text-xs font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
           >
-            {addingCamera === cam.ip ? 'Adding...' : 'Add Camera'}
+            {addingCamera === cam.ip ? 'Adding…' : 'Add'}
           </button>
         )}
       </div>
@@ -434,43 +366,34 @@ export function CamerasPage() {
           <h1 className="text-2xl font-semibold text-gray-900">Cameras</h1>
           <p className="mt-1 text-sm text-gray-500">
             {cameras.length === 0
-              ? 'No cameras registered yet'
-              : `${cameras.length} camera${cameras.length !== 1 ? 's' : ''} — ${onlineCount} online${offlineCount > 0 ? `, ${offlineCount} offline` : ''}`}
+              ? 'No cameras added yet'
+              : `${cameras.length} camera${cameras.length !== 1 ? 's' : ''} added`}
           </p>
         </div>
         {isAdmin && (
-          <div className="mt-3 sm:mt-0 flex gap-2">
+          <div className="mt-3 sm:mt-0 flex flex-col items-stretch sm:items-end gap-2">
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowBridge(!showBridge)}
+                className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md hover:bg-indigo-700 flex items-center gap-2"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.858 15.355-5.858 21.213 0" /></svg>
+                {showBridge ? 'Close' : 'Find my cameras'}
+              </button>
+              <button
+                onClick={() => { resetForm(); setShowForm(!showForm); }}
+                className="px-4 py-2 bg-white text-gray-700 text-sm font-medium rounded-md border border-gray-300 hover:bg-gray-50"
+              >
+                {showForm ? 'Cancel' : 'Add manually'}
+              </button>
+            </div>
+            {/* Advanced: scan the network this server is on (on-premise installs only). */}
             <button
               onClick={handleScanNetwork}
               disabled={scanning}
-              title="Scan the network this Vantage server is on (for on-premise installs). For cloud, use 'Add cameras on my network'."
-              className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-md hover:bg-green-700 disabled:bg-green-300 disabled:cursor-not-allowed flex items-center gap-2"
+              className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50"
             >
-              {scanning ? (
-                <>
-                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
-                  Scanning...
-                </>
-              ) : (
-                <>
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.858 15.355-5.858 21.213 0" /></svg>
-                  Scan Network
-                </>
-              )}
-            </button>
-            <button
-              onClick={() => setShowBridge(!showBridge)}
-              className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md hover:bg-indigo-700 flex items-center gap-2"
-              title="Discover cameras on the WiFi where your cameras actually are"
-            >
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
-              {showBridge ? 'Close' : 'Add cameras on my network'}
-            </button>
-            <button
-              onClick={() => { resetForm(); setShowForm(!showForm); }}
-              className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700"
-            >
-              {showForm ? 'Cancel' : 'Add Camera'}
+              {scanning ? 'Scanning…' : 'Advanced: scan this server’s own network'}
             </button>
           </div>
         )}
@@ -824,62 +747,31 @@ export function CamerasPage() {
       {/* Camera List */}
       {cameras.length === 0 ? (
         <div className="text-center py-12 bg-white rounded-lg shadow">
-          <p className="text-gray-500">No cameras registered.</p>
-          {isAdmin && <p className="text-sm text-gray-400 mt-1">Click "Scan Network" to auto-discover cameras, or "Add Camera" to register manually.</p>}
+          <p className="text-gray-500">No cameras yet</p>
+          {isAdmin && <p className="text-sm text-gray-400 mt-1">Click <span className="font-medium">Find my cameras</span> to discover the cameras on your network.</p>}
         </div>
       ) : (
         <div className="space-y-3">
           {cameras.map(cam => (
             <div key={cam.camera_id} className="bg-white shadow rounded-lg p-4 flex items-center justify-between">
               <div className="flex items-center gap-4 min-w-0">
-                {/* Status dot */}
-                <span className={`flex-shrink-0 w-3 h-3 rounded-full ${STATUS_DOT[cam.status] || STATUS_DOT.unknown}`} />
-
+                <span className="flex-shrink-0 text-2xl" role="img" aria-label="camera">📷</span>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-gray-900 truncate">{cam.name}</span>
-                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${SOURCE_BADGE[cam.source_type] || 'bg-gray-100 text-gray-800'}`}>
-                      {cam.source_type}
-                    </span>
                     {cam.area && (
-                      <span
-                        className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700"
-                        title="Area background is enabled for this camera's incidents"
-                      >
+                      <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
                         {cam.area}
                       </span>
                     )}
                   </div>
                   <div className="text-sm text-gray-500 truncate">
-                    {cam.location && <span>{cam.location}</span>}
-                    {cam.location && cam.camera_id && <span className="mx-1">&middot;</span>}
-                    <span className="font-mono text-xs">{cam.camera_id}</span>
+                    {cam.location || 'Added — your recording PC handles the video'}
                   </div>
-                  {cam.last_seen && (
-                    <div className="text-xs text-gray-400 mt-0.5">
-                      Last seen: {new Date(cam.last_seen).toLocaleString()}
-                    </div>
-                  )}
                 </div>
               </div>
 
               <div className="flex items-center gap-2 flex-shrink-0 ml-4">
-                {/* Test result */}
-                {testResult?.cameraId === cam.camera_id && (
-                  <span className={`text-xs px-2 py-1 rounded ${testResult.ok ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                    {testResult.ok ? `OK ${testResult.resolution}` : testResult.error}
-                  </span>
-                )}
-
-                {isAdmin && cam.source_type !== 'mobile' && (
-                  <button
-                    onClick={() => handleTest(cam.camera_id)}
-                    disabled={testing === cam.camera_id}
-                    className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 disabled:opacity-50"
-                  >
-                    {testing === cam.camera_id ? 'Testing...' : 'Test'}
-                  </button>
-                )}
                 {isAdmin && (
                   <button
                     onClick={() => handleDelete(cam.camera_id)}
