@@ -357,6 +357,14 @@ export const api = {
     return res.json();
   },
 
+  async getLatestBridgeScan(bridgeId: string): Promise<{
+    job: { job_id: string; status: string; results: Array<Record<string, any>> } | null;
+  }> {
+    const res = await fetchWithAuth(`${API_BASE}/cameras/bridge/${bridgeId}/latest-scan`);
+    if (!res.ok) throw new Error('Failed to get latest scan');
+    return res.json();
+  },
+
   async addDiscoveredCamera(camera: {
     ip: string;
     port: number;

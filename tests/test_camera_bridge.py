@@ -149,6 +149,23 @@ def test_enqueue_for_unknown_bridge_is_none(reg):
     assert reg.enqueue_scan("brg_nope") is None
 
 
+def test_latest_completed_scan(reg):
+    bid = reg.redeem_pairing_code(reg.create_pairing_code("admin").code, name="H")["bridge_id"]
+    base = datetime.utcnow()
+
+    assert reg.latest_completed_scan(bid) is None          # nothing yet
+
+    j1 = reg.enqueue_scan(bid, now=base)
+    reg.submit_results(bid, j1.job_id, [{"ip": "1"}], now=base + timedelta(seconds=10))
+    j2 = reg.enqueue_scan(bid, now=base + timedelta(seconds=20))
+    reg.submit_results(bid, j2.job_id, [{"ip": "2"}], now=base + timedelta(seconds=30))
+    reg.enqueue_scan(bid, now=base + timedelta(seconds=40))  # pending, ignored
+
+    latest = reg.latest_completed_scan(bid)
+    assert latest.job_id == j2.job_id                       # most recent DONE
+    assert latest.results == [{"ip": "2"}]
+
+
 # --- persistence ----------------------------------------------------------- #
 
 def test_survives_reload(tmp_path):

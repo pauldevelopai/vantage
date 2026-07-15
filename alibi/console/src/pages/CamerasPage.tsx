@@ -227,6 +227,16 @@ export function CamerasPage() {
     return () => clearInterval(t);
   }, [showBridge]);
 
+  // When a bridge is online and we've no results shown yet, surface its last
+  // completed scan — so cameras appear even if the live scan-poll never finished
+  // (e.g. the tab was reloaded or froze mid-scan).
+  useEffect(() => {
+    if (!showBridge || scanning || discovered.length > 0) return;
+    const online = bridges.find(b => b.online);
+    if (online) loadLatestBridgeScan(online.bridge_id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showBridge, bridges, scanning]);
+
   async function handleDownloadAgent() {
     setDownloadingAgent(true);
     try {
@@ -239,37 +249,64 @@ export function CamerasPage() {
     }
   }
 
+  // Show the last completed scan for a bridge (resilient to a frozen poll / reload).
+  async function loadLatestBridgeScan(bridgeId: string) {
+    try {
+      const { job } = await api.getLatestBridgeScan(bridgeId);
+      if (job && job.results && job.results.length > 0) {
+        setDiscovered(job.results as DiscoveredCamera[]);
+        setShowScanResults(true);
+        setScanComplete(true);
+      }
+    } catch {
+      /* no prior scan — fine */
+    }
+  }
+
   async function handleBridgeScan(bridgeId: string) {
     setScanning(true);
     setScanComplete(false);
     setDiscovered([]);
     setShowScanResults(true);
+    let jobId: string;
     try {
-      const { job_id } = await api.scanViaBridge(bridgeId);
-      const poll = async () => {
-        try {
-          const status = await api.getBridgeScanStatus(job_id);
-          if (status.status === 'done') {
-            setDiscovered((status.results || []) as DiscoveredCamera[]);
-            setScanning(false);
-            setScanComplete(true);
-          } else if (status.status === 'error') {
-            setScanning(false);
-            setScanComplete(true);
-            alert(`Scan failed on the bridge: ${status.error || 'unknown error'}`);
-          } else {
-            setTimeout(poll, 2000);
-          }
-        } catch {
-          setScanning(false);
-          setScanComplete(true);
-        }
-      };
-      setTimeout(poll, 2000);
+      const res = await api.scanViaBridge(bridgeId);
+      jobId = res.job_id;
     } catch (error: any) {
       setScanning(false);
       alert(error?.message || 'Failed to start the scan');
+      return;
     }
+
+    const startedAt = Date.now();
+    const poll = async () => {
+      if (Date.now() - startedAt > 180000) {   // 3-min ceiling
+        setScanning(false);
+        setScanComplete(true);
+        // Fall back to whatever the bridge last reported.
+        loadLatestBridgeScan(bridgeId);
+        return;
+      }
+      try {
+        const status = await api.getBridgeScanStatus(jobId);
+        if (status.status === 'done') {
+          setDiscovered((status.results || []) as DiscoveredCamera[]);
+          setScanning(false);
+          setScanComplete(true);
+          return;
+        }
+        if (status.status === 'error') {
+          setScanning(false);
+          setScanComplete(true);
+          alert(`Scan failed on the bridge: ${status.error || 'unknown error'}`);
+          return;
+        }
+      } catch {
+        /* transient — keep polling rather than wedging */
+      }
+      setTimeout(poll, 2000);
+    };
+    setTimeout(poll, 2000);
   }
 
   async function handleAddDiscovered(cam: DiscoveredCamera) {
