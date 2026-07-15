@@ -66,10 +66,15 @@ it stays economical — a quiet site costs ~nothing.
   **posture** that tailors what "normal" is and what merits a human look, and
   drives every downstream step. Situational + non-accusatory by construction.
   *(`site_profile.py`, `/sites` + `/sites/postures`; `tests/test_site_profile.py`.)*
-- ⬜ **Security brief — "what this means for your security".** Composes the site
-  posture + the "why flagged" explainer + area context (§9) + patterns (§4) into
-  a continuous, grounded, cited brief per site. LLM phrases the assembled facts,
-  never invents them (same rule as the explainer). Event-gated + periodic.
+- ✅ **Security brief — "what this means for your security".** Composes the site
+  posture + the site's real incidents + area context (§9) into deterministic,
+  cited findings (volume, after-hours vs the site's normal hours, higher-severity,
+  watchlist matches, camera coverage) plus a short narrative. The LLM only
+  *phrases* the assembled facts (Ollama → Claude → template), guarded by the same
+  forbidden-language check as the explainer — it can never invent an incident or
+  accuse anyone. Honest empty state; on-demand/periodic, never per frame.
+  *(`security_brief.py`, `GET /sites/{id}/brief`; `tests/test_security_brief.py`.)*
+  Console render + richer events (from the PC recorder) are the next slices.
 - ⬜ **Suggestions to improve your security** — coverage gaps, blind spots,
   prioritised recommendations, tailored to the site posture.
 
