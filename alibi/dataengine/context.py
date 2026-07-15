@@ -106,9 +106,16 @@ def get_area_context(
                 },
             ))
 
-        # Nearby points of interest (police stations etc.) — useful to a reviewer
+        # Nearby points of interest (police stations etc.) — useful to a reviewer.
+        # `query_area` is the area the record was FETCHED for (stamped at ingest)
+        # — the reliable link back to a camera's area. Google's own `city` can be
+        # the metro ("Cape Town" for a Somerset West clinic), so it alone is not
+        # enough; it and the address stay as fallbacks for older records.
         place_area = str(p.get("address", "")).strip().lower()
-        if p.get("place_name") and (target in place_area or rec_area == target):
+        query_area = str(p.get("query_area", "")).strip().lower()
+        if p.get("place_name") and (
+            query_area == target or target in place_area or rec_area == target
+        ):
             ctx.items.append(ContextItem(
                 kind="poi",
                 detail=f"Nearby: {p['place_name']} ({p.get('category', 'point of interest')}).",

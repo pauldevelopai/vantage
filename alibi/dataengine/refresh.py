@@ -96,7 +96,15 @@ def needs_refresh(
 
     newest: Optional[datetime] = None
     for rec in store.query(domain=DataDomain.PLACES_CONTEXT, now=now):
-        if str(rec.payload.get("area", "")).strip().lower() == target:
+        # `query_area` (stamped at ingest) is the authoritative link; `area`
+        # (Google's city, often the metro) stays as a fallback for older
+        # records. Without this, an area whose places all carry the metro city
+        # would look permanently stale and be re-fetched — billed — every run.
+        rec_areas = (
+            str(rec.payload.get("query_area", "")).strip().lower(),
+            str(rec.payload.get("area", "")).strip().lower(),
+        )
+        if target in rec_areas:
             if newest is None or rec.ingested_at > newest:
                 newest = rec.ingested_at
 

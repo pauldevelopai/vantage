@@ -111,3 +111,27 @@ def test_actor_input_does_not_collect_personal_data():
     assert spec.actor_input["maxReviews"] == 0
     assert spec.actor_input["scrapeReviewerName"] is False
     assert spec.actor_input["scrapeReviewsPersonalData"] is False
+
+
+def test_context_matches_via_query_area_when_city_is_the_metro(store):
+    """Google's `city` for a Somerset West clinic is "Cape Town" (observed
+    live 2026-07-15) — the camera's area must still find the record via the
+    ingest-stamped `query_area`."""
+    from alibi.dataengine.ingest import ingest_items as _ingest
+
+    item = {
+        "title": "SAPS Somerset West Police Station",
+        "city": "Cape Town",
+        "categoryName": "State police",
+        "neighborhood": "Somerset West",
+    }
+    _ingest(get_source("places.poi"), [item], store,
+            payload_extra={"query_area": "Somerset West"})
+
+    ctx = get_area_context("Somerset West", store=store)
+    assert not ctx.is_empty()
+    assert "SAPS Somerset West Police Station" in ctx.items[0].detail
+
+    # The stamp passed the guard like everything else — and an unrelated area
+    # still gets an honest empty state, not someone else's places.
+    assert get_area_context("Windhoek", store=store).is_empty()
