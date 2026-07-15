@@ -263,6 +263,15 @@ class BridgeRegistry:
     def get_job(self, job_id: str) -> Optional[ScanJob]:
         return self._jobs.get(job_id)
 
+    def latest_completed_scan(self, bridge_id: str) -> Optional[ScanJob]:
+        """The most recently finished scan for a bridge — so the console can show
+        results on page load, independent of the live poll that ran at scan time."""
+        done = [j for j in self._jobs.values()
+                if j.bridge_id == bridge_id and j.status == "done"]
+        if not done:
+            return None
+        return max(done, key=lambda j: j.updated_at)
+
     def _prune_jobs(self):
         if len(self._jobs) <= MAX_JOBS_RETAINED:
             return

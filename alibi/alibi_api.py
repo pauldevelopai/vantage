@@ -2133,6 +2133,19 @@ async def bridge_scan_status(
     return job.public_dict()
 
 
+@app.get("/cameras/bridge/{bridge_id}/latest-scan", tags=["Camera Bridge"])
+async def bridge_latest_scan(
+    bridge_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """The most recent completed scan for a bridge (results), or null. Lets the
+    console show the last discovered cameras on page load — resilient to a
+    browser tab that froze mid-poll."""
+    from alibi.cameras.bridge import get_bridge_registry
+    job = get_bridge_registry().latest_completed_scan(bridge_id)
+    return {"job": job.public_dict() if job else None}
+
+
 # --- Agent (bridge) side ----------------------------------------- #
 
 @app.post("/cameras/bridge/register", tags=["Camera Bridge"])
