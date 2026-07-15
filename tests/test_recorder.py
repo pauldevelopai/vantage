@@ -43,15 +43,18 @@ def test_record_command_transcodes_audio_when_enabled():
 def test_motion_command_uses_scene_filter():
     cmd = build_motion_command("rtsp://x/sub", "/mo", threshold=0.4, prefix="cam1")
     vf = cmd[cmd.index("-vf") + 1]
-    assert vf == "select='gt(scene,0.4)'"      # ffmpeg does the motion detection
+    assert "select='gt(scene,0.4)'" in vf       # ffmpeg does the motion detection
+    assert "format=yuvj420p" in vf              # JPEG-range for the mjpeg encoder
+    assert "scale=" in vf                       # small frames for cheap upload
     assert cmd[-1].endswith("cam1_%Y%m%d_%H%M%S_%03d.jpg")
 
 
 def test_motion_threshold_clamped():
-    assert "gt(scene,1.0)" in build_motion_command("u", "/d", threshold=5.0)[
-        build_motion_command("u", "/d", threshold=5.0).index("-vf") + 1]
-    assert "gt(scene,0.0)" in build_motion_command("u", "/d", threshold=-2.0)[
-        build_motion_command("u", "/d", threshold=-2.0).index("-vf") + 1]
+    def vf_of(t):
+        c = build_motion_command("u", "/d", threshold=t)
+        return c[c.index("-vf") + 1]
+    assert "gt(scene,1.0)" in vf_of(5.0)
+    assert "gt(scene,0.0)" in vf_of(-2.0)
 
 
 def test_ffmpeg_available_true_and_false():
