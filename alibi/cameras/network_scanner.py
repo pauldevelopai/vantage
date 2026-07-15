@@ -123,15 +123,18 @@ class DiscoveredCamera:
 # --------------------------------------------------------------------------- #
 
 def parse_rtsp_options(text: str) -> Tuple[bool, Optional[str]]:
-    """Parse an RTSP OPTIONS response: return (speaks_rtsp, server_banner)."""
+    """Parse an RTSP OPTIONS response: return (speaks_rtsp, server_banner).
+
+    ANY response beginning with "RTSP/" proves an RTSP server — including a
+    401 Unauthorized, which many cameras (e.g. Dahua) return to an
+    unauthenticated OPTIONS. Only RTSP servers speak the RTSP/ status line;
+    HTTP servers answer "HTTP/..".
+    """
     if not text:
         return False, None
-    first_line = text.split("\r\n", 1)[0]
-    alive = text.startswith("RTSP/") and ("200" in first_line or "Public:" in text)
-    banner = None
+    alive = text.startswith("RTSP/")
     m = re.search(r"Server:\s*(.+)", text)
-    if m:
-        banner = m.group(1).strip()
+    banner = m.group(1).strip() if m else None
     return alive, banner
 
 
@@ -150,16 +153,39 @@ def get_local_subnet() -> str:
     return str(ipaddress.IPv4Network(f"{get_local_ip()}/24", strict=False))
 
 
+def _normalise_mac(mac: str) -> str:
+    """Zero-pad each octet — macOS `arp` prints '0:c:43' not '00:0c:43'."""
+    parts = mac.split(":")
+    if len(parts) == 6:
+        return ":".join(p.zfill(2) for p in parts).lower()
+    return mac.lower()
+
+
 def _read_arp_table() -> Dict[str, str]:
-    """Map ip -> mac from the kernel ARP cache (Linux /proc/net/arp)."""
+    """Map ip -> mac from the kernel ARP cache.
+
+    Linux: /proc/net/arp. macOS/BSD: fall back to the `arp -a` command (there is
+    no /proc there), so vendor fingerprinting works when the bridge runs on a Mac.
+    """
     table: Dict[str, str] = {}
-    try:
+    try:  # Linux
         with open("/proc/net/arp") as fh:
             next(fh)  # header
             for line in fh:
                 parts = line.split()
                 if len(parts) >= 4 and parts[3] != "00:00:00:00:00:00":
                     table[parts[0]] = parts[3].lower()
+        if table:
+            return table
+    except Exception:
+        pass
+    try:  # macOS / BSD
+        import subprocess
+        out = subprocess.run(["arp", "-a"], capture_output=True, text=True, timeout=5).stdout
+        for line in out.splitlines():
+            m = re.search(r"\(([\d.]+)\) at ([0-9a-fA-F:]+)", line)
+            if m and m.group(2).lower() != "incomplete":
+                table[m.group(1)] = _normalise_mac(m.group(2))
     except Exception:
         pass
     return table

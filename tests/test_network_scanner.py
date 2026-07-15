@@ -32,6 +32,12 @@ class TestRtspOptionsParsing:
         alive, _ = parse_rtsp_options("RTSP/1.0 401 Unauthorized\r\nPublic: OPTIONS, DESCRIBE\r\n")
         assert alive is True
 
+    def test_401_without_public_still_counts(self):
+        """Dahua etc. answer unauthenticated OPTIONS with a bare 401 — still RTSP."""
+        alive, _ = parse_rtsp_options(
+            "RTSP/1.0 401 Unauthorized\r\nWWW-Authenticate: Digest realm=x\r\n\r\n")
+        assert alive is True
+
     def test_http_response_is_not_rtsp(self):
         alive, banner = parse_rtsp_options("HTTP/1.1 200 OK\r\nServer: nginx\r\n")
         assert alive is False
@@ -52,6 +58,24 @@ class TestOui:
 
     def test_none(self):
         assert vendor_for_mac(None) is None
+
+    def test_macos_arp_fallback_parses_short_octets(self, monkeypatch):
+        """macOS `arp -a` prints '0:c:43' — must zero-pad to match the OUI table."""
+        import subprocess
+        sample = (
+            "router (192.168.3.1) at 0:c:43:aa:bb:cc on en0 ifscope [ethernet]\n"
+            "? (192.168.3.90) at b4:4c:3b:5f:16:82 on en0 ifscope [ethernet]\n"
+            "? (192.168.3.5) at (incomplete) on en0 ifscope [ethernet]\n"
+        )
+        # Force the Linux path to miss so the macOS branch runs, and stub `arp -a`.
+        monkeypatch.setattr("builtins.open", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError()))
+        monkeypatch.setattr(subprocess, "run",
+                            lambda *a, **k: type("R", (), {"stdout": sample})())
+        table = ns._read_arp_table()
+        assert table["192.168.3.1"] == "00:0c:43:aa:bb:cc"     # zero-padded
+        assert table["192.168.3.90"] == "b4:4c:3b:5f:16:82"
+        assert "192.168.3.5" not in table                       # incomplete skipped
+        assert vendor_for_mac(table["192.168.3.1"]) == "Hikvision"
 
     def test_brand_templates_are_urlencodable_placeholders(self):
         for brand, tpl in BRAND_RTSP_TEMPLATES.items():

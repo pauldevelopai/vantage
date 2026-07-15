@@ -116,10 +116,11 @@ def vendor_for_mac(mac):
 
 
 def parse_rtsp_options(text):
+    # Any "RTSP/" response proves an RTSP server, incl. a 401 (Dahua etc. answer
+    # unauthenticated OPTIONS with 401). Only RTSP servers speak the RTSP/ line.
     if not text:
         return False, None
-    first = text.split("\r\n", 1)[0]
-    alive = text.startswith("RTSP/") and ("200" in first or "Public:" in text)
+    alive = text.startswith("RTSP/")
     m = re.search(r"Server:\s*(.+)", text)
     return alive, (m.group(1).strip() if m else None)
 
@@ -221,13 +222,26 @@ def rtsp_probe(ip, port=554, timeout=2.5):
 
 def read_arp():
     table = {}
-    try:
+    try:  # Linux
         with open("/proc/net/arp") as fh:
             next(fh)
             for line in fh:
                 p = line.split()
                 if len(p) >= 4 and p[3] != "00:00:00:00:00:00":
                     table[p[0]] = p[3].lower()
+        if table:
+            return table
+    except Exception:
+        pass
+    try:  # macOS / BSD: no /proc, use `arp -a`
+        import subprocess
+        out = subprocess.run(["arp", "-a"], capture_output=True, text=True, timeout=5).stdout
+        for line in out.splitlines():
+            m = re.search(r"\(([\d.]+)\) at ([0-9a-fA-F:]+)", line)
+            if m and m.group(2).lower() != "incomplete":
+                parts = m.group(2).split(":")
+                mac = ":".join(x.zfill(2) for x in parts).lower() if len(parts) == 6 else m.group(2).lower()
+                table[m.group(1)] = mac
     except Exception:
         pass
     return table
