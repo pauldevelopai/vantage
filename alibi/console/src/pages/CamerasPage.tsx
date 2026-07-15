@@ -65,6 +65,7 @@ export function CamerasPage() {
   const [showScanResults, setShowScanResults] = useState(false);
 
   // Camera Bridge state (scan the user's own WiFi via a local agent)
+  const [showOtherDevices, setShowOtherDevices] = useState(false);
   const [showBridge, setShowBridge] = useState(false);
   const [bridges, setBridges] = useState<Array<{ bridge_id: string; name: string; online: boolean; site_hint: string; last_seen: string | null }>>([]);
   const [downloadingAgent, setDownloadingAgent] = useState(false);
@@ -334,14 +335,84 @@ export function CamerasPage() {
   }
 
   async function handleAddAllDiscovered() {
-    const newCameras = discovered.filter(d => !d.already_registered);
-    for (const cam of newCameras) {
+    for (const cam of discoveredCameras.filter(d => !d.already_registered)) {
       await handleAddDiscovered(cam);
     }
   }
 
   const onlineCount = cameras.filter(c => c.status === 'online').length;
   const offlineCount = cameras.filter(c => c.status === 'offline').length;
+
+  // Respect the scanner's verdict: is_camera === false are NOT cameras (routers,
+  // IoT, computers with a web port). Treat undefined as a camera for safety.
+  const discoveredCameras = discovered.filter(d => d.is_camera !== false);
+  const otherDevices = discovered.filter(d => d.is_camera === false);
+  const newDiscoveredCameras = discoveredCameras.filter(d => !d.already_registered);
+
+  const renderDiscoveredRow = (cam: DiscoveredCamera, idx: number) => (
+    <div
+      key={`${cam.ip}-${idx}`}
+      className={`border rounded-lg p-3 flex items-center justify-between ${
+        cam.already_registered ? 'bg-gray-50 border-gray-200' : 'bg-green-50 border-green-200'
+      }`}
+    >
+      <div className="flex items-center gap-3 min-w-0">
+        <div className={`flex-shrink-0 w-2.5 h-2.5 rounded-full ${cam.already_registered ? 'bg-gray-400' : 'bg-green-500'}`} />
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-medium text-gray-900 text-sm">{cam.name || cam.ip}</span>
+            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${DISCOVERY_BADGE[cam.discovery_method] || 'bg-gray-100 text-gray-800'}`}>
+              {cam.discovery_method === 'rtsp_scan' ? 'RTSP' : cam.discovery_method.toUpperCase()}
+            </span>
+            {typeof cam.confidence === 'number' && (
+              <span
+                title={cam.found_by?.length ? `Found by: ${cam.found_by.join(', ')}` : undefined}
+                className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                  cam.confidence >= 0.8 ? 'bg-green-100 text-green-800'
+                    : cam.confidence >= 0.5 ? 'bg-yellow-100 text-yellow-800'
+                    : 'bg-gray-100 text-gray-600'
+                }`}
+              >
+                {Math.round(cam.confidence * 100)}% match
+              </span>
+            )}
+            {cam.rtsp_confirmed && (
+              <span className="inline-flex items-center rounded-full bg-blue-100 text-blue-800 px-2 py-0.5 text-xs font-medium">
+                RTSP ✓
+              </span>
+            )}
+            {(cam.vendor || cam.manufacturer) && (
+              <span className="text-xs text-gray-500">{cam.vendor || cam.manufacturer} {cam.model}</span>
+            )}
+          </div>
+          <div className="text-xs text-gray-500 font-mono mt-0.5">
+            {cam.ip}:{cam.port}
+            {cam.open_ports && cam.open_ports.length > 0 && (
+              <span className="ml-2 text-gray-400">ports {cam.open_ports.join(', ')}</span>
+            )}
+            {cam.rtsp_url && <span className="ml-2 text-gray-400">{cam.rtsp_url}</span>}
+            {cam.resolution && <span className="ml-2">{cam.resolution}</span>}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex-shrink-0 ml-3">
+        {cam.already_registered ? (
+          <span className="inline-flex items-center px-2.5 py-1 text-xs font-medium text-gray-500 bg-gray-100 rounded-md">
+            Already Added
+          </span>
+        ) : (
+          <button
+            onClick={() => handleAddDiscovered(cam)}
+            disabled={addingCamera === cam.ip}
+            className="px-3 py-1.5 text-xs font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+          >
+            {addingCamera === cam.ip ? 'Adding...' : 'Add Camera'}
+          </button>
+        )}
+      </div>
+    </div>
+  );
 
   if (loading) {
     return <div className="px-4 py-8 text-center text-gray-500">Loading cameras...</div>;
@@ -641,20 +712,19 @@ export function CamerasPage() {
               )}
               {scanComplete && (
                 <span className="text-sm text-gray-500">
-                  Found {discovered.length} camera{discovered.length !== 1 ? 's' : ''}
-                  {discovered.filter(d => !d.already_registered).length > 0 &&
-                    ` — ${discovered.filter(d => !d.already_registered).length} new`
-                  }
+                  Found {discoveredCameras.length} camera{discoveredCameras.length !== 1 ? 's' : ''}
+                  {newDiscoveredCameras.length > 0 && ` — ${newDiscoveredCameras.length} new`}
+                  {otherDevices.length > 0 && `, ${otherDevices.length} other device${otherDevices.length !== 1 ? 's' : ''}`}
                 </span>
               )}
             </div>
             <div className="flex items-center gap-2">
-              {scanComplete && discovered.filter(d => !d.already_registered).length > 1 && (
+              {scanComplete && newDiscoveredCameras.length > 1 && (
                 <button
                   onClick={handleAddAllDiscovered}
                   className="px-3 py-1.5 text-xs font-medium text-white bg-green-600 rounded-md hover:bg-green-700"
                 >
-                  Add All New ({discovered.filter(d => !d.already_registered).length})
+                  Add All New ({newDiscoveredCameras.length})
                 </button>
               )}
               <button
@@ -676,79 +746,37 @@ export function CamerasPage() {
             </div>
           )}
 
-          {discovered.length === 0 && scanComplete && (
+          {discoveredCameras.length === 0 && scanComplete && (
             <div className="text-center py-8 text-gray-500">
               <p>No cameras found on the local network.</p>
               <p className="text-xs text-gray-400 mt-1">Ensure cameras are powered on and connected to the same network.</p>
             </div>
           )}
 
-          {discovered.length > 0 && (
+          {discoveredCameras.length > 0 && (
             <div className="space-y-2">
-              {discovered.map((cam, idx) => (
-                <div
-                  key={`${cam.ip}-${idx}`}
-                  className={`border rounded-lg p-3 flex items-center justify-between ${
-                    cam.already_registered ? 'bg-gray-50 border-gray-200' : 'bg-green-50 border-green-200'
-                  }`}
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className={`flex-shrink-0 w-2.5 h-2.5 rounded-full ${cam.already_registered ? 'bg-gray-400' : 'bg-green-500'}`} />
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-medium text-gray-900 text-sm">{cam.name || cam.ip}</span>
-                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${DISCOVERY_BADGE[cam.discovery_method] || 'bg-gray-100 text-gray-800'}`}>
-                          {cam.discovery_method === 'rtsp_scan' ? 'RTSP' : cam.discovery_method.toUpperCase()}
-                        </span>
-                        {typeof cam.confidence === 'number' && (
-                          <span
-                            title={cam.found_by?.length ? `Found by: ${cam.found_by.join(', ')}` : undefined}
-                            className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-                              cam.confidence >= 0.8 ? 'bg-green-100 text-green-800'
-                                : cam.confidence >= 0.5 ? 'bg-yellow-100 text-yellow-800'
-                                : 'bg-gray-100 text-gray-600'
-                            }`}
-                          >
-                            {Math.round(cam.confidence * 100)}% match
-                          </span>
-                        )}
-                        {cam.rtsp_confirmed && (
-                          <span className="inline-flex items-center rounded-full bg-blue-100 text-blue-800 px-2 py-0.5 text-xs font-medium">
-                            RTSP ✓
-                          </span>
-                        )}
-                        {(cam.vendor || cam.manufacturer) && (
-                          <span className="text-xs text-gray-500">{cam.vendor || cam.manufacturer} {cam.model}</span>
-                        )}
-                      </div>
-                      <div className="text-xs text-gray-500 font-mono mt-0.5">
-                        {cam.ip}:{cam.port}
-                        {cam.open_ports && cam.open_ports.length > 0 && (
-                          <span className="ml-2 text-gray-400">ports {cam.open_ports.join(', ')}</span>
-                        )}
-                        {cam.rtsp_url && <span className="ml-2 text-gray-400">{cam.rtsp_url}</span>}
-                        {cam.resolution && <span className="ml-2">{cam.resolution}</span>}
-                      </div>
-                    </div>
-                  </div>
+              {discoveredCameras.map((cam, idx) => renderDiscoveredRow(cam, idx))}
+            </div>
+          )}
 
-                  <div className="flex-shrink-0 ml-3">
-                    {cam.already_registered ? (
-                      <span className="inline-flex items-center px-2.5 py-1 text-xs font-medium text-gray-500 bg-gray-100 rounded-md">
-                        Already Added
-                      </span>
-                    ) : (
-                      <button
-                        onClick={() => handleAddDiscovered(cam)}
-                        disabled={addingCamera === cam.ip}
-                        className="px-3 py-1.5 text-xs font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
-                      >
-                        {addingCamera === cam.ip ? 'Adding...' : 'Add Camera'}
-                      </button>
-                    )}
-                  </div>
+          {/* Non-cameras the scan turned up (routers, IoT, computers) — hidden by
+              default so they're not mistaken for cameras. */}
+          {otherDevices.length > 0 && (
+            <div className="mt-3">
+              <button
+                onClick={() => setShowOtherDevices(v => !v)}
+                className="text-xs text-gray-500 hover:text-gray-700"
+              >
+                {showOtherDevices ? '▾' : '▸'} {otherDevices.length} other device{otherDevices.length !== 1 ? 's' : ''} on the network (not cameras)
+              </button>
+              {showOtherDevices && (
+                <div className="space-y-2 mt-2 opacity-70">
+                  <p className="text-xs text-gray-400">
+                    These responded on a web/RTSP port but didn't look like cameras. Add one only if you know it is a camera the scanner missed.
+                  </p>
+                  {otherDevices.map((cam, idx) => renderDiscoveredRow(cam, idx))}
                 </div>
-              ))}
+              )}
             </div>
           )}
         </div>
