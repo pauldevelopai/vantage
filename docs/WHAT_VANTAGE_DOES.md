@@ -64,8 +64,14 @@ override the default (`claude-opus-4-8`). *(`llm_service.py`,
   vendor fingerprint), each host scored with a confidence + is-camera verdict,
   one-click add. *(`cameras/network_scanner.py`, `cameras/oui_prefixes.py`,
   `/api/cameras/scan`, console Cameras page; `tests/test_network_scanner.py`.)*
-  Note: runs on the LAN where Vantage is hosted — a cloud box sees no cameras;
-  on-prem or a mesh-VPN (Phase 6) is required for discovery to find anything.
+- ✅ **Scan the user's own WiFi from the cloud — "Add cameras on my network".**
+  A cloud box can't see a user's LAN, so a small **Vantage Bridge** agent runs
+  on that network (one personalized download, auto-pairs, connects outbound only)
+  and does the discovery; the console dispatches a scan to it and shows the
+  cameras. *(`cameras/bridge.py` protocol + `cameras/bridge_agent.py` +
+  `/api/cameras/bridge/*` + CamerasPage bridge panel; `tests/test_camera_bridge*.py`,
+  `tests/test_bridge_agent.py`.)* True one-click (signed native app, no OS
+  prompt) is a later funded step.
 - 🟡 **Use a phone as a camera**. *(`mobile_camera*.py`; a WebRTC/WHIP path
   — MediaMTX + coturn → RTSP, QR join — is planned but needs an infra decision:
   the box runs systemd, not docker-compose, so those services need adapting.)*

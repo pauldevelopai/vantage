@@ -312,6 +312,51 @@ export const api = {
     return res.json();
   },
 
+  // Camera Bridge — scan a user's own WiFi via a local agent
+  async listBridges(): Promise<{ bridges: Array<{
+    bridge_id: string; name: string; created_at: string;
+    last_seen: string | null; site_hint: string; online: boolean;
+  }> }> {
+    const res = await fetchWithAuth(`${API_BASE}/cameras/bridge`);
+    if (!res.ok) throw new Error('Failed to list bridges');
+    return res.json();
+  },
+
+  async downloadBridgeAgent(): Promise<void> {
+    const res = await fetchWithAuth(`${API_BASE}/cameras/bridge/download`);
+    if (!res.ok) throw new Error('Failed to download the bridge agent');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'vantage_bridge.py';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
+
+  async scanViaBridge(bridgeId: string, cidr?: string): Promise<{ job_id: string; status: string }> {
+    const res = await fetchWithAuth(`${API_BASE}/cameras/bridge/${bridgeId}/scan`, {
+      method: 'POST',
+      body: JSON.stringify(cidr ? { cidr } : {}),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to start scan');
+    }
+    return res.json();
+  },
+
+  async getBridgeScanStatus(jobId: string): Promise<{
+    job_id: string; status: string; error: string;
+    results: Array<Record<string, any>>;
+  }> {
+    const res = await fetchWithAuth(`${API_BASE}/cameras/bridge/scan/${jobId}`);
+    if (!res.ok) throw new Error('Failed to get scan status');
+    return res.json();
+  },
+
   async addDiscoveredCamera(camera: {
     ip: string;
     port: number;
