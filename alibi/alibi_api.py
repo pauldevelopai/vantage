@@ -2067,6 +2067,41 @@ async def bridge_list(current_user: User = Depends(get_current_user)):
     return {"bridges": get_bridge_registry().list_bridges()}
 
 
+@app.get("/api/cameras/bridge/download", tags=["Camera Bridge"])
+async def bridge_download(
+    request: Request,
+    current_user: User = Depends(require_role([Role.ADMIN])),
+):
+    """Serve the Vantage Bridge agent, personalized with this Vantage's URL and a
+    fresh single-use pairing code baked in — so the user just downloads and runs
+    it (no code to type). The agent auto-pairs on first launch."""
+    import os as _os
+    from fastapi.responses import Response
+    from alibi.cameras import bridge_agent
+    from alibi.cameras.bridge import get_bridge_registry
+
+    pc = get_bridge_registry().create_pairing_code(created_by=current_user.username)
+    base_url = str(request.base_url).rstrip("/")
+
+    with open(bridge_agent.__file__, "r") as f:
+        src = f.read()
+
+    # Bake in the defaults; the env-var override still works.
+    src = src.replace(
+        'VANTAGE_URL = os.environ.get("VANTAGE_URL", "https://vantage.developai.co.za")',
+        f'VANTAGE_URL = os.environ.get("VANTAGE_URL", "{base_url}")',
+    ).replace(
+        'PAIRING_CODE = os.environ.get("VANTAGE_PAIRING_CODE", "")',
+        f'PAIRING_CODE = os.environ.get("VANTAGE_PAIRING_CODE", "{pc.code}")',
+    )
+
+    return Response(
+        content=src,
+        media_type="text/x-python",
+        headers={"Content-Disposition": 'attachment; filename="vantage_bridge.py"'},
+    )
+
+
 @app.post("/api/cameras/bridge/{bridge_id}/scan", tags=["Camera Bridge"])
 async def bridge_scan(
     bridge_id: str,
