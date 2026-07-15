@@ -189,3 +189,58 @@ class TestCli:
         assert code == 0
         assert "DRY RUN" in out
         assert "no camera has an area set" in out
+
+
+class TestGeoAnchoredQuery:
+    """The area anchors WHERE to search; it is not a keyword.
+
+    Observed live 2026-07-15: "police station Somerset West" keyword-matched
+    station NAMES worldwide (St. Louis, New Jersey, Utah) — billed junk. The
+    area must go in `locationQuery`, with generic search terms.
+    """
+
+    def test_run_poi_sends_location_query_not_keyword_searches(self, store):
+        from alibi.dataengine.ingest import run_poi_for_area
+
+        client = _FakeClient()
+        run_poi_for_area("Somerset West", store=store, client=client)
+
+        _, actor_input = client.calls[0]
+        assert actor_input["locationQuery"] == "Somerset West"
+        assert actor_input["searchStringsArray"] == [
+            "police station", "hospital", "fire station",
+        ]
+        # And the safety-relevant input still can't collect personal data.
+        assert actor_input["maxReviews"] == 0
+        assert actor_input["scrapeReviewerName"] is False
+
+    def test_stored_records_carry_the_queried_area(self, store):
+        from alibi.dataengine.ingest import run_poi_for_area
+
+        # Google reports the metro as `city` — the record must still be
+        # attributable to the area we queried for.
+        client = _FakeClient(items=[{
+            "title": "SAPS Somerset West Police Station",
+            "city": "Cape Town",
+            "categoryName": "State police",
+        }])
+        run_poi_for_area("Somerset West", store=store, client=client)
+
+        rec = store.query()[0]
+        assert rec.payload["query_area"] == "Somerset West"
+        assert rec.payload["area"] == "Cape Town"   # Google's city, kept honestly
+
+    def test_freshness_gate_matches_on_query_area(self, store):
+        """Metro-city records must not make their area look permanently stale
+        (that would re-fetch — and re-bill — every single run)."""
+        from alibi.dataengine.ingest import run_poi_for_area
+
+        client = _FakeClient(items=[{
+            "title": "SAPS Somerset West Police Station",
+            "city": "Cape Town",
+            "categoryName": "State police",
+        }])
+        run_poi_for_area("Somerset West", store=store, client=client)
+
+        assert needs_refresh("Somerset West", store, min_age_days=30) is False
+        assert needs_refresh("Stellenbosch", store, min_age_days=30) is True

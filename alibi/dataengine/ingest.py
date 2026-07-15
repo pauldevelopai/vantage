@@ -61,11 +61,19 @@ def ingest_items(
     items: List[Dict[str, Any]],
     store: DataEngineStore,
     now: Optional[datetime] = None,
+    payload_extra: Optional[Dict[str, Any]] = None,
 ) -> IngestResult:
     """Normalise -> guard -> tag -> store a batch of raw items.
 
     This is the testable core: it takes items directly, so the pipeline can be
     exercised against fixtures without any network or Apify token.
+
+    `payload_extra` is run-level provenance stamped onto every payload — e.g.
+    `{"query_area": "Somerset West"}` records WHICH area a place was fetched
+    for. Google's own `city` field is often the metro ("Cape Town" for a
+    Somerset West clinic), so without this stamp the record can't be matched
+    back to the camera area that requested it. Merged BEFORE the guard, so the
+    guard scans the exact payload that gets stored.
     """
     result = IngestResult(source_id=spec.source_id)
     seen: set = set()
@@ -78,6 +86,8 @@ def ingest_items(
         if not payload:
             result.skipped += 1
             continue
+        if payload_extra:
+            payload = {**payload, **payload_extra}
 
         # 2. GUARD — fail-closed on anything person-identifying that survived.
         try:
@@ -123,6 +133,7 @@ def run_source(
     client: Optional[ApifyClient] = None,
     now: Optional[datetime] = None,
     input_overrides: Optional[Dict[str, Any]] = None,
+    payload_extra: Optional[Dict[str, Any]] = None,
 ) -> IngestResult:
     """Run one declared source end-to-end via Apify. Never raises.
 
@@ -154,7 +165,7 @@ def run_source(
     if items is None:
         return IngestResult(source_id=source_id, error="Apify fetch failed or no token")
 
-    return ingest_items(spec, items, store, now=now)
+    return ingest_items(spec, items, store, now=now, payload_extra=payload_extra)
 
 
 def run_poi_for_area(
@@ -168,22 +179,27 @@ def run_poi_for_area(
 
     Searches for the categories a reviewer actually cares about — where the
     nearest police/emergency response is — not people.
+
+    The area goes in `locationQuery` (the actor geocodes it and searches AROUND
+    that point), NOT inside the search strings. Observed live 2026-07-15:
+    "police station Somerset West" keyword-matched station NAMES worldwide and
+    returned St. Louis / New Jersey / Utah results — billed junk. Generic terms
+    anchored to a geocoded location stay local.
     """
     if not area:
         return IngestResult(source_id="places.poi", error="no area given")
 
-    searches = [
-        f"police station {area}",
-        f"hospital {area}",
-        f"fire station {area}",
-    ]
     return run_source(
         "places.poi",
         store=store,
         client=client,
         now=now,
         input_overrides={
-            "searchStringsArray": searches,
+            "searchStringsArray": ["police station", "hospital", "fire station"],
+            "locationQuery": area,
             "maxCrawledPlacesPerSearch": max_places,
         },
+        # Google's `city` is often the metro, not the suburb the camera is in —
+        # stamp the area we queried so context/freshness can match it back.
+        payload_extra={"query_area": area},
     )
