@@ -89,12 +89,20 @@ def build_motion_command(
     Point this at the low-res SUB stream to keep it cheap.
     """
     threshold = max(0.0, min(float(threshold), 1.0))
+    # Normalize before the JPEG encoder: cameras often send full-range 4:2:0 HEVC
+    # that ffmpeg's mjpeg encoder rejects ("Non full-range YUV is non-standard" /
+    # encoder-init failure). `format=yuvj420p` gives it the JPEG-range pixels it
+    # wants; capping width keeps frames small (cheap to store + upload); single
+    # thread avoids the frame-thread encoder-init fault seen on some builds.
+    vf = f"select='gt(scene,{threshold})',scale='min(iw,640)':-2,format=yuvj420p"
     return [
         ffmpeg, "-nostdin", "-loglevel", "error",
         "-rtsp_transport", "tcp",
         "-i", rtsp_url,
-        "-vf", f"select='gt(scene,{threshold})'",
+        "-an",
+        "-vf", vf,
         "-vsync", "vfr",
+        "-threads", "1",
         "-q:v", "5",
         os.path.join(out_dir, f"{prefix}_%Y%m%d_%H%M%S_%03d.jpg"),
     ]
