@@ -61,6 +61,10 @@ export function CamerasPage() {
   const [scanning, setScanning] = useState(false);
   const [scanComplete, setScanComplete] = useState(false);
   const [discovered, setDiscovered] = useState<DiscoveredCamera[]>([]);
+  // Shared camera credentials — applied when adding a discovered camera. Most
+  // sites use one login across all cameras, so enter it once.
+  const [camUser, setCamUser] = useState('admin');
+  const [camPass, setCamPass] = useState('');
   const [addingCamera, setAddingCamera] = useState<string | null>(null);
   const [showScanResults, setShowScanResults] = useState(false);
 
@@ -320,6 +324,10 @@ export function CamerasPage() {
         source_type: cam.source_type,
         name: cam.name || `Camera ${cam.ip}`,
         location: '',
+        username: camUser.trim(),
+        password: camPass,
+        vendor: cam.vendor || '',
+        manufacturer: cam.manufacturer || '',
       });
       // Mark as registered in local state
       setDiscovered(prev =>
@@ -755,6 +763,37 @@ export function CamerasPage() {
 
           {discoveredCameras.length > 0 && (
             <div className="space-y-2">
+              {/* Shared camera credentials — applied when adding a camera. Most
+                  sites use one login across all cameras, so enter it once. */}
+              <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+                <p className="text-sm font-medium text-gray-900">Camera login</p>
+                <p className="text-xs text-gray-500 mb-2">
+                  Entered once and used when you add a camera below. Most cameras share one login.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    type="text"
+                    value={camUser}
+                    onChange={e => setCamUser(e.target.value)}
+                    placeholder="Username (usually admin)"
+                    autoComplete="off"
+                    className="flex-1 min-w-[140px] rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+                  />
+                  <input
+                    type="password"
+                    value={camPass}
+                    onChange={e => setCamPass(e.target.value)}
+                    placeholder="Password"
+                    autoComplete="new-password"
+                    className="flex-1 min-w-[140px] rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+                  />
+                </div>
+                {!camPass && (
+                  <p className="text-xs text-amber-600 mt-1">
+                    Without a password the camera stream won't connect — enter it before adding.
+                  </p>
+                )}
+              </div>
               {discoveredCameras.map((cam, idx) => renderDiscoveredRow(cam, idx))}
             </div>
           )}

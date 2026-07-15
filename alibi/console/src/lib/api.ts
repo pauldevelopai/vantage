@@ -460,6 +460,10 @@ export const api = {
     source_type: string;
     name?: string;
     location?: string;
+    username?: string;
+    password?: string;
+    vendor?: string;
+    manufacturer?: string;
   }): Promise<any> {
     const res = await fetchWithAuth(`${API_BASE}/cameras/add-discovered`, {
       method: 'POST',
