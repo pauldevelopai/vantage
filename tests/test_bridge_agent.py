@@ -147,7 +147,7 @@ def client(tmp_path):
 
 
 def test_download_is_personalized_runnable_python(client):
-    r = client.get("/api/cameras/bridge/download")
+    r = client.get("/cameras/bridge/download")
     assert r.status_code == 200
     assert "attachment" in r.headers.get("content-disposition", "")
     body = r.text

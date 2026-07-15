@@ -1021,7 +1021,7 @@ async def generate_shift_report(
 
 # Metrics endpoints
 
-@app.get("/api/metrics/summary")
+@app.get("/metrics/summary")
 async def get_metrics_summary(range: str = "24h", current_user: User = Depends(get_current_user)):
     """Get aggregated KPI metrics for the dashboard."""
     from alibi.metrics import get_metrics_aggregator
@@ -1127,7 +1127,7 @@ class CameraUpdateRequest(BaseModel):
     vms_config: Optional[dict] = None
 
 
-@app.get("/api/cameras", tags=["Cameras"])
+@app.get("/cameras", tags=["Cameras"])
 async def list_cameras(
     current_user: User = Depends(get_current_user),
 ):
@@ -1137,7 +1137,7 @@ async def list_cameras(
     return {"cameras": [c.to_dict() for c in cameras]}
 
 
-@app.post("/api/cameras", tags=["Cameras"])
+@app.post("/cameras", tags=["Cameras"])
 async def add_camera(
     req: CameraCreateRequest,
     current_user: User = Depends(require_role([Role.ADMIN])),
@@ -1162,7 +1162,7 @@ async def add_camera(
     return camera.to_dict()
 
 
-@app.put("/api/cameras/{camera_id}", tags=["Cameras"])
+@app.put("/cameras/{camera_id}", tags=["Cameras"])
 async def update_camera(
     camera_id: str,
     req: CameraUpdateRequest,
@@ -1177,7 +1177,7 @@ async def update_camera(
     return camera.to_dict()
 
 
-@app.delete("/api/cameras/{camera_id}", tags=["Cameras"])
+@app.delete("/cameras/{camera_id}", tags=["Cameras"])
 async def delete_camera(
     camera_id: str,
     current_user: User = Depends(require_role([Role.ADMIN])),
@@ -1193,7 +1193,7 @@ async def delete_camera(
     return {"status": "removed", "camera_id": camera_id}
 
 
-@app.post("/api/cameras/{camera_id}/test", tags=["Cameras"])
+@app.post("/cameras/{camera_id}/test", tags=["Cameras"])
 async def test_camera_connection(
     camera_id: str,
     current_user: User = Depends(require_role([Role.ADMIN])),
@@ -1218,7 +1218,7 @@ async def test_camera_connection(
 from alibi.cameras.cross_camera import get_cross_camera_tracker
 
 
-@app.get("/api/trail/{entity_type}/{entity_id}", tags=["Cameras"])
+@app.get("/trail/{entity_type}/{entity_id}", tags=["Cameras"])
 async def get_entity_trail(
     entity_type: str,
     entity_id: str,
@@ -1929,7 +1929,7 @@ async def replay_events(
 
 # ── Camera Discovery ────────────────────────────────────────────
 
-@app.post("/api/cameras/scan")
+@app.post("/cameras/scan")
 async def scan_for_cameras(
     verify: bool = False,
     current_user: User = Depends(get_current_user),
@@ -1950,7 +1950,7 @@ async def scan_for_cameras(
     }
 
 
-@app.get("/api/cameras/scan/status")
+@app.get("/cameras/scan/status")
 async def scan_status(current_user: User = Depends(get_current_user)):
     """Get current network scan progress."""
     from alibi.cameras.network_scanner import get_network_scanner
@@ -1970,7 +1970,7 @@ class AddDiscoveredRequest(BaseModel):
     password: str = ""
 
 
-@app.post("/api/cameras/add-discovered")
+@app.post("/cameras/add-discovered")
 async def add_discovered_camera(
     req: AddDiscoveredRequest,
     current_user: User = Depends(get_current_user),
@@ -2046,7 +2046,7 @@ class BridgeResultsRequest(BaseModel):
 
 # --- Admin (console) side ---------------------------------------- #
 
-@app.post("/api/cameras/bridge/pair", tags=["Camera Bridge"])
+@app.post("/cameras/bridge/pair", tags=["Camera Bridge"])
 async def bridge_pair(current_user: User = Depends(require_role([Role.ADMIN]))):
     """Mint a single-use pairing code + the one-line setup command for the agent."""
     from alibi.cameras.bridge import get_bridge_registry, PAIRING_TTL_MINUTES
@@ -2060,14 +2060,14 @@ async def bridge_pair(current_user: User = Depends(require_role([Role.ADMIN]))):
     }
 
 
-@app.get("/api/cameras/bridge", tags=["Camera Bridge"])
+@app.get("/cameras/bridge", tags=["Camera Bridge"])
 async def bridge_list(current_user: User = Depends(get_current_user)):
     """List paired bridges + their online status."""
     from alibi.cameras.bridge import get_bridge_registry
     return {"bridges": get_bridge_registry().list_bridges()}
 
 
-@app.get("/api/cameras/bridge/download", tags=["Camera Bridge"])
+@app.get("/cameras/bridge/download", tags=["Camera Bridge"])
 async def bridge_download(
     request: Request,
     current_user: User = Depends(require_role([Role.ADMIN])),
@@ -2102,7 +2102,7 @@ async def bridge_download(
     )
 
 
-@app.post("/api/cameras/bridge/{bridge_id}/scan", tags=["Camera Bridge"])
+@app.post("/cameras/bridge/{bridge_id}/scan", tags=["Camera Bridge"])
 async def bridge_scan(
     bridge_id: str,
     req: BridgeScanRequest,
@@ -2120,7 +2120,7 @@ async def bridge_scan(
     return {"job_id": job.job_id, "status": job.status}
 
 
-@app.get("/api/cameras/bridge/scan/{job_id}", tags=["Camera Bridge"])
+@app.get("/cameras/bridge/scan/{job_id}", tags=["Camera Bridge"])
 async def bridge_scan_status(
     job_id: str,
     current_user: User = Depends(get_current_user),
@@ -2135,7 +2135,7 @@ async def bridge_scan_status(
 
 # --- Agent (bridge) side ----------------------------------------- #
 
-@app.post("/api/cameras/bridge/register", tags=["Camera Bridge"])
+@app.post("/cameras/bridge/register", tags=["Camera Bridge"])
 async def bridge_register(req: BridgeRegisterRequest):
     """Agent redeems a pairing code -> receives its bridge id + token (once)."""
     from alibi.cameras.bridge import get_bridge_registry
@@ -2147,7 +2147,7 @@ async def bridge_register(req: BridgeRegisterRequest):
     return creds  # {bridge_id, token} — token shown only here
 
 
-@app.post("/api/cameras/bridge/heartbeat", tags=["Camera Bridge"])
+@app.post("/cameras/bridge/heartbeat", tags=["Camera Bridge"])
 async def bridge_heartbeat(
     payload: dict = Body(default={}),
     bridge_id: str = Depends(_require_bridge),
@@ -2158,7 +2158,7 @@ async def bridge_heartbeat(
     return {"status": "ok"}
 
 
-@app.get("/api/cameras/bridge/jobs", tags=["Camera Bridge"])
+@app.get("/cameras/bridge/jobs", tags=["Camera Bridge"])
 async def bridge_next_job(bridge_id: str = Depends(_require_bridge)):
     """Agent polls for the next pending scan job (also refreshes heartbeat)."""
     from alibi.cameras.bridge import get_bridge_registry
@@ -2168,7 +2168,7 @@ async def bridge_next_job(bridge_id: str = Depends(_require_bridge)):
     return {"job": job.public_dict() if job else None}
 
 
-@app.post("/api/cameras/bridge/jobs/{job_id}/results", tags=["Camera Bridge"])
+@app.post("/cameras/bridge/jobs/{job_id}/results", tags=["Camera Bridge"])
 async def bridge_submit_results(
     job_id: str,
     req: BridgeResultsRequest,
@@ -2184,7 +2184,7 @@ async def bridge_submit_results(
 
 # ── System Storage ──────────────────────────────────────────────
 
-@app.get("/api/system/storage")
+@app.get("/system/storage")
 async def get_storage_info(current_user: User = Depends(get_current_user)):
     """Get disk usage breakdown for all data stores."""
     from alibi.data_manager import get_data_manager
@@ -2194,7 +2194,7 @@ async def get_storage_info(current_user: User = Depends(get_current_user)):
     return usage.to_dict()
 
 
-@app.post("/api/system/cleanup")
+@app.post("/system/cleanup")
 async def run_cleanup(current_user: User = Depends(get_current_user)):
     """Run data rotation and cleanup."""
     from alibi.data_manager import get_data_manager
@@ -2216,7 +2216,7 @@ class SemanticSearchRequest(BaseModel):
     threat_level: Optional[str] = None  # "caution", "warning", "critical"
 
 
-@app.post("/api/search/semantic")
+@app.post("/search/semantic")
 async def semantic_search(
     req: SemanticSearchRequest,
     current_user: User = Depends(get_current_user),
@@ -2249,14 +2249,14 @@ async def semantic_search(
     }
 
 
-@app.get("/api/search/stats")
+@app.get("/search/stats")
 async def search_stats(current_user: User = Depends(get_current_user)):
     """Get semantic search index statistics."""
     from alibi.semantic_search import get_semantic_search
     return get_semantic_search().get_stats()
 
 
-@app.post("/api/search/rebuild-index")
+@app.post("/search/rebuild-index")
 async def rebuild_search_index(current_user: User = Depends(get_current_user)):
     """Force rebuild the semantic search index."""
     from alibi.semantic_search import get_semantic_search
@@ -2265,7 +2265,7 @@ async def rebuild_search_index(current_user: User = Depends(get_current_user)):
 
 # ── Intelligence Search ───────────────────────────────────────
 
-@app.get("/api/intelligence/search")
+@app.get("/intelligence/search")
 async def search_intelligence(
     q: str,
     current_user: User = Depends(get_current_user),
@@ -2295,7 +2295,7 @@ async def search_intelligence(
 
 # ── Training Stats ──────────────────────────────────────────────
 
-@app.get("/api/training/stats")
+@app.get("/training/stats")
 async def get_training_stats(current_user: User = Depends(get_current_user)):
     """Get statistics about collected training examples and the training selector index."""
     from alibi.training_agent import get_training_agent
@@ -2313,7 +2313,7 @@ async def get_training_stats(current_user: User = Depends(get_current_user)):
 
 # ── Activity Baselines ─────────────────────────────────────────
 
-@app.get("/api/baselines/anomalies")
+@app.get("/baselines/anomalies")
 async def get_recent_anomalies(
     hours: int = 24,
     current_user: User = Depends(get_current_user),
@@ -2326,7 +2326,7 @@ async def get_recent_anomalies(
     return {"anomalies": [a.to_dict() for a in anomalies], "hours": hours}
 
 
-@app.post("/api/baselines/rebuild")
+@app.post("/baselines/rebuild")
 async def rebuild_baselines(
     camera_id: Optional[str] = None,
     days: int = 7,
@@ -2340,7 +2340,7 @@ async def rebuild_baselines(
     return {"status": "ok", "baselines_built": count, "camera_id": camera_id or "all", "days": days}
 
 
-@app.get("/api/baselines/{camera_id}")
+@app.get("/baselines/{camera_id}")
 async def get_baselines(camera_id: str, current_user: User = Depends(get_current_user)):
     """Get activity baselines for a camera (24h x 7d matrix)."""
     from alibi.activity_baseline import get_baseline_engine
@@ -2352,7 +2352,7 @@ async def get_baselines(camera_id: str, current_user: User = Depends(get_current
 
 # ── Face Sighting Index ────────────────────────────────────────
 
-@app.get("/api/faces/recent")
+@app.get("/faces/recent")
 async def get_recent_faces(
     camera_id: Optional[str] = None,
     limit: int = 50,
@@ -2377,7 +2377,7 @@ async def get_recent_faces(
     return {"sightings": results, "count": len(results)}
 
 
-@app.post("/api/faces/search")
+@app.post("/faces/search")
 async def search_faces(
     file: UploadFile = File(...),
     threshold: float = 0.6,
@@ -2424,7 +2424,7 @@ async def search_faces(
     return {"matches": results, "count": len(results)}
 
 
-@app.get("/api/faces/stats")
+@app.get("/faces/stats")
 async def get_face_stats(current_user: User = Depends(get_current_user)):
     """Get face sighting statistics."""
     from alibi.watchlist.face_sighting_store import get_face_sighting_store
