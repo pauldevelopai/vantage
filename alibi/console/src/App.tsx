@@ -54,8 +54,6 @@ function Layout({ children }: { children: React.ReactNode }) {
 
   const isActive = (path: string) => location.pathname === path || location.pathname.startsWith(path + '/');
 
-  const apiBase = `http://${window.location.hostname}:8000`;
-
   const navLink = (to: string, label: string) => (
     <Link
       to={to}
@@ -67,28 +65,16 @@ function Layout({ children }: { children: React.ReactNode }) {
     </Link>
   );
 
-  const extLink = (href: string, label: string) => (
-    <a
-      href={href}
-      className="text-white/[0.55] hover:text-white/[0.9] hover:bg-white/[0.08] px-3 py-1.5 rounded-md text-[13px] font-medium whitespace-nowrap transition-all duration-150"
-    >
-      {label}
-    </a>
-  );
-
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Top Navigation */}
       <nav className="fixed top-0 left-0 right-0 z-50 bg-gray-900/95 backdrop-blur-xl border-b border-white/[0.08]">
         <div className={isControlRoom ? 'w-full px-8' : 'max-w-7xl mx-auto px-4'}>
           <div className="flex items-center h-[52px] gap-1">
-            <a href={apiBase + '/'} className="text-white font-bold text-base mr-4 whitespace-nowrap tracking-tight no-underline">
+            <Link to="/" className="text-white font-bold text-base mr-4 whitespace-nowrap tracking-tight no-underline">
               Vantage
-            </a>
+            </Link>
             <div className="hidden sm:flex items-center gap-0.5 overflow-x-auto flex-1" style={{ scrollbarWidth: 'none' }}>
-              {extLink(apiBase + '/', 'Dashboard')}
-              {extLink(apiBase + '/camera/secure-stream', 'Camera')}
-              <div className="w-px h-5 bg-white/10 mx-1.5 flex-shrink-0" />
               {navLink('/incidents', 'Incidents')}
               {navLink('/patterns', 'Patterns')}
               {navLink('/reports', 'Reports')}
