@@ -82,7 +82,7 @@ function Layout({ children }: { children: React.ReactNode }) {
         <div className={isControlRoom ? 'w-full px-8' : 'max-w-7xl mx-auto px-4'}>
           <div className="flex items-center h-[52px] gap-1">
             <a href={apiBase + '/'} className="text-white font-bold text-base mr-4 whitespace-nowrap tracking-tight no-underline">
-              Alibi
+              Vantage
             </a>
             <div className="hidden sm:flex items-center gap-0.5 overflow-x-auto flex-1" style={{ scrollbarWidth: 'none' }}>
               {extLink(apiBase + '/', 'Dashboard')}

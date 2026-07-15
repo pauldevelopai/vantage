@@ -57,7 +57,7 @@ export function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-gray-900 py-12 px-4">
       <div className="w-full max-w-sm">
         <div className="bg-white/[0.04] border border-white/[0.08] rounded-2xl p-8">
-          <h1 className="text-center text-2xl font-bold text-white tracking-tight">Alibi</h1>
+          <h1 className="text-center text-2xl font-bold text-white tracking-tight">Vantage</h1>
           <p className="mt-1 text-center text-sm text-white/40 mb-7">Sign in to continue</p>
 
           {error && (
