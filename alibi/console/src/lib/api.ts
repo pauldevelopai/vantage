@@ -1,6 +1,6 @@
 // API client for Alibi backend
 
-import type { IncidentSummary, IncidentDetail, IncidentExplanation, DecisionRequest, Settings, ShiftReport, Camera, TrailEntry } from './types';
+import type { IncidentSummary, IncidentDetail, IncidentExplanation, DecisionRequest, Settings, ShiftReport, Camera, TrailEntry, Site, Posture, SubjectType } from './types';
 import { getToken } from './auth';
 
 const API_BASE = '/api';
@@ -309,6 +309,66 @@ export const api = {
   }> {
     const res = await fetchWithAuth(`${API_BASE}/cameras/scan/status`);
     if (!res.ok) throw new Error('Failed to get scan status');
+    return res.json();
+  },
+
+  // Sites — what Vantage is protecting (home / office / neighbourhood)
+  async listSites(): Promise<{ sites: Site[] }> {
+    const res = await fetchWithAuth(`${API_BASE}/sites`);
+    if (!res.ok) throw new Error('Failed to fetch sites');
+    return res.json();
+  },
+
+  async getSitePostures(): Promise<{ postures: Record<SubjectType, Posture> }> {
+    const res = await fetchWithAuth(`${API_BASE}/sites/postures`);
+    if (!res.ok) throw new Error('Failed to fetch postures');
+    return res.json();
+  },
+
+  async createSite(site: {
+    name: string;
+    subject_type: SubjectType;
+    area?: string;
+    address?: string;
+    timezone?: string;
+    normal_hours?: Record<string, any>;
+    camera_ids?: string[];
+    notes?: string;
+  }): Promise<Site> {
+    const res = await fetchWithAuth(`${API_BASE}/sites`, {
+      method: 'POST',
+      body: JSON.stringify(site),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to create site');
+    }
+    return res.json();
+  },
+
+  async updateSite(siteId: string, updates: Partial<{
+    name: string;
+    subject_type: SubjectType;
+    area: string;
+    address: string;
+    timezone: string;
+    normal_hours: Record<string, any>;
+    camera_ids: string[];
+    notes: string;
+  }>): Promise<Site> {
+    const res = await fetchWithAuth(`${API_BASE}/sites/${siteId}`, {
+      method: 'PUT',
+      body: JSON.stringify(updates),
+    });
+    if (!res.ok) throw new Error('Failed to update site');
+    return res.json();
+  },
+
+  async deleteSite(siteId: string): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/sites/${siteId}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) throw new Error('Failed to delete site');
     return res.json();
   },
 

@@ -150,3 +150,33 @@ export interface TrailEntry {
   timestamp: string;
   metadata: Record<string, any>;
 }
+
+/** The subject a Vantage deployment protects. */
+export type SubjectType = 'home' | 'office' | 'neighbourhood';
+
+/** How the intelligence layer is tuned for a subject type (from the backend). */
+export interface Posture {
+  subject_type: SubjectType;
+  label: string;
+  summary: string;
+  focus: string[];
+  normal: string[];
+  review_triggers: string[];
+  brief_sections: string[];
+}
+
+/** A protected site + its built-in intelligence posture. */
+export interface Site {
+  site_id: string;
+  name: string;
+  subject_type: SubjectType;
+  area: string;
+  address: string;
+  timezone: string;
+  normal_hours: Record<string, any>;
+  camera_ids: string[];
+  notes: string;
+  created_at: string;
+  updated_at: string;
+  posture: Posture;
+}
