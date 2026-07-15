@@ -168,6 +168,25 @@ def run_source(
     return ingest_items(spec, items, store, now=now, payload_extra=payload_extra)
 
 
+# What we harvest per area, in priority order. Emergency response first, then
+# the activity anchors an analyst reads an area through (transport hubs, cash
+# points, fuel, schools, retail). PLACES only — never people. Cost scales
+# linearly with this list (~max_places billed results per term per area, at
+# roughly $0.002/place), so additions must earn their keep.
+POI_SEARCH_TERMS = [
+    "police station",
+    "hospital",
+    "fire station",
+    "security company",   # armed response — often the fastest responder in SA
+    "school",
+    "shopping centre",
+    "gas station",
+    "bank",
+    "taxi rank",
+    "bus station",
+]
+
+
 def run_poi_for_area(
     area: str,
     store: Optional[DataEngineStore] = None,
@@ -177,8 +196,8 @@ def run_poi_for_area(
 ) -> IngestResult:
     """Ingest security-relevant points of interest for one area.
 
-    Searches for the categories a reviewer actually cares about — where the
-    nearest police/emergency response is — not people.
+    Searches for the categories an analyst actually cares about — emergency
+    response and the places that shape an area's activity — not people.
 
     The area goes in `locationQuery` (the actor geocodes it and searches AROUND
     that point), NOT inside the search strings. Observed live 2026-07-15:
@@ -195,7 +214,7 @@ def run_poi_for_area(
         client=client,
         now=now,
         input_overrides={
-            "searchStringsArray": ["police station", "hospital", "fire station"],
+            "searchStringsArray": list(POI_SEARCH_TERMS),
             "locationQuery": area,
             "maxCrawledPlacesPerSearch": max_places,
         },

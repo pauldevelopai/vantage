@@ -1,4 +1,4 @@
-# Weekly timer for the Vantage data-engine refresh (§9).
+# Daily timer for the Vantage data-engine refresh (§9).
 #
 # Install:
 #   sudo cp deploy/vantage-dataengine.service /etc/systemd/system/
@@ -11,16 +11,17 @@
 #   sudo systemctl start vantage-dataengine      # run it now, once
 #   journalctl -u vantage-dataengine -n 50       # what it did
 #
-# WEEKLY, not daily, on purpose: POI data is stable and retention is 180 days, so
-# the freshness gate (--min-age-days 30) will skip most areas anyway. Weekly keeps
-# Apify credit spend near zero while still catching new cameras/areas promptly.
+# DAILY is safe because the freshness gate (--min-age-days 30) makes runs no-ops
+# unless an area is new or stale — a day with nothing due costs nothing. What
+# daily buys over weekly: a camera added today has its area context tomorrow
+# morning, not next Sunday. Spend stays bounded by the gate + per-run caps.
 
 [Unit]
-Description=Weekly Vantage data-engine refresh
+Description=Daily Vantage data-engine refresh
 Requires=vantage-dataengine.service
 
 [Timer]
-OnCalendar=Sun 03:30
+OnCalendar=03:30
 # If the box was off when it was due, run shortly after boot rather than skipping.
 Persistent=true
 # Spread the load / avoid a thundering herd against Apify.
