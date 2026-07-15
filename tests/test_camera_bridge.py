@@ -166,6 +166,39 @@ def test_latest_completed_scan(reg):
     assert latest.results == [{"ip": "2"}]
 
 
+# --- manage PCs: rename / remove (swap the recording PC) ------------------- #
+
+def test_rename_bridge(reg):
+    bid = reg.redeem_pairing_code(reg.create_pairing_code("admin").code, name="Mac (temp)")["bridge_id"]
+    b = reg.rename_bridge(bid, "Office PC")
+    assert b.name == "Office PC"
+    assert reg.get_bridge(bid).name == "Office PC"
+    assert reg.rename_bridge(bid, "   ") .name == "Office PC"   # blank ignored
+    assert reg.rename_bridge("brg_nope", "x") is None
+
+
+def test_remove_bridge_revokes_access(reg):
+    creds = reg.redeem_pairing_code(reg.create_pairing_code("admin").code, name="Mac")
+    bid, token = creds["bridge_id"], creds["token"]
+    reg.enqueue_scan(bid)
+    assert reg.authenticate(bid, token) is True
+
+    assert reg.remove_bridge(bid) is True
+    assert reg.get_bridge(bid) is None
+    assert reg.authenticate(bid, token) is False          # token dead immediately
+    assert [j for j in reg._jobs.values() if j.bridge_id == bid] == []  # jobs dropped
+    assert reg.remove_bridge(bid) is False                # already gone
+
+
+def test_remove_bridge_survives_reload(tmp_path):
+    path = str(tmp_path / "bridges.json")
+    r1 = BridgeRegistry(storage_path=path)
+    bid = r1.redeem_pairing_code(r1.create_pairing_code("admin").code, name="Mac")["bridge_id"]
+    r1.remove_bridge(bid)
+    r2 = BridgeRegistry(storage_path=path)
+    assert r2.get_bridge(bid) is None
+
+
 # --- persistence ----------------------------------------------------------- #
 
 def test_survives_reload(tmp_path):

@@ -2083,6 +2083,40 @@ async def bridge_list(current_user: User = Depends(get_current_user)):
     return {"bridges": get_bridge_registry().list_bridges()}
 
 
+class BridgeRenameRequest(BaseModel):
+    name: str
+
+
+@app.patch("/cameras/bridge/{bridge_id}", tags=["Camera Bridge"])
+async def bridge_rename(
+    bridge_id: str,
+    req: BridgeRenameRequest,
+    current_user: User = Depends(require_role([Role.ADMIN])),
+):
+    """Relabel a recording PC (admin only)."""
+    from alibi.cameras.bridge import get_bridge_registry
+    b = get_bridge_registry().rename_bridge(bridge_id, req.name)
+    if b is None:
+        raise HTTPException(status_code=404, detail="PC not found")
+    return b.public_dict()
+
+
+@app.delete("/cameras/bridge/{bridge_id}", tags=["Camera Bridge"])
+async def bridge_remove(
+    bridge_id: str,
+    current_user: User = Depends(require_role([Role.ADMIN])),
+):
+    """Unpair a recording PC (admin only). Its token stops working immediately;
+    to record from it again you re-download and run the recorder. Makes swapping
+    the recording PC (e.g. a temporary Mac → the always-on box) a one-click job."""
+    from alibi.cameras.bridge import get_bridge_registry
+    if not get_bridge_registry().remove_bridge(bridge_id):
+        raise HTTPException(status_code=404, detail="PC not found")
+    get_store().append_audit("bridge_removed",
+                             {"bridge_id": bridge_id, "user": current_user.username})
+    return {"status": "removed", "bridge_id": bridge_id}
+
+
 @app.get("/cameras/bridge/download", tags=["Camera Bridge"])
 async def bridge_download(
     request: Request,

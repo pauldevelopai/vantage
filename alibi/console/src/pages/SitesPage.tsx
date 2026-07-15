@@ -109,6 +109,27 @@ export function SitesPage() {
     }
   }
 
+  async function handleRenamePC(bridgeId: string, current: string) {
+    const name = prompt('Name this recording PC (e.g. "Office PC", "Mac (temporary)")', current);
+    if (!name || name.trim() === current) return;
+    try {
+      await api.renameBridge(bridgeId, name.trim());
+      await loadBridges();
+    } catch (e: any) {
+      alert(e.message || 'Failed to rename PC');
+    }
+  }
+
+  async function handleRemovePC(bridgeId: string, label: string) {
+    if (!confirm(`Remove "${label}"? It will stop recording immediately and must be re-added to record again.`)) return;
+    try {
+      await api.removeBridge(bridgeId);
+      await loadBridges();
+    } catch (e: any) {
+      alert(e.message || 'Failed to remove PC');
+    }
+  }
+
   const previewPosture = postures?.[form.subject_type] || null;
 
   return (
@@ -283,9 +304,29 @@ export function SitesPage() {
                       <span className="text-xs text-gray-500">
                         {b.online ? 'online' : 'offline'}{b.site_hint ? ` · ${b.site_hint}` : ''}
                       </span>
+                      {isAdmin && (
+                        <span className="ml-auto flex items-center gap-2">
+                          <button
+                            onClick={() => handleRenamePC(b.bridge_id, b.name)}
+                            className="text-xs text-blue-600 hover:text-blue-800"
+                          >
+                            Rename
+                          </button>
+                          <button
+                            onClick={() => handleRemovePC(b.bridge_id, b.name || b.bridge_id)}
+                            className="text-xs text-red-500 hover:text-red-700"
+                          >
+                            Remove
+                          </button>
+                        </span>
+                      )}
                     </li>
                   ))}
                 </ul>
+              )}
+              {isAdmin && bridges.length > 0 && (
+                <p className="text-xs text-gray-400 mt-2">
+                  Swapping PCs? Run the recorder on the new one, then Remove the old — its access is revoked immediately.</p>
               )}
             </div>
           </li>
