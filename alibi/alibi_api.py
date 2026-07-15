@@ -2118,6 +2118,65 @@ async def bridge_download(
     )
 
 
+def _bake_agent_config(src: str, base_url: str, code: str) -> str:
+    """Bake this Vantage's URL + a fresh pairing code into the bridge agent
+    source (env-var overrides still work)."""
+    return src.replace(
+        'VANTAGE_URL = os.environ.get("VANTAGE_URL", "https://vantage.developai.co.za")',
+        f'VANTAGE_URL = os.environ.get("VANTAGE_URL", "{base_url}")',
+    ).replace(
+        'PAIRING_CODE = os.environ.get("VANTAGE_PAIRING_CODE", "")',
+        f'PAIRING_CODE = os.environ.get("VANTAGE_PAIRING_CODE", "{code}")',
+    )
+
+
+@app.get("/cameras/bridge/download-recorder", tags=["Camera Bridge"])
+async def bridge_download_recorder(
+    request: Request,
+    current_user: User = Depends(require_role([Role.ADMIN])),
+):
+    """Serve the Vantage recording agent as a single self-contained zipapp,
+    personalized with this Vantage's URL + a fresh pairing code. The PC owner
+    runs ONE file — `python vantage_recorder.pyz` — and every camera records to
+    that PC, auto-pairing on first launch. Bundles the recorder engine, the
+    bridge connection helpers, and the record-agent orchestration."""
+    import io
+    import zipfile
+    from fastapi.responses import Response
+    from alibi.cameras import recorder, bridge_agent, record_agent
+    from alibi.cameras.bridge import get_bridge_registry
+
+    pc = get_bridge_registry().create_pairing_code(created_by=current_user.username)
+    base_url = str(request.base_url).rstrip("/")
+
+    with open(recorder.__file__) as f:
+        recorder_src = f.read()
+    with open(record_agent.__file__) as f:
+        record_agent_src = f.read()
+    with open(bridge_agent.__file__) as f:
+        bridge_agent_src = _bake_agent_config(f.read(), base_url, pc.code)
+
+    main_src = (
+        "import sys\n"
+        "import record_agent\n"
+        "sys.exit(record_agent.main())\n"
+    )
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("recorder.py", recorder_src)
+        z.writestr("bridge_agent.py", bridge_agent_src)
+        z.writestr("record_agent.py", record_agent_src)
+        z.writestr("__main__.py", main_src)
+    buf.seek(0)
+
+    return Response(
+        content=buf.read(),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="vantage_recorder.pyz"'},
+    )
+
+
 @app.post("/cameras/bridge/{bridge_id}/scan", tags=["Camera Bridge"])
 async def bridge_scan(
     bridge_id: str,
@@ -2209,6 +2268,36 @@ async def bridge_submit_results(
     if not ok:
         raise HTTPException(status_code=404, detail="Job not found for this bridge")
     return {"status": "ok"}
+
+
+def _build_record_targets() -> list:
+    """The cameras a recording PC should capture: enabled RTSP cameras, each with
+    its resolved MAIN (record) URL and a derived SUB (motion) URL. The main URL
+    already carries encoded credentials (set when the camera was added)."""
+    from alibi.cameras.camera_store import get_camera_store
+    from alibi.cameras.rtsp_resolver import derive_substream_url
+
+    targets = []
+    for cam in get_camera_store().list_all():
+        if not cam.enabled:
+            continue
+        source = (cam.source or "").strip()
+        if not source.lower().startswith("rtsp://"):
+            continue    # skip mobile/VMS/other sources — the recorder speaks RTSP
+        targets.append({
+            "camera_id": cam.camera_id,
+            "name": cam.name,
+            "record_url": source,
+            "motion_url": derive_substream_url(source) or source,
+        })
+    return targets
+
+
+@app.get("/cameras/bridge/record-targets", tags=["Camera Bridge"])
+async def bridge_record_targets(bridge_id: str = Depends(_require_bridge)):
+    """The recording agent pulls the cameras it should record, each with a
+    resolved record + motion RTSP URL. Agent-authenticated (bridge token)."""
+    return {"targets": _build_record_targets()}
 
 
 # ── Sites (what Vantage is protecting) ──────────────────────────

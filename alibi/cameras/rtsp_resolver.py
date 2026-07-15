@@ -85,3 +85,24 @@ def resolve_for_discovered(
         return None
     port = int(cam.get("port") or 554)
     return build_rtsp_url(cam.get("ip", ""), brand, username, password, port=port, stream=stream)
+
+
+def derive_substream_url(main_url: str) -> Optional[str]:
+    """Given a stored MAIN-stream RTSP URL, derive the low-res SUB-stream URL.
+
+    Motion detection runs on the sub-stream to stay cheap. We can only derive it
+    for URL shapes we recognise; otherwise return None and the caller falls back
+    to the main stream (still correct, just less economical).
+    """
+    if not main_url:
+        return None
+    # Dahua / Amcrest / Lorex: subtype=0 (main) -> subtype=1 (sub)
+    if "subtype=0" in main_url:
+        return main_url.replace("subtype=0", "subtype=1")
+    # Hikvision: /Streaming/Channels/101 (main) -> /102 (sub)
+    if "/Streaming/Channels/101" in main_url:
+        return main_url.replace("/Streaming/Channels/101", "/Streaming/Channels/102")
+    # Reolink: h264Preview_01_main -> _sub
+    if "_main" in main_url:
+        return main_url.replace("_main", "_sub")
+    return None
