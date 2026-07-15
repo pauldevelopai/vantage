@@ -54,8 +54,35 @@ override the default (`claude-opus-4-8`). *(`llm_service.py`,
 - ⬜ **Suspicious behaviour vs. just walking** (running, loitering, following, fighting).
 - ⬜ **"Possibly armed" guess** — weapon detection. ⚠️ highest-liability feature: always "possible", always human-confirmed, always logged.
 
-## 6. Advise — Security Advisor *(Phase 4)*
-- ⬜ **Suggestions to improve your security** — coverage gaps, blind spots, prioritised recommendations.
+## 6. Advise — site-tailored security intelligence *(Phase 4)*
+The payoff of everything else: ongoing, grounded intelligence about *what the
+cameras are seeing and what it means for the security of what's being watched
+over* — not a motion alarm. Motion is only the cheap trigger; the intelligence
+is deep, and it runs on **events** + **periodic synthesis** (not per-frame), so
+it stays economical — a quiet site costs ~nothing.
+
+- ✅ **Site profile — what's being protected.** A *site* is a **home**, an
+  **office**, or a **neighbourhood**; the subject type carries a built-in
+  **posture** that tailors what "normal" is and what merits a human look, and
+  drives every downstream step. Situational + non-accusatory by construction.
+  *(`site_profile.py`, `/sites` + `/sites/postures`; `tests/test_site_profile.py`.)*
+- ⬜ **Security brief — "what this means for your security".** Composes the site
+  posture + the "why flagged" explainer + area context (§9) + patterns (§4) into
+  a continuous, grounded, cited brief per site. LLM phrases the assembled facts,
+  never invents them (same rule as the explainer). Event-gated + periodic.
+- ⬜ **Suggestions to improve your security** — coverage gaps, blind spots,
+  prioritised recommendations, tailored to the site posture.
+
+### Architecture — cameras + one basic PC + our cloud *(locked)*
+No camera-vendor software, no third-party NVR — only Vantage's own software runs
+on the PC and in the cloud.
+- **PC agent (edge):** records 24/7 to a local disk (the "past" — free) + cheap
+  motion detection; uploads only motion **event** frames to the cloud. Added
+  from the portal exactly like the camera Bridge (one download, auto-pairs).
+- **Cloud:** runs the heavy AI (detection + Claude + the vast context) on events
+  only → incidents + the site security brief. Clips pulled from the PC on demand.
+- Economical because spend follows **activity**, not the clock; the vast external
+  context (§9) is cached on a weekly refresh, not re-fetched per event.
 
 ## 7. Connect anything — Universal Ingest *(Phase 5)*
 - 🟡 **RTSP / IP cameras**. *(`video/rtsp_reader.py`.)*
