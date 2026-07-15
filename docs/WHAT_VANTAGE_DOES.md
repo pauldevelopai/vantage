@@ -84,6 +84,14 @@ on the PC and in the cloud.
 - **PC agent (edge):** records 24/7 to a local disk (the "past" — free) + cheap
   motion detection; uploads only motion **event** frames to the cloud. Added
   from the portal exactly like the camera Bridge (one download, auto-pairs).
+  - ✅ **Recorder engine** — per-camera continuous `-c copy` segmented recording
+    (no re-encode → tiny CPU) + a motion trigger via ffmpeg's own scene-change
+    filter (no OpenCV/numpy on the PC), with a bounded-disk retention sweep
+    (byte budget + age cap, oldest-first). stdlib-only, dependency-injected,
+    unit-tested; a CLI (`python -m alibi.cameras.recorder`) records a real
+    camera today. *(`cameras/recorder.py`; `tests/test_recorder.py`.)*
+  - ⬜ **Motion-frame upload** + cloud record-jobs (fold the recorder into the
+    auto-agent so the cloud hands it the camera list + resolved URLs).
 - **Cloud:** runs the heavy AI (detection + Claude + the vast context) on events
   only → incidents + the site security brief. Clips pulled from the PC on demand.
 - Economical because spend follows **activity**, not the clock; the vast external
