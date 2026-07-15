@@ -200,16 +200,18 @@ class TestGeoAnchoredQuery:
     """
 
     def test_run_poi_sends_location_query_not_keyword_searches(self, store):
-        from alibi.dataengine.ingest import run_poi_for_area
+        from alibi.dataengine.ingest import POI_SEARCH_TERMS, run_poi_for_area
 
         client = _FakeClient()
         run_poi_for_area("Somerset West", store=store, client=client)
 
         _, actor_input = client.calls[0]
         assert actor_input["locationQuery"] == "Somerset West"
-        assert actor_input["searchStringsArray"] == [
-            "police station", "hospital", "fire station",
-        ]
+        assert actor_input["searchStringsArray"] == POI_SEARCH_TERMS
+        # Emergency response comes first, and no term embeds the area (that is
+        # what caused the worldwide keyword drift).
+        assert POI_SEARCH_TERMS[:3] == ["police station", "hospital", "fire station"]
+        assert all("somerset" not in t.lower() for t in actor_input["searchStringsArray"])
         # And the safety-relevant input still can't collect personal data.
         assert actor_input["maxReviews"] == 0
         assert actor_input["scrapeReviewerName"] is False
