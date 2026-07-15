@@ -411,6 +411,19 @@ export const api = {
     URL.revokeObjectURL(url);
   },
 
+  async renameBridge(bridgeId: string, name: string): Promise<void> {
+    const res = await fetchWithAuth(`${API_BASE}/cameras/bridge/${bridgeId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    });
+    if (!res.ok) throw new Error('Failed to rename PC');
+  },
+
+  async removeBridge(bridgeId: string): Promise<void> {
+    const res = await fetchWithAuth(`${API_BASE}/cameras/bridge/${bridgeId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Failed to remove PC');
+  },
+
   async scanViaBridge(bridgeId: string, cidr?: string): Promise<{ job_id: string; status: string }> {
     const res = await fetchWithAuth(`${API_BASE}/cameras/bridge/${bridgeId}/scan`, {
       method: 'POST',

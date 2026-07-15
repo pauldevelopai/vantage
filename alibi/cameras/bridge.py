@@ -213,6 +213,29 @@ class BridgeRegistry:
     def get_bridge(self, bridge_id: str) -> Optional[Bridge]:
         return self._bridges.get(bridge_id)
 
+    def remove_bridge(self, bridge_id: str) -> bool:
+        """Unpair a PC. Its token stops working immediately; the agent on that PC
+        can no longer authenticate (it must be re-paired to record again). Also
+        drops any of its queued/finished scan jobs. Returns False if unknown."""
+        if bridge_id not in self._bridges:
+            return False
+        del self._bridges[bridge_id]
+        self._jobs = {jid: j for jid, j in self._jobs.items() if j.bridge_id != bridge_id}
+        self._save()
+        return True
+
+    def rename_bridge(self, bridge_id: str, name: str) -> Optional[Bridge]:
+        """Relabel a PC (e.g. 'Mac (temporary)' → 'Office PC'). Returns None if
+        unknown."""
+        b = self._bridges.get(bridge_id)
+        if not b:
+            return None
+        name = (name or "").strip()
+        if name:
+            b.name = name
+            self._save()
+        return b
+
     # --- scan jobs -------------------------------------------------------- #
 
     def enqueue_scan(self, bridge_id: str, params: Optional[Dict[str, Any]] = None,
