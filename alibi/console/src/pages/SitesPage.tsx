@@ -1,0 +1,349 @@
+import { useEffect, useState } from 'react';
+import { api } from '../lib/api';
+import { hasRole } from '../lib/auth';
+import type { Site, Posture, SubjectType } from '../lib/types';
+
+const SUBJECT_META: Record<SubjectType, { label: string; icon: string; badge: string }> = {
+  home:          { label: 'Home',          icon: '🏠', badge: 'bg-green-100 text-green-800' },
+  office:        { label: 'Office',        icon: '🏢', badge: 'bg-blue-100 text-blue-800' },
+  neighbourhood: { label: 'Neighbourhood', icon: '🏘️', badge: 'bg-purple-100 text-purple-800' },
+};
+
+const SUBJECT_ORDER: SubjectType[] = ['home', 'office', 'neighbourhood'];
+
+export function SitesPage() {
+  const isAdmin = hasRole('admin');
+
+  const [sites, setSites] = useState<Site[]>([]);
+  const [postures, setPostures] = useState<Record<SubjectType, Posture> | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Add-a-site form
+  const [showForm, setShowForm] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState<{
+    name: string; subject_type: SubjectType; area: string; address: string; notes: string;
+  }>({ name: '', subject_type: 'home', area: '', address: '', notes: '' });
+
+  // Recording PCs (the bridge agent)
+  const [bridges, setBridges] = useState<Array<{
+    bridge_id: string; name: string; last_seen: string | null; site_hint: string; online: boolean;
+  }>>([]);
+  const [downloading, setDownloading] = useState(false);
+
+  async function loadSites() {
+    try {
+      const data = await api.listSites();
+      setSites(data.sites);
+      setError(null);
+    } catch (e: any) {
+      setError(e.message || 'Failed to load sites');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadPostures() {
+    try {
+      const data = await api.getSitePostures();
+      setPostures(data.postures);
+    } catch { /* postures are advisory; page still works without them */ }
+  }
+
+  async function loadBridges() {
+    try {
+      const data = await api.listBridges();
+      setBridges(data.bridges);
+    } catch { /* non-fatal */ }
+  }
+
+  useEffect(() => {
+    loadSites();
+    loadPostures();
+    loadBridges();
+    const t = setInterval(loadBridges, 5000);
+    return () => clearInterval(t);
+  }, []);
+
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.name.trim()) return;
+    setSaving(true);
+    try {
+      await api.createSite({
+        name: form.name.trim(),
+        subject_type: form.subject_type,
+        area: form.area.trim(),
+        address: form.address.trim(),
+        notes: form.notes.trim(),
+      });
+      setForm({ name: '', subject_type: 'home', area: '', address: '', notes: '' });
+      setShowForm(false);
+      await loadSites();
+    } catch (e: any) {
+      alert(e.message || 'Failed to create site');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete(site: Site) {
+    if (!confirm(`Delete site "${site.name}"? This does not delete its cameras.`)) return;
+    try {
+      await api.deleteSite(site.site_id);
+      await loadSites();
+    } catch (e: any) {
+      alert(e.message || 'Failed to delete site');
+    }
+  }
+
+  async function handleDownloadRecorder() {
+    setDownloading(true);
+    try {
+      await api.downloadBridgeAgent();
+    } catch {
+      alert('Failed to download the Vantage recorder');
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  const previewPosture = postures?.[form.subject_type] || null;
+
+  return (
+    <div className="max-w-5xl mx-auto px-4 py-6">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-2">
+        <div>
+          <h1 className="text-2xl font-semibold text-gray-900">Sites</h1>
+          <p className="text-sm text-gray-500">What Vantage is protecting — and the intelligence tuned to each.</p>
+        </div>
+        {isAdmin && (
+          <button
+            onClick={() => setShowForm(v => !v)}
+            className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700"
+          >
+            {showForm ? 'Cancel' : 'Add a site'}
+          </button>
+        )}
+      </div>
+
+      {error && <div className="my-4 p-3 bg-red-50 text-red-700 text-sm rounded-md">{error}</div>}
+
+      {/* Add-a-site form */}
+      {showForm && isAdmin && (
+        <form onSubmit={handleCreate} className="bg-white shadow rounded-lg p-6 my-4 border-l-4 border-blue-400">
+          <h2 className="text-lg font-medium text-gray-900 mb-4">Add a site</h2>
+
+          {/* Subject type — the choice that tailors the intelligence */}
+          <label className="block text-sm font-medium text-gray-700 mb-2">What are you protecting?</label>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+            {SUBJECT_ORDER.map(st => {
+              const meta = SUBJECT_META[st];
+              const selected = form.subject_type === st;
+              return (
+                <button
+                  type="button"
+                  key={st}
+                  onClick={() => setForm(f => ({ ...f, subject_type: st }))}
+                  className={`text-left p-3 rounded-lg border-2 transition ${
+                    selected ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  <div className="text-lg">{meta.icon} <span className="font-medium text-gray-900">{meta.label}</span></div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    {postures?.[st]?.summary || ''}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* What the AI will focus on for this choice */}
+          {previewPosture && (
+            <div className="mb-4 p-3 bg-gray-50 rounded-md text-sm">
+              <p className="text-gray-700 font-medium mb-1">The AI will focus on:</p>
+              <ul className="list-disc list-inside text-gray-600 space-y-0.5">
+                {previewPosture.focus.slice(0, 4).map((f, i) => <li key={i}>{f}</li>)}
+              </ul>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Name</label>
+              <input
+                type="text" value={form.name} required
+                onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                placeholder="e.g. My house"
+                className="mt-1 w-full rounded-md border-gray-300 shadow-sm text-sm p-2 border"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Area / suburb <span className="text-gray-400">(links area context)</span></label>
+              <input
+                type="text" value={form.area}
+                onChange={e => setForm(f => ({ ...f, area: e.target.value }))}
+                placeholder="e.g. Parkview"
+                className="mt-1 w-full rounded-md border-gray-300 shadow-sm text-sm p-2 border"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Address <span className="text-gray-400">(optional)</span></label>
+              <input
+                type="text" value={form.address}
+                onChange={e => setForm(f => ({ ...f, address: e.target.value }))}
+                className="mt-1 w-full rounded-md border-gray-300 shadow-sm text-sm p-2 border"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Notes <span className="text-gray-400">(optional)</span></label>
+              <input
+                type="text" value={form.notes}
+                onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+                className="mt-1 w-full rounded-md border-gray-300 shadow-sm text-sm p-2 border"
+              />
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <button
+              type="submit" disabled={saving}
+              className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 disabled:opacity-50"
+            >
+              {saving ? 'Creating…' : 'Create site'}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {/* Sites list */}
+      {loading ? (
+        <p className="text-gray-500 py-8">Loading sites…</p>
+      ) : sites.length === 0 ? (
+        <div className="bg-white shadow rounded-lg p-8 my-4 text-center">
+          <p className="text-gray-900 font-medium">No sites yet</p>
+          <p className="text-sm text-gray-500 mt-1">
+            {isAdmin ? 'Add a site to tell Vantage what it’s protecting — a home, an office, or a neighbourhood.'
+                     : 'No sites have been set up yet.'}
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-4 my-4">
+          {sites.map(site => (
+            <SiteCard key={site.site_id} site={site} isAdmin={isAdmin} onDelete={() => handleDelete(site)} />
+          ))}
+        </div>
+      )}
+
+      {/* Recording PC onboarding — "add a PC from the portal" */}
+      <div className="bg-white shadow rounded-lg p-6 my-6 border-l-4 border-indigo-400">
+        <h2 className="text-lg font-medium text-gray-900">Add the recording PC</h2>
+        <p className="mt-1 text-sm text-gray-500">
+          Vantage records and watches from one always-on PC on the same network as your cameras.
+          You only run our software on it — no camera-vendor apps, no NVR to configure.
+        </p>
+
+        <ol className="mt-4 space-y-3 text-sm text-gray-700">
+          <li className="flex gap-3">
+            <span className="flex-none w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 font-medium flex items-center justify-center">1</span>
+            <div>
+              <p className="font-medium text-gray-900">Download the recorder</p>
+              <p className="text-gray-500">One file, already paired to your account — nothing to type in.</p>
+              {isAdmin && (
+                <button
+                  onClick={handleDownloadRecorder} disabled={downloading}
+                  className="mt-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {downloading ? 'Preparing…' : 'Download the recorder'}
+                </button>
+              )}
+            </div>
+          </li>
+          <li className="flex gap-3">
+            <span className="flex-none w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 font-medium flex items-center justify-center">2</span>
+            <div>
+              <p className="font-medium text-gray-900">Run it on the always-on PC</p>
+              <p className="text-gray-500">On that PC: <code className="px-1 py-0.5 bg-gray-100 rounded">python3 vantage_bridge.py</code>. It pairs itself and appears below.</p>
+            </div>
+          </li>
+          <li className="flex gap-3">
+            <span className="flex-none w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 font-medium flex items-center justify-center">3</span>
+            <div className="flex-1">
+              <p className="font-medium text-gray-900">Confirm it's connected</p>
+              {bridges.length === 0 ? (
+                <p className="text-gray-500">No recording PC connected yet. Once you run the file, it shows up here.</p>
+              ) : (
+                <ul className="mt-1 space-y-1">
+                  {bridges.map(b => (
+                    <li key={b.bridge_id} className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ${b.online ? 'bg-green-400' : 'bg-gray-300'}`} />
+                      <span className="text-gray-900">{b.name || b.bridge_id}</span>
+                      <span className="text-xs text-gray-500">
+                        {b.online ? 'online' : 'offline'}{b.site_hint ? ` · ${b.site_hint}` : ''}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </li>
+        </ol>
+      </div>
+    </div>
+  );
+}
+
+function SiteCard({ site, isAdmin, onDelete }: { site: Site; isAdmin: boolean; onDelete: () => void }) {
+  const [open, setOpen] = useState(false);
+  const meta = SUBJECT_META[site.subject_type];
+  const p = site.posture;
+
+  return (
+    <div className="bg-white shadow rounded-lg p-5">
+      <div className="flex items-start justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <h3 className="text-lg font-medium text-gray-900">{site.name}</h3>
+            <span className={`text-xs px-2 py-0.5 rounded-full ${meta.badge}`}>{meta.icon} {meta.label}</span>
+          </div>
+          <p className="text-sm text-gray-500 mt-0.5">
+            {site.area || 'No area set'}
+            {site.address ? ` · ${site.address}` : ''}
+            {` · ${site.camera_ids.length} camera${site.camera_ids.length === 1 ? '' : 's'}`}
+          </p>
+          {p?.summary && <p className="text-sm text-gray-600 mt-2">{p.summary}</p>}
+        </div>
+        <div className="flex items-center gap-3">
+          <button onClick={() => setOpen(v => !v)} className="text-sm text-blue-600 hover:text-blue-800">
+            {open ? 'Hide' : 'What the AI focuses on'}
+          </button>
+          {isAdmin && (
+            <button onClick={onDelete} className="text-sm text-red-500 hover:text-red-700">Delete</button>
+          )}
+        </div>
+      </div>
+
+      {open && p && (
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+          <PostureList title="Focus" items={p.focus} tone="text-gray-700" />
+          <PostureList title="Normal here" items={p.normal} tone="text-gray-700" />
+          <PostureList title="Worth a human look" items={p.review_triggers} tone="text-amber-700" />
+          <PostureList title="The security brief covers" items={p.brief_sections} tone="text-gray-700" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PostureList({ title, items, tone }: { title: string; items: string[]; tone: string }) {
+  return (
+    <div>
+      <p className="font-medium text-gray-900 mb-1">{title}</p>
+      <ul className={`list-disc list-inside space-y-0.5 ${tone}`}>
+        {items.map((x, i) => <li key={i}>{x}</li>)}
+      </ul>
+    </div>
+  );
+}

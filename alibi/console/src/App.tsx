@@ -8,6 +8,7 @@ import { LoginPage } from './pages/LoginPage';
 import { MetricsPage } from './pages/MetricsPage';
 import { VehicleSearchPage } from './pages/VehicleSearchPage';
 import { CamerasPage } from './pages/CamerasPage';
+import { SitesPage } from './pages/SitesPage';
 import { WatchlistPage } from './pages/WatchlistPage';
 import { SearchPage } from './pages/SearchPage';
 import PatternsPage from './pages/PatternsPage';
@@ -95,6 +96,7 @@ function Layout({ children }: { children: React.ReactNode }) {
               {navLink('/metrics', 'Metrics')}
               {navLink('/vehicle-search', 'Vehicles')}
               {navLink('/cameras', 'Cameras')}
+              {navLink('/sites', 'Sites')}
               {(hasRole('supervisor') || hasRole('admin')) && navLink('/watchlist', 'Watchlist')}
               {hasRole('admin') && navLink('/settings', 'Settings')}
             </div>
@@ -153,6 +155,7 @@ function App() {
                   <Route path="/search" element={<SearchPage />} />
                   <Route path="/vehicle-search" element={<VehicleSearchPage />} />
                   <Route path="/cameras" element={<CamerasPage />} />
+                  <Route path="/sites" element={<SitesPage />} />
                   <Route path="/watchlist" element={<WatchlistPage />} />
                   <Route path="/settings" element={<SettingsPage />} />
                 </Routes>
