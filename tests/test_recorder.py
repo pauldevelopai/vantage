@@ -19,12 +19,25 @@ from alibi.cameras.recorder import (
 
 def test_record_command_is_stream_copy_and_segmented():
     cmd = build_record_command("rtsp://x/main", "/rec", segment_seconds=600, prefix="cam1")
-    assert "-c" in cmd and cmd[cmd.index("-c") + 1] == "copy"        # no re-encode = cheap CPU
+    assert "-c:v" in cmd and cmd[cmd.index("-c:v") + 1] == "copy"     # no video re-encode = cheap CPU
     assert "-f" in cmd and cmd[cmd.index("-f") + 1] == "segment"
     assert cmd[cmd.index("-segment_time") + 1] == "600"
     assert "-rtsp_transport" in cmd and cmd[cmd.index("-rtsp_transport") + 1] == "tcp"
     assert cmd[-1].endswith("cam1_%Y%m%d_%H%M%S.mp4")
     assert cmd[-1].startswith("/rec/")
+
+
+def test_record_command_drops_audio_by_default():
+    # Real cameras (Dahua) send pcm_alaw audio that MP4 can't hold — default -an.
+    cmd = build_record_command("rtsp://x/main", "/rec")
+    assert "-an" in cmd
+    assert "-c:a" not in cmd
+
+
+def test_record_command_transcodes_audio_when_enabled():
+    cmd = build_record_command("rtsp://x/main", "/rec", audio=True)
+    assert "-an" not in cmd
+    assert "-c:a" in cmd and cmd[cmd.index("-c:a") + 1] == "aac"      # MP4-compatible
 
 
 def test_motion_command_uses_scene_filter():

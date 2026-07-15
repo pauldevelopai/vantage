@@ -49,13 +49,24 @@ def build_record_command(
     segment_seconds: int = DEFAULT_SEGMENT_SECONDS,
     prefix: str = "cam",
     ffmpeg: str = FFMPEG,
+    audio: bool = False,
 ) -> List[str]:
-    """Continuous segmented recording, stream-copied (no re-encode)."""
+    """Continuous segmented recording. Video is always stream-copied (no
+    re-encode → tiny CPU).
+
+    Audio is OFF by default, for two reasons: (1) many cameras (Dahua etc.) send
+    G.711 / PCM a-law, which MP4 cannot hold — copying it makes ffmpeg refuse to
+    write the file; and (2) recording audio carries stricter legal obligations
+    than video (e.g. RICA/POPIA in South Africa), so it should be a deliberate
+    opt-in. When enabled, audio is transcoded to AAC so it fits the MP4 container.
+    """
+    audio_args = ["-c:a", "aac"] if audio else ["-an"]
     return [
         ffmpeg, "-nostdin", "-loglevel", "error",
         "-rtsp_transport", "tcp",
         "-i", rtsp_url,
-        "-c", "copy",
+        "-c:v", "copy",
+        *audio_args,
         "-f", "segment",
         "-segment_time", str(int(segment_seconds)),
         "-segment_format", "mp4",
@@ -189,6 +200,7 @@ class CameraRecorder:
         retention: Optional[RetentionPolicy] = None,
         motion_threshold: float = DEFAULT_MOTION_THRESHOLD,
         record_motion: bool = True,
+        record_audio: bool = False,
         ffmpeg: str = FFMPEG,
         spawn: Callable = subprocess.Popen,
         clock: Callable[[], float] = None,
@@ -201,6 +213,7 @@ class CameraRecorder:
         self.retention = retention
         self.motion_threshold = motion_threshold
         self.record_motion = record_motion
+        self.record_audio = record_audio
         self.ffmpeg = ffmpeg
         self._spawn = spawn
         import time as _time
@@ -227,6 +240,7 @@ class CameraRecorder:
             self.record_url, self.recordings_dir,
             segment_seconds=self.segment_seconds,
             prefix=self.camera_id, ffmpeg=self.ffmpeg,
+            audio=self.record_audio,
         ))]
         if self.record_motion:
             jobs.append(_Job("motion", build_motion_command(
@@ -319,6 +333,7 @@ def _parse_args(argv):
     p.add_argument("--segment-seconds", type=int, default=DEFAULT_SEGMENT_SECONDS, help="Length of each recording segment")
     p.add_argument("--motion-threshold", type=float, default=DEFAULT_MOTION_THRESHOLD, help="Scene-change score 0..1 that counts as motion")
     p.add_argument("--no-motion", action="store_true", help="Record only; skip the motion trigger")
+    p.add_argument("--audio", action="store_true", help="Record audio too (transcoded to AAC). Off by default — many cameras send MP4-incompatible audio, and audio recording has stricter legal duties than video.")
     p.add_argument("--max-gb", type=float, default=None, help="Disk budget for this camera (GB); oldest deleted first")
     p.add_argument("--max-days", type=float, default=None, help="Hard age cap (days) regardless of size")
     p.add_argument("--poll-seconds", type=int, default=15, help="How often to health-check ffmpeg + sweep retention")
@@ -350,6 +365,7 @@ def run_cli(argv=None) -> int:
         retention=retention,
         motion_threshold=args.motion_threshold,
         record_motion=not args.no_motion,
+        record_audio=args.audio,
         ffmpeg=args.ffmpeg,
     )
     rec.start()
