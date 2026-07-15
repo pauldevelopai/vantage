@@ -104,7 +104,11 @@ def build_motion_command(
         "-vsync", "vfr",
         "-threads", "1",
         "-q:v", "5",
-        os.path.join(out_dir, f"{prefix}_%Y%m%d_%H%M%S_%03d.jpg"),
+        # -strftime expands the %Y%m%d… tokens (the image2 muxer needs this flag,
+        # just like the segment muxer on the record job). One JPEG per motion
+        # second; the timestamp is the filename, so frames are unique over time.
+        "-strftime", "1",
+        os.path.join(out_dir, f"{prefix}_%Y%m%d_%H%M%S.jpg"),
     ]
 
 
