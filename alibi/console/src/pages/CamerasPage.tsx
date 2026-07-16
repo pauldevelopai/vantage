@@ -32,17 +32,31 @@ interface DiscoveredCamera {
 }
 
 
-function EditCameraModal({ camera, onClose, onSaved }: { camera: Camera; onClose: () => void; onSaved: () => void }) {
+function EditCameraModal({ camera, sites, onClose, onSaved }: { camera: Camera; sites: Site[]; onClose: () => void; onSaved: () => void }) {
   const [name, setName] = useState(camera.name);
   const [source, setSource] = useState(camera.source);
   const [area, setArea] = useState(camera.area || '');
   const [enabled, setEnabled] = useState(camera.enabled);
+  const currentSite = sites.find(s => s.camera_ids.includes(camera.camera_id));
+  const [siteId, setSiteId] = useState(currentSite?.site_id || '');
   const [saving, setSaving] = useState(false);
 
   async function save() {
     setSaving(true);
     try {
       await api.updateCamera(camera.camera_id, { name, source, area, enabled });
+      // Re-assign the site link if it changed (the link lives on the site).
+      if (siteId !== (currentSite?.site_id || '')) {
+        if (currentSite) {
+          await api.updateSite(currentSite.site_id, {
+            camera_ids: currentSite.camera_ids.filter(id => id !== camera.camera_id),
+          });
+        }
+        const target = sites.find(s => s.site_id === siteId);
+        if (target && !target.camera_ids.includes(camera.camera_id)) {
+          await api.updateSite(siteId, { camera_ids: [...target.camera_ids, camera.camera_id] });
+        }
+      }
       onSaved();
       onClose();
     } catch (e: any) {
@@ -72,6 +86,14 @@ function EditCameraModal({ camera, onClose, onSaved }: { camera: Camera; onClose
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Area / Suburb</label>
             <input value={area} onChange={e => setArea(e.target.value)} placeholder="Sandton" className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Site</label>
+            <select value={siteId} onChange={e => setSiteId(e.target.value)} className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm bg-white">
+              <option value="">No site</option>
+              {sites.map(s => <option key={s.site_id} value={s.site_id}>{s.name}</option>)}
+            </select>
+            <p className="text-xs text-gray-400 mt-1">Links this camera to a site's live feeds and security brief. {sites.length === 0 && 'Create a site first (Sites page).'}</p>
           </div>
           <label className="flex items-center gap-2 text-sm text-gray-700">
             <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} />
@@ -888,7 +910,7 @@ export function CamerasPage() {
       )}
 
       {editCamera && (
-        <EditCameraModal camera={editCamera} onClose={() => setEditCamera(null)} onSaved={loadCameras} />
+        <EditCameraModal camera={editCamera} sites={sites} onClose={() => setEditCamera(null)} onSaved={loadCameras} />
       )}
     </div>
   );
