@@ -1044,6 +1044,31 @@ def _dash_intel(ev) -> dict:
     return ((getattr(ev, "metadata", None) or {}).get("intel") or {})
 
 
+def _display_names() -> dict:
+    """camera_id -> a name that is actually distinguishable.
+
+    Cameras added from a scan all take the vendor name, so a two-camera house ends
+    up with two cameras both called "Dahua" — on the camera wall that's two
+    identical tiles with no way to tell which is the driveway. Where a name is
+    shared, disambiguate it with the tail of the camera id (its IP suffix)."""
+    try:
+        from alibi.cameras.camera_store import get_camera_store
+        cams = get_camera_store().list_all()
+    except Exception:
+        return {}
+    counts: dict = {}
+    for c in cams:
+        counts[c.name] = counts.get(c.name, 0) + 1
+    names = {}
+    for c in cams:
+        if counts.get(c.name, 0) > 1:
+            tail = c.camera_id.rsplit("-", 1)[-1]        # e.g. "91" from dahua-192-168-3-91
+            names[c.camera_id] = f"{c.name} ·{tail}"
+        else:
+            names[c.camera_id] = c.name
+    return names
+
+
 @app.get("/dashboard/overview", tags=["Dashboard"])
 async def dashboard_overview(range: str = "24h",
                              current_user: User = Depends(get_current_user)):
@@ -1060,12 +1085,8 @@ async def dashboard_overview(range: str = "24h",
               if getattr(e, "ts", None) and e.ts >= cutoff]
     events.sort(key=lambda e: e.ts, reverse=True)
 
-    # Camera display names, so the dashboard shows "Front Cam" not an id.
-    try:
-        from alibi.cameras.camera_store import get_camera_store
-        names = {c.camera_id: c.name for c in get_camera_store().list_all()}
-    except Exception:
-        names = {}
+    # Camera display names, disambiguated when several share a vendor name.
+    names = _display_names()
 
     def _is_alert(ev) -> bool:
         i = _dash_intel(ev)
@@ -3244,11 +3265,7 @@ async def people_recent(limit: int = 60, hours: int = 168,
     except Exception:
         sightings = []
 
-    try:
-        from alibi.cameras.camera_store import get_camera_store
-        names = {c.camera_id: c.name for c in get_camera_store().list_all()}
-    except Exception:
-        names = {}
+    names = _display_names()
     labels = {}
     try:
         from alibi.watchlist.watchlist_store import WatchlistStore
