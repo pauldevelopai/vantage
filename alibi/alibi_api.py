@@ -1029,6 +1029,116 @@ async def get_metrics_summary(range: str = "24h", current_user: User = Depends(g
     return aggregator.compute_summary(range)
 
 
+# ── Dashboard overview ──────────────────────────────────────────
+#
+# One call that assembles everything the Overview tab shows, straight from the
+# REAL stored events: KPI counts, per-type split, an hourly series, the recent
+# detections (each with its real evidence still), and per-camera latest frames.
+# Empty stores return zeros and empty lists — the console renders an honest
+# "nothing yet" rather than any placeholder data.
+
+_DASH_RANGES = {"24h": 24, "7d": 24 * 7, "30d": 24 * 30}
+
+
+def _dash_intel(ev) -> dict:
+    return ((getattr(ev, "metadata", None) or {}).get("intel") or {})
+
+
+@app.get("/dashboard/overview", tags=["Dashboard"])
+async def dashboard_overview(range: str = "24h",
+                             current_user: User = Depends(get_current_user)):
+    """Real data for the Overview dashboard. No placeholders: an empty system
+    returns zeros."""
+    from collections import Counter
+    from datetime import timedelta
+    hours = _DASH_RANGES.get(range, 24)
+    cutoff = datetime.utcnow() - timedelta(hours=hours)
+
+    store = get_store()
+    # Pull generously, then filter/sort here (the store's limit is file-order).
+    events = [e for e in store.list_events(limit=5000)
+              if getattr(e, "ts", None) and e.ts >= cutoff]
+    events.sort(key=lambda e: e.ts, reverse=True)
+
+    # Camera display names, so the dashboard shows "Front Cam" not an id.
+    try:
+        from alibi.cameras.camera_store import get_camera_store
+        names = {c.camera_id: c.name for c in get_camera_store().list_all()}
+    except Exception:
+        names = {}
+
+    def _is_alert(ev) -> bool:
+        i = _dash_intel(ev)
+        return bool(ev.severity >= 4 or i.get("watchlist_hit") or i.get("hotlist_hit"))
+
+    people = vehicles = 0
+    by_type: Counter = Counter()
+    buckets: dict = {}
+    for e in events:
+        i = _dash_intel(e)
+        people += int(i.get("person_count") or 0)
+        vehicles += int(i.get("vehicle_count") or 0)
+        by_type[e.event_type] += 1
+        key = e.ts.replace(minute=0, second=0, microsecond=0).isoformat()
+        b = buckets.setdefault(key, {"hour": key, "events": 0, "alerts": 0})
+        b["events"] += 1
+        if _is_alert(e):
+            b["alerts"] += 1
+
+    def _row(e) -> dict:
+        i = _dash_intel(e)
+        md = getattr(e, "metadata", None) or {}
+        return {
+            "event_id": e.event_id,
+            "camera_id": e.camera_id,
+            "camera_name": names.get(e.camera_id, e.camera_id),
+            "ts": e.ts.isoformat(),
+            "event_type": e.event_type,
+            "severity": e.severity,
+            "confidence": e.confidence,
+            "snapshot_url": e.snapshot_url,          # the REAL evidence still
+            "description": md.get("description") or "",
+            "people": int(i.get("person_count") or 0),
+            "vehicles": int(i.get("vehicle_count") or 0),
+            "plates": [p.get("display") or p.get("text") for p in (i.get("plates") or [])],
+            "watchlist_hit": bool(i.get("watchlist_hit")),
+            "watchlist_label": i.get("watchlist_label"),
+            "hotlist_hit": bool(i.get("hotlist_hit")),
+            "hotlist_reason": i.get("hotlist_reason"),
+        }
+
+    # Latest real frame per camera — the live wall, built from evidence stills.
+    latest: dict = {}
+    for e in events:
+        if e.camera_id not in latest and e.snapshot_url:
+            latest[e.camera_id] = _row(e)
+
+    cameras = []
+    for cid, nm in names.items():
+        cameras.append({"camera_id": cid, "name": nm, "latest": latest.get(cid)})
+    for cid, row in latest.items():          # cameras seen in events but not registered
+        if cid not in names:
+            cameras.append({"camera_id": cid, "name": cid, "latest": row})
+
+    alerts = [_row(e) for e in events if _is_alert(e)][:20]
+
+    return {
+        "range": range,
+        "generated_at": datetime.utcnow().isoformat(),
+        "kpis": {
+            "events": len(events),
+            "alerts": sum(1 for e in events if _is_alert(e)),
+            "people": people,
+            "vehicles": vehicles,
+        },
+        "by_type": [{"type": t, "count": c} for t, c in by_type.most_common()],
+        "over_time": [buckets[k] for k in sorted(buckets)],
+        "recent": [_row(e) for e in events[:24]],
+        "cameras": cameras,
+        "alerts": alerts,
+    }
+
+
 # Settings endpoints
 
 @app.get("/settings")

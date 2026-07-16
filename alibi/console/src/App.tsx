@@ -9,6 +9,7 @@ import { MetricsPage } from './pages/MetricsPage';
 import { VehicleSearchPage } from './pages/VehicleSearchPage';
 import { CamerasPage } from './pages/CamerasPage';
 import { RecordersPage } from './pages/RecordersPage';
+import { DashboardPage } from './pages/DashboardPage';
 import { SitesPage } from './pages/SitesPage';
 import { WatchlistPage } from './pages/WatchlistPage';
 import { SearchPage } from './pages/SearchPage';
@@ -78,6 +79,9 @@ function Layout({ children }: { children: React.ReactNode }) {
               Vantage
             </Link>
             <div className="hidden sm:flex items-center gap-0.5 overflow-x-auto flex-1" style={{ scrollbarWidth: 'none' }}>
+              {/* The at-a-glance view of everything the cameras have seen */}
+              {navLink('/overview', 'Overview')}
+              <div className="w-px h-5 bg-white/10 mx-1.5 flex-shrink-0" />
               {/* Setup — your cameras, recorders, and what you're protecting */}
               {navLink('/cameras', 'Cameras')}
               {navLink('/recorders', 'Recorders')}
@@ -143,7 +147,8 @@ function App() {
             <ProtectedRoute>
               <Layout>
                 <Routes>
-                  <Route path="/" element={<Navigate to="/incidents" replace />} />
+                  <Route path="/" element={<Navigate to="/overview" replace />} />
+                  <Route path="/overview" element={<DashboardPage />} />
                   <Route path="/incidents" element={<IncidentsPage />} />
                   <Route path="/incidents/:id" element={<IncidentDetailPage />} />
                   <Route path="/patterns" element={<PatternsPage />} />
