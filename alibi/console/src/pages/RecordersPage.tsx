@@ -23,7 +23,6 @@ export function RecordersPage() {
   const [computers, setComputers] = useState<Array<Record<string, any>>>([]);
   const [scanning, setScanning] = useState(false);
   const [scanNote, setScanNote] = useState<string | null>(null);
-  const [showAdvanced, setShowAdvanced] = useState(false);
 
   async function loadBridges() {
     try {
@@ -60,6 +59,9 @@ export function RecordersPage() {
   }
 
   const isMac = /Mac/i.test(navigator.platform || navigator.userAgent);
+  const cmdLines = isMac
+    ? 'cd ~/Downloads\npython3 vantage_recorder.pyz --dir ~/vantage-rec --max-gb 200 --max-days 30'
+    : 'cd %USERPROFILE%\\Downloads\npython vantage_recorder.pyz --dir vantage-rec --max-gb 200 --max-days 30';
   const [launching, setLaunching] = useState(false);
   async function handleUseThisComputer() {
     setLaunching(true);
@@ -185,69 +187,75 @@ export function RecordersPage() {
         )}
       </div>
 
-      {/* Add a recorder — one primary path, everything else under Advanced */}
+      {/* Add a recorder — real terminal steps, visible */}
       {isAdmin && (
         <div className="bg-white shadow rounded-lg p-6">
           <h2 className="text-lg font-medium text-gray-900">Add a recorder</h2>
-          <p className="mt-1 text-sm text-gray-500">
-            Use any always-on computer on your camera network. Easiest: the one you're on now (needs Python 3 + ffmpeg installed).
-          </p>
-          <button
-            onClick={handleUseThisComputer} disabled={launching}
-            className="mt-3 px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-md hover:bg-green-700 disabled:opacity-50"
-          >
-            {launching ? 'Preparing…' : `Set up this computer (${isMac ? 'Mac' : 'Windows'})`}
-          </button>
-          <p className="mt-2 text-xs text-gray-500">
-            Downloads a file → double-click it{isMac ? ' (first time: right-click → Open to get past macOS Gatekeeper)' : ' (if SmartScreen warns: More info → Run anyway)'} → it starts recording and appears above.
-          </p>
+          <p className="mt-1 text-sm text-gray-500">Use any always-on computer on your camera network — the one you're on now works.</p>
 
-          <button onClick={() => setShowAdvanced(v => !v)} className="mt-4 text-sm text-gray-500 hover:text-gray-700">
-            {showAdvanced ? '▾' : '▸'} Advanced — set up a different computer, or find one on the network
-          </button>
-          {showAdvanced && (
-            <div className="mt-3 space-y-4 border-t border-gray-100 pt-4">
-              <div className="text-sm text-gray-700">
-                <p className="font-medium text-gray-900">Set up a different computer</p>
-                <ol className="list-decimal list-inside mt-1 space-y-1 text-gray-600">
-                  <li>Install <span className="font-medium">Python 3</span> and <span className="font-medium">ffmpeg</span> on it (Windows: <code className="bg-gray-100 px-1 rounded">winget install Gyan.FFmpeg</code> · Mac: <code className="bg-gray-100 px-1 rounded">brew install ffmpeg</code>).</li>
-                  <li>
-                    <button onClick={handleDownload} disabled={downloading} className="text-indigo-600 underline disabled:opacity-50">
-                      {downloading ? 'Preparing…' : 'Download the recorder'}
-                    </button> and copy it there.
-                  </li>
-                  <li>Run: <code className="bg-gray-100 px-1 rounded text-xs">python vantage_recorder.pyz --dir vantage-rec --max-gb 200 --max-days 30</code></li>
-                </ol>
+          <div className="mt-4">
+            <p className="text-sm font-medium text-gray-900">Set up this computer ({isMac ? 'Mac' : 'Windows'})</p>
+            <ol className="mt-2 space-y-3 text-sm text-gray-700">
+              <li>
+                <span className="font-medium">1. Install Python 3 and ffmpeg</span> (once).{' '}
+                {isMac
+                  ? <>Mac: <code className="bg-gray-100 px-1 rounded">brew install python ffmpeg</code></>
+                  : <>Windows: install Python from python.org (tick “Add to PATH”), then <code className="bg-gray-100 px-1 rounded">winget install Gyan.FFmpeg</code></>}
+              </li>
+              <li>
+                <span className="font-medium">2. Download the recorder</span> (saves to your Downloads):
+                <button onClick={handleDownload} disabled={downloading} className="ml-2 px-3 py-1 text-xs font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:opacity-50">
+                  {downloading ? 'Preparing…' : 'Download the recorder'}
+                </button>
+              </li>
+              <li>
+                <span className="font-medium">3. Open Terminal and run these two lines:</span>
+                <pre className="mt-1 bg-gray-900 text-gray-100 text-xs rounded-md p-3 overflow-x-auto whitespace-pre">{cmdLines}</pre>
+                <span className="text-xs text-gray-500">You should see <code className="bg-gray-100 px-1 rounded">paired as brg_…</code>. Leave the window open — it appears under “Your recorders” above.</span>
+              </li>
+            </ol>
+            <p className="mt-3 text-xs text-gray-400">
+              Prefer not to use Terminal?{' '}
+              <button onClick={handleUseThisComputer} disabled={launching} className="text-indigo-600 underline disabled:opacity-50">
+                {launching ? 'Preparing…' : 'get a double-click launcher'}
+              </button>
+              {isMac ? ' (first run: System Settings → Privacy & Security → Open Anyway).' : ' (if SmartScreen warns: More info → Run anyway).'}
+            </p>
+          </div>
+
+          {/* Different computer + find one — visible, not hidden */}
+          <div className="mt-5 border-t border-gray-100 pt-4 space-y-4">
+            <p className="text-sm text-gray-600">
+              <span className="font-medium text-gray-900">A different computer?</span> Do the same three steps on it (drop the <code className="bg-gray-100 px-1 rounded">~/</code> from the paths on Windows).
+            </p>
+            <div>
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-gray-900">Find a computer on the network</p>
+                <button
+                  onClick={handleScan} disabled={scanning || !anyOnline}
+                  title={!anyOnline ? 'Start a recorder first' : undefined}
+                  className="px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                >
+                  {scanning ? 'Scanning…' : 'Scan for computers'}
+                </button>
               </div>
-              <div>
-                <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-gray-900">Find a computer on the network</p>
-                  <button
-                    onClick={handleScan} disabled={scanning || !anyOnline}
-                    title={!anyOnline ? 'Start a recorder first' : undefined}
-                    className="px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
-                  >
-                    {scanning ? 'Scanning…' : 'Scan for computers'}
-                  </button>
-                </div>
-                {computers.length > 0 ? (
-                  <ul className="mt-2 space-y-1.5">
-                    {computers.map((c, i) => (
-                      <li key={`pc-${c.ip}-${i}`} className="flex items-center gap-3 rounded-md border border-gray-100 bg-gray-50 px-3 py-2">
-                        <span className="text-lg" role="img" aria-label="computer">🖥️</span>
-                        <div className="min-w-0">
-                          <div className="text-sm font-medium text-gray-900 truncate">{c.name && !String(c.name).startsWith('Camera (') ? c.name : 'Computer'}</div>
-                          <div className="text-xs text-gray-500">at {c.ip}</div>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="mt-2 text-xs text-gray-400">{scanNote || 'Runs a scan from a connected recorder and lists computers that could host one.'}</p>
-                )}
-              </div>
+              {computers.length > 0 ? (
+                <ul className="mt-2 space-y-1.5">
+                  {computers.map((c, i) => (
+                    <li key={`pc-${c.ip}-${i}`} className="flex items-center gap-3 rounded-md border border-gray-100 bg-gray-50 px-3 py-2">
+                      <span className="text-lg" role="img" aria-label="computer">🖥️</span>
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-gray-900 truncate">{c.name && !String(c.name).startsWith('Camera (') ? c.name : 'Computer'}</div>
+                        <div className="text-xs text-gray-500">at {c.ip}</div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-xs text-gray-400">{scanNote || 'Runs a scan from a connected recorder and lists computers that could host one.'}</p>
+              )}
             </div>
-          )}
+          </div>
         </div>
       )}
     </div>
