@@ -299,3 +299,11 @@ export interface SourceVocab {
   lawful_bases: Array<{ value: string; label: string }>;
   boundary: string;
 }
+
+export interface HotlistEntry {
+  plate: string;
+  reason: string;
+  added_ts: string;
+  source_ref: string;
+  metadata?: Record<string, any>;
+}
