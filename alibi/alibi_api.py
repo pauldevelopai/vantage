@@ -2739,6 +2739,30 @@ async def bridge_ingest_frame(camera_id: str, request: Request,
     settings = get_settings()
     store.append_event(event)
     incident = process_camera_event(event, store, settings)
+
+    # PERSIST the incident. process_camera_event only groups in memory and hands
+    # back the object — every other ingest path follows it with upsert_incident,
+    # and this one never did. The result: frames produced events and an incident
+    # id, but nothing was ever written to incidents.jsonl, so the Incidents page,
+    # the security brief and every incident-backed surface stayed empty forever
+    # while the endpoint reported success.
+    try:
+        store.upsert_incident(incident, {
+            "source": "frame_ai",
+            "camera_id": event.camera_id,
+            "event_type": event.event_type,
+            "severity": event.severity,
+            "description": (analysis or {}).get("description", ""),
+            "intel": _intel_summary(intel),
+        })
+        store.append_audit("incident_processed", {
+            "incident_id": incident.incident_id,
+            "camera_id": event.camera_id,
+            "source": "frame_ai",
+        })
+    except Exception as e:
+        print(f"[frame-ai] could not persist incident: {e}")
+
     return {"analyzed": True, "incident": incident.incident_id,
             "event_type": event.event_type, "severity": event.severity,
             "intel": _intel_summary(intel)}
