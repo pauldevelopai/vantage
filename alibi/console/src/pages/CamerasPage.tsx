@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import { api } from '../lib/api';
 import { hasRole, getToken } from '../lib/auth';
-import type { Camera } from '../lib/types';
+import type { Camera, Site } from '../lib/types';
 
 const SOURCE_TYPE_OPTIONS = [
   { value: 'rtsp', label: 'RTSP Direct' },
@@ -129,6 +129,8 @@ export function CamerasPage() {
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [loading, setLoading] = useState(true);
   const [liveCamera, setLiveCamera] = useState<Camera | null>(null);
+  const [sites, setSites] = useState<Site[]>([]);
+  const [formSiteId, setFormSiteId] = useState('');   // link the added camera to a site
   const [showForm, setShowForm] = useState(false);
 
   // Network scan state
@@ -165,6 +167,7 @@ export function CamerasPage() {
 
   useEffect(() => {
     loadCameras();
+    api.listSites().then(d => setSites(d.sites)).catch(() => {});
   }, []);
 
   async function loadCameras() {
@@ -216,6 +219,7 @@ export function CamerasPage() {
         source_type: formSourceType,
         location: formLocation,
         area: formArea,
+        site_id: formSiteId,
         vms_config,
       });
       resetForm();
@@ -375,6 +379,7 @@ export function CamerasPage() {
         password: camPass,
         vendor: cam.vendor || '',
         manufacturer: cam.manufacturer || '',
+        site_id: formSiteId,
       });
       // Mark as registered in local state
       setDiscovered(prev =>
@@ -590,6 +595,20 @@ export function CamerasPage() {
               </p>
             </div>
             <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Site</label>
+              <select
+                value={formSiteId}
+                onChange={(e) => setFormSiteId(e.target.value)}
+                className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
+              >
+                <option value="">No site</option>
+                {sites.map(s => <option key={s.site_id} value={s.site_id}>{s.name}</option>)}
+              </select>
+              <p className="mt-1 text-xs text-gray-500">
+                Links this camera to a site so its security brief covers it. {sites.length === 0 && 'Create a site first (Sites page).'}
+              </p>
+            </div>
+            <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Source Type</label>
               <select
                 value={formSourceType}
@@ -785,6 +804,15 @@ export function CamerasPage() {
                     autoComplete="new-password"
                     className="flex-1 min-w-[140px] rounded-md border border-gray-300 px-2 py-1.5 text-sm"
                   />
+                  <select
+                    value={formSiteId}
+                    onChange={e => setFormSiteId(e.target.value)}
+                    className="flex-1 min-w-[140px] rounded-md border border-gray-300 px-2 py-1.5 text-sm bg-white"
+                    title="Link added cameras to a site"
+                  >
+                    <option value="">No site</option>
+                    {sites.map(s => <option key={s.site_id} value={s.site_id}>{s.name}</option>)}
+                  </select>
                 </div>
                 {!camPass && (
                   <p className="text-xs text-amber-600 mt-1">
