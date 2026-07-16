@@ -98,8 +98,8 @@ function CameraLiveView({ camera, onClose }: { camera: Camera; onClose: () => vo
   }, [camera.camera_id]);
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-gray-900 rounded-lg overflow-hidden max-w-4xl w-full" onClick={e => e.stopPropagation()}>
+    <div className="mb-4">
+      <div className="bg-gray-900 rounded-lg overflow-hidden shadow-lg">
         <div className="flex items-center justify-between px-4 py-3 bg-gray-800">
           <div className="text-white font-medium flex items-center gap-2">
             {camera.name}
@@ -196,8 +196,11 @@ export function CamerasPage() {
   const [discovered, setDiscovered] = useState<DiscoveredCamera[]>([]);
   // Shared camera credentials — applied when adding a discovered camera. Most
   // sites use one login across all cameras, so enter it once.
-  const [camUser, setCamUser] = useState('admin');
-  const [camPass, setCamPass] = useState('');
+  // Remembered in this browser so you don't retype the camera login each time.
+  const [camUser, setCamUser] = useState(() => localStorage.getItem('vantage_cam_user') || 'admin');
+  const [camPass, setCamPass] = useState(() => localStorage.getItem('vantage_cam_pass') || '');
+  useEffect(() => { localStorage.setItem('vantage_cam_user', camUser); }, [camUser]);
+  useEffect(() => { localStorage.setItem('vantage_cam_pass', camPass); }, [camPass]);
   const [addingCamera, setAddingCamera] = useState<string | null>(null);
   const [showScanResults, setShowScanResults] = useState(false);
 
@@ -544,6 +547,11 @@ export function CamerasPage() {
           </div>
         )}
       </div>
+
+      {/* Live view — inline in the page (not a popup) */}
+      {liveCamera && (
+        <CameraLiveView camera={liveCamera} onClose={() => setLiveCamera(null)} />
+      )}
 
       {/* Camera Bridge — scan the WiFi where the user's cameras are */}
       {showBridge && isAdmin && (
@@ -986,9 +994,6 @@ export function CamerasPage() {
         </div>
       )}
 
-      {liveCamera && (
-        <CameraLiveView camera={liveCamera} onClose={() => setLiveCamera(null)} />
-      )}
       {editCamera && (
         <EditCameraModal camera={editCamera} onClose={() => setEditCamera(null)} onSaved={loadCameras} />
       )}

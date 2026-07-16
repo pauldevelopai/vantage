@@ -2000,7 +2000,11 @@ async def add_discovered_camera(
     from alibi.cameras.rtsp_resolver import resolve_for_discovered
 
     store = get_camera_store()
-    camera_id = slugify(req.name or f"camera-{req.ip.replace('.', '-')}")
+    # Always fold the IP into the id — discovered cameras often share a name
+    # ("Dahua"), which would otherwise collide and overwrite each other.
+    ip_suffix = req.ip.replace('.', '-')
+    base = slugify(req.name) if req.name else "camera"
+    camera_id = f"{base}-{ip_suffix}"
 
     from urllib.parse import quote
     rtsp_url = req.rtsp_url
