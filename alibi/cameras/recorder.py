@@ -112,6 +112,56 @@ def build_motion_command(
     ]
 
 
+def probe_video_codec(url: str, run: Callable = subprocess.run, ffprobe: str = "ffprobe") -> Optional[str]:
+    """Return the source video codec ('h264', 'hevc', …) via ffprobe, or None."""
+    try:
+        r = run([ffprobe, "-v", "error", "-rtsp_transport", "tcp",
+                 "-select_streams", "v:0", "-show_entries", "stream=codec_name",
+                 "-of", "default=nk=1:nw=1", url],
+                capture_output=True, text=True, timeout=15)
+        return ((getattr(r, "stdout", "") or "").strip() or None)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def has_encoder(name: str, ffmpeg: str = FFMPEG, run: Callable = subprocess.run) -> bool:
+    """True if this ffmpeg build has the named encoder (e.g. h264_videotoolbox)."""
+    try:
+        r = run([ffmpeg, "-hide_banner", "-encoders"], capture_output=True, text=True, timeout=10)
+        return name in (getattr(r, "stdout", "") or "")
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+
+
+def choose_video_args(
+    url: str, ffmpeg: str = FFMPEG, run: Callable = subprocess.run,
+    max_width: int = 480, fps: int = 10, crf: int = 30,
+    maxrate_kbps: int = 500, seg_seconds: int = 2,
+) -> List[str]:
+    """Pick the cheapest path to browser-playable H.264:
+      * source already H.264  -> stream-COPY (no transcode, ~0 CPU);
+      * else transcode, preferring a HARDWARE encoder (VideoToolbox / NVENC /
+        QSV) over software libx264 — the difference between smooth and stutter.
+    """
+    codec = (probe_video_codec(url, run=run) or "").lower()
+    if codec == "h264":
+        return ["-c:v", "copy"]
+
+    scale = ["-vf", f"scale='min(iw,{max_width})':-2", "-r", str(fps),
+             "-pix_fmt", "yuv420p", "-g", str(max(1, fps * seg_seconds))]
+    rate = ["-b:v", f"{maxrate_kbps}k", "-maxrate", f"{maxrate_kbps}k",
+            "-bufsize", f"{maxrate_kbps * 2}k"]
+    if has_encoder("h264_videotoolbox", ffmpeg, run):          # macOS hardware
+        return ["-c:v", "h264_videotoolbox", "-realtime", "1", *rate, *scale]
+    if has_encoder("h264_nvenc", ffmpeg, run):                 # NVIDIA
+        return ["-c:v", "h264_nvenc", "-preset", "p3", *rate, *scale]
+    if has_encoder("h264_qsv", ffmpeg, run):                   # Intel Quick Sync
+        return ["-c:v", "h264_qsv", *rate, *scale]
+    return ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
+            "-crf", str(crf), "-maxrate", f"{maxrate_kbps}k",
+            "-bufsize", f"{maxrate_kbps * 2}k", *scale]
+
+
 def build_hls_command(
     rtsp_url: str,
     out_dir: str,
@@ -122,30 +172,30 @@ def build_hls_command(
     fps: int = 10,
     crf: int = 30,
     maxrate_kbps: int = 500,
+    video_args: Optional[List[str]] = None,
 ) -> List[str]:
-    """RTSP -> H.264 HLS for on-demand live view in the browser.
+    """RTSP -> browser-playable HLS for on-demand live view.
 
-    Transcodes to H.264 (browsers can't play the camera's H.265), bandwidth-tuned
-    for a monitoring preview:
-      * constant-quality encode (CRF) with a hard bitrate ceiling (maxrate/bufsize)
-        so a busy scene can't balloon the stream;
-      * framerate capped (security doesn't need 25 fps — halves the bitrate);
-      * modest width; audio dropped.
-    Point this at the camera's SUB stream (see the watch-requests endpoint) so the
-    source is already low-res — cheap to decode and send. A rolling live playlist
-    keeps only a few seconds on disk. Only ever run while someone is watching.
+    `video_args` selects the codec path (see choose_video_args): stream-copy for
+    an H.264 source, or a hardware/software transcode for H.265. Defaults to the
+    bandwidth-tuned software transcode if not supplied. Point at the SUB stream so
+    the source is already low-res. Rolling live playlist; only runs while watched.
     """
+    if video_args is None:
+        video_args = [
+            "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
+            "-crf", str(crf),
+            "-maxrate", f"{maxrate_kbps}k", "-bufsize", f"{maxrate_kbps * 2}k",
+            "-pix_fmt", "yuv420p", "-g", str(max(1, fps * seg_seconds)),
+            "-r", str(fps),
+            "-vf", f"scale='min(iw,{max_width})':-2",
+        ]
     return [
         ffmpeg, "-nostdin", "-loglevel", "error",
         "-rtsp_transport", "tcp",
         "-i", rtsp_url,
         "-an",
-        "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
-        "-crf", str(crf),
-        "-maxrate", f"{maxrate_kbps}k", "-bufsize", f"{maxrate_kbps * 2}k",
-        "-pix_fmt", "yuv420p", "-g", str(max(1, fps * seg_seconds)),
-        "-r", str(fps),
-        "-vf", f"scale='min(iw,{max_width})':-2",
+        *video_args,
         "-f", "hls",
         "-hls_time", str(seg_seconds),
         "-hls_list_size", str(list_size),

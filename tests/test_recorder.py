@@ -12,7 +12,39 @@ from alibi.cameras.recorder import (
     build_record_command,
     ffmpeg_available,
     plan_retention,
+    choose_video_args,
 )
+
+
+class _R:
+    def __init__(self, stdout="", rc=0):
+        self.stdout = stdout
+        self.returncode = rc
+
+
+def test_choose_video_args_copies_h264():
+    # Source already H.264 -> stream copy, no transcode.
+    args = choose_video_args("rtsp://x", run=lambda *a, **k: _R("h264"))
+    assert args == ["-c:v", "copy"]
+
+
+def test_choose_video_args_uses_hardware_for_hevc():
+    # H.265 source + a build with VideoToolbox -> hardware encode, not libx264.
+    def run(cmd, **k):
+        if "ffprobe" in cmd[0]:
+            return _R("hevc")
+        return _R("... h264_videotoolbox ... h264_nvenc ...")   # -encoders listing
+    args = choose_video_args("rtsp://x", run=run)
+    assert args[:2] == ["-c:v", "h264_videotoolbox"]
+
+
+def test_choose_video_args_falls_back_to_libx264():
+    def run(cmd, **k):
+        if "ffprobe" in cmd[0]:
+            return _R("hevc")
+        return _R("(no hardware encoders here)")
+    args = choose_video_args("rtsp://x", run=run)
+    assert "libx264" in args
 
 
 # --- pure command builders ------------------------------------------------- #
