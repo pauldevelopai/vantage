@@ -186,6 +186,7 @@ export interface Site {
   normal_hours: Record<string, any>;
   camera_ids: string[];
   notes: string;
+  context: string;
   created_at: string;
   updated_at: string;
   posture: Posture;

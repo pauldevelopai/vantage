@@ -191,6 +191,8 @@ class SiteProfile:
     normal_hours: Dict[str, Any] = field(default_factory=dict)  # e.g. {"open": "07:00", "close": "18:00"}
     camera_ids: List[str] = field(default_factory=list)         # cameras scoped to this site
     notes: str = ""
+    context: str = ""                        # free-text intelligence context for the AI:
+    # who's normally here, known vehicles, routines, specific concerns.
     created_at: str = ""
     updated_at: str = ""
 
@@ -240,6 +242,7 @@ class SiteProfileStore:
         normal_hours: Optional[Dict[str, Any]] = None,
         camera_ids: Optional[List[str]] = None,
         notes: str = "",
+        context: str = "",
         now: Optional[datetime] = None,
     ) -> SiteProfile:
         now = now or datetime.utcnow()
@@ -254,6 +257,7 @@ class SiteProfileStore:
             normal_hours=normal_hours or {},
             camera_ids=list(camera_ids or []),
             notes=notes,
+            context=context,
             created_at=ts,
             updated_at=ts,
         )
@@ -273,7 +277,7 @@ class SiteProfileStore:
             return None
         allowed = {
             "name", "subject_type", "area", "address",
-            "timezone", "normal_hours", "camera_ids", "notes",
+            "timezone", "normal_hours", "camera_ids", "notes", "context",
         }
         for key, val in fields.items():
             if key not in allowed or val is None:

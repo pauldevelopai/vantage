@@ -2603,6 +2603,7 @@ class SiteCreateRequest(BaseModel):
     normal_hours: dict = Field(default_factory=dict)
     camera_ids: list = Field(default_factory=list)
     notes: str = ""
+    context: str = ""      # free-text intelligence context for the AI
 
 
 class SiteUpdateRequest(BaseModel):
@@ -2614,6 +2615,7 @@ class SiteUpdateRequest(BaseModel):
     normal_hours: Optional[dict] = None
     camera_ids: Optional[list] = None
     notes: Optional[str] = None
+    context: Optional[str] = None
 
 
 def _site_payload(site) -> dict:
@@ -2659,6 +2661,7 @@ async def create_site(
         normal_hours=req.normal_hours,
         camera_ids=req.camera_ids,
         notes=req.notes,
+        context=req.context,
     )
     get_store().append_audit("site_created",
                              {"site_id": site.site_id, "subject_type": site.subject_type,

@@ -249,8 +249,16 @@ def _build_prompt(site: SiteProfile, posture: Posture, findings: List[BriefFindi
         f"SITE: {site.name} — a {posture.label.lower()}.",
         f"THIS KIND OF SITE WEIGHS: {focus}.",
         f"NORMAL HERE: {normal}.",
-        f"FINDINGS (the only facts you may use):\n{facts}",
     ]
+    # Owner-supplied context — routines, expected people/vehicles, concerns. It
+    # helps judge what's normal vs worth a look; it is background, never a reason
+    # to accuse anyone.
+    hours = site.normal_hours or {}
+    if hours.get("open") or hours.get("close"):
+        parts.append(f"NORMAL HOURS: {hours.get('open', '?')}–{hours.get('close', '?')}.")
+    if (site.context or "").strip():
+        parts.append(f"OWNER CONTEXT (background, not evidence about anyone):\n  {site.context.strip()}")
+    parts.append(f"FINDINGS (the only facts you may use):\n{facts}")
     if area_render:
         parts.append(area_render)
     return system_prompt, "\n\n".join(parts)
