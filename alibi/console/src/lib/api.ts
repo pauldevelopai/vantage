@@ -1,6 +1,6 @@
 // API client for Alibi backend
 
-import type { IncidentSummary, IncidentDetail, IncidentExplanation, DecisionRequest, Settings, ShiftReport, Camera, TrailEntry, Site, Posture, SubjectType, CostSummary } from './types';
+import type { DashboardOverview, IncidentSummary, IncidentDetail, IncidentExplanation, DecisionRequest, Settings, ShiftReport, Camera, TrailEntry, Site, Posture, SubjectType, CostSummary } from './types';
 import { getToken } from './auth';
 
 const API_BASE = '/api';
@@ -620,6 +620,12 @@ export const api = {
   async getCostSummary(): Promise<CostSummary> {
     const res = await fetchWithAuth(`${API_BASE}/costs/summary`);
     if (!res.ok) throw new Error('Failed to load costs');
+    return res.json();
+  },
+
+  async getDashboardOverview(range: string = '24h'): Promise<DashboardOverview> {
+    const res = await fetchWithAuth(`${API_BASE}/dashboard/overview?range=${encodeURIComponent(range)}`);
+    if (!res.ok) throw new Error('Failed to load the dashboard');
     return res.json();
   },
 };

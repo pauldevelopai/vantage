@@ -191,3 +191,41 @@ export interface Site {
   updated_at: string;
   posture: Posture;
 }
+
+// --- Dashboard overview (all real, from stored camera events) --------------- //
+
+export interface DashboardRow {
+  event_id: string;
+  camera_id: string;
+  camera_name: string;
+  ts: string;
+  event_type: string;
+  severity: number;
+  confidence: number;
+  snapshot_url?: string;
+  description: string;
+  people: number;
+  vehicles: number;
+  plates: string[];
+  watchlist_hit: boolean;
+  watchlist_label?: string | null;
+  hotlist_hit: boolean;
+  hotlist_reason?: string | null;
+}
+
+export interface DashboardCamera {
+  camera_id: string;
+  name: string;
+  latest?: DashboardRow | null;
+}
+
+export interface DashboardOverview {
+  range: string;
+  generated_at: string;
+  kpis: { events: number; alerts: number; people: number; vehicles: number };
+  by_type: Array<{ type: string; count: number }>;
+  over_time: Array<{ hour: string; events: number; alerts: number }>;
+  recent: DashboardRow[];
+  cameras: DashboardCamera[];
+  alerts: DashboardRow[];
+}
