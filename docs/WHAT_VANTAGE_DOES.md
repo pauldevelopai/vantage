@@ -98,8 +98,18 @@ on the PC and in the cloud.
     proven end-to-end on a real interpreter. *(`cameras/record_agent.py`,
     `GET /cameras/bridge/record-targets`, `GET /cameras/bridge/download-recorder`;
     `tests/test_record_agent.py`, `tests/test_recorder_zipapp.py`.)*
-  - ⬜ **Motion-frame upload** → cloud detection → incidents (carry the motion
-    JPEGs the trigger writes up to the cloud so the brief narrates real events).
+  - ✅ **Motion-frame upload → cloud vision → incidents** (phase 4). The agent
+    ships motion stills (rate-limited); the cloud runs `SceneAnalyzer` (Claude
+    vision) and raises a neutral, severity-capped incident on a person / vehicle /
+    safety concern — which the explainer + area context + brief narrate. AI on
+    stills, never video; motion-gated + throttled, so idle = free.
+    *(`cameras/frame_analyzer.py`, `POST /cameras/bridge/frame`,
+    `GET /cameras/frames/{id}`; `tests/test_frame_analyzer.py`.)*
+  - ✅ **Live view (on-demand HLS)** — the agent streams a watched camera
+    (sub-stream, H.264, bandwidth-capped) only while the console player is open.
+    *(`cameras/hls_relay.py`, record_agent `HlsStreamer`; `tests/test_hls_relay.py`.)*
+  - ✅ **One unified agent** does discovery + recording + live view + frame AI +
+    heartbeat; the LAN scan also surfaces computers as candidate recording PCs.
 - **Cloud:** runs the heavy AI (detection + Claude + the vast context) on events
   only → incidents + the site security brief. Clips pulled from the PC on demand.
 - Economical because spend follows **activity**, not the clock; the vast external
