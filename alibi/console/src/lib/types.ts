@@ -261,3 +261,41 @@ export interface PersonHistoryResult {
   prior_sightings: PriorSighting[];
   summary: string;
 }
+
+// --- Intel data sources ----------------------------------------------------- //
+
+export interface UserSource {
+  source_id: string;
+  name: string;
+  domain: string;
+  lawful_basis: string;
+  retention_days: number;
+  description: string;
+  endpoint: string;
+  notes: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  record_count: number;
+}
+
+export interface CatalogueEntry {
+  key: string;
+  name: string;
+  provides: string;
+  why: string;
+  status: 'available' | 'gated' | 'blocked' | 'rejected';
+  requirement: string;
+  url?: string;
+  domain: string;
+  lawful_basis: string;
+  recommended?: boolean;
+}
+
+export interface SourceVocab {
+  sources: UserSource[];
+  catalogue: CatalogueEntry[];
+  domains: Array<{ value: string; label: string }>;
+  lawful_bases: Array<{ value: string; label: string }>;
+  boundary: string;
+}

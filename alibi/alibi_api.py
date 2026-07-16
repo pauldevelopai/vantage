@@ -2988,6 +2988,124 @@ async def costs_summary(window_days: int = 30, current_user: User = Depends(get_
     return summary(window_days=window_days)
 
 
+# ── Intel: owner-declared data sources ──────────────────────────
+#
+# "Feed the brain as you go." The owner declares a source from the console; the
+# same boundary the code-declared registry enforces applies here — an allowed
+# (non-personal) domain, a stated lawful basis, and a positive retention. The
+# catalogue alongside it is the honest roadmap of routes we have researched but do
+# NOT have yet, each with what it would actually take.
+
+class UserSourceCreate(BaseModel):
+    name: str
+    domain: str
+    lawful_basis: str
+    retention_days: int
+    description: str = ""
+    endpoint: str = ""
+    notes: str = ""
+
+
+class UserSourceRecords(BaseModel):
+    records: List[dict]
+
+
+@app.get("/intelligence/sources", tags=["Intelligence"])
+async def list_user_sources(current_user: User = Depends(get_current_user)):
+    """Sources the owner has declared, plus the vocabulary the console needs."""
+    from alibi.dataengine.user_sources import get_user_source_store, CATALOGUE
+    from alibi.dataengine.schemas import DataDomain, LawfulBasis
+    return {
+        "sources": [s.to_dict() for s in get_user_source_store().list()],
+        "catalogue": CATALOGUE,
+        "domains": [{"value": d.value, "label": d.value.replace("_", " ")} for d in DataDomain],
+        "lawful_bases": [{"value": b.value, "label": b.value.replace("_", " ")} for b in LawfulBasis],
+        "boundary": ("Non-personal data only. Vantage has no data domain for personal "
+                     "dossiers — a source for them cannot be declared, by design."),
+    }
+
+
+@app.post("/intelligence/sources", tags=["Intelligence"])
+async def create_user_source(req: UserSourceCreate,
+                             current_user: User = Depends(require_role([Role.ADMIN]))):
+    """Declare a new source. Rejected unless it names an allowed domain, a lawful
+    basis, and a retention period."""
+    from alibi.dataengine.user_sources import get_user_source_store
+    try:
+        src = get_user_source_store().add(
+            name=req.name, domain=req.domain, lawful_basis=req.lawful_basis,
+            retention_days=req.retention_days, description=req.description,
+            endpoint=req.endpoint, notes=req.notes,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return src.to_dict()
+
+
+@app.post("/intelligence/sources/{source_id}/records", tags=["Intelligence"])
+async def feed_user_source(source_id: str, req: UserSourceRecords,
+                           current_user: User = Depends(require_role([Role.ADMIN]))):
+    """Feed records into a declared source. They are stored under that source's
+    declared domain, lawful basis and retention — never outside it."""
+    from alibi.dataengine.user_sources import get_user_source_store
+    store_u = get_user_source_store()
+    src = store_u.get(source_id)
+    if not src:
+        raise HTTPException(status_code=404, detail="Source not found")
+    if not req.records:
+        raise HTTPException(status_code=400, detail="No records supplied")
+
+    import uuid as _uuid
+    from alibi.dataengine.store import DataEngineStore
+    from alibi.dataengine.schemas import DataDomain, LawfulBasis, SourceSpec, build_record
+    from alibi.dataengine.guard import assert_non_personal, PersonalDataRejected
+
+    # Reconstruct the declaration as a SourceSpec so retention is derived from it,
+    # exactly like a code-declared source.
+    spec = SourceSpec(
+        source_id=src.source_id, domain=DataDomain(src.domain),
+        lawful_basis=LawfulBasis(src.lawful_basis),
+        retention_days=src.retention_days, description=src.description or src.name,
+    )
+    ds = DataEngineStore()
+    written, rejected = 0, []
+    for rec in req.records:
+        if not isinstance(rec, dict):
+            rejected.append("a record was not an object")
+            continue
+        try:
+            # Fail-closed: the same guard every ingested record passes. If the
+            # owner pastes anything person-identifying, it is refused here.
+            assert_non_personal(rec)
+        except PersonalDataRejected as e:
+            rejected.append(str(e))
+            continue
+        try:
+            ds.append(build_record(
+                record_id="rec_" + _uuid.uuid4().hex[:12], spec=spec, payload=rec,
+                provenance={"declared_by": current_user.username if current_user else "admin",
+                            "source_name": src.name, "endpoint": src.endpoint or None,
+                            "entered": "console"},
+            ))
+            written += 1
+        except Exception as e:
+            rejected.append(str(e))
+
+    store_u.bump_records(source_id, written)
+    if written == 0 and rejected:
+        raise HTTPException(status_code=400, detail="; ".join(rejected[:3]))
+    return {"status": "ok", "written": written, "rejected": rejected, "source_id": source_id}
+
+
+@app.delete("/intelligence/sources/{source_id}", tags=["Intelligence"])
+async def delete_user_source(source_id: str,
+                             current_user: User = Depends(require_role([Role.ADMIN]))):
+    from alibi.dataengine.user_sources import get_user_source_store
+    if not get_user_source_store().delete(source_id):
+        raise HTTPException(status_code=404, detail="Source not found")
+    return {"status": "deleted"}
+
+
 @app.get("/intelligence/data", tags=["Intelligence"])
 async def intelligence_data(current_user: User = Depends(get_current_user)):
     """External, non-personal reference data the Data Engine harvests (crime/area
