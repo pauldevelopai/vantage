@@ -294,9 +294,25 @@ def main(argv=None):  # pragma: no cover
         print("[record-agent] ffmpeg not found on this PC. Install ffmpeg and retry.")
         return 2
 
-    creds = ba.load_creds() or ba.register(ba.PAIRING_CODE)
+    # Prefer saved credentials, but if the cloud has forgotten this recorder
+    # (removed/reset), the saved key is dead — drop it and re-pair with the fresh
+    # code baked into this download. Self-heals instead of looping "unauthorized".
+    creds = ba.load_creds()
+    if creds:
+        chk, _ = ba._http("GET", "/api/cameras/bridge/jobs",
+                          headers={"X-Bridge-Id": creds["bridge_id"],
+                                   "X-Bridge-Token": creds["token"]})
+        if chk == 401:
+            print("[record-agent] saved credentials no longer valid — re-pairing.")
+            try:
+                os.remove(ba.CRED_FILE)
+            except OSError:
+                pass
+            creds = None
     if not creds:
-        print("[record-agent] could not pair with Vantage — check the pairing code / URL.")
+        creds = ba.register(ba.PAIRING_CODE)
+    if not creds:
+        print("[record-agent] could not pair with Vantage — re-download the recorder (the code may have expired).")
         return 3
     headers = {"X-Bridge-Id": creds["bridge_id"], "X-Bridge-Token": creds["token"]}
 
