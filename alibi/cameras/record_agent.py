@@ -25,10 +25,12 @@ import time
 try:  # in-repo (tests, the cloud box)
     from alibi.cameras.recorder import (
         CameraRecorder, RetentionPolicy, ffmpeg_available, build_hls_command,
+        choose_video_args,
     )
 except ImportError:  # flat zipapp layout on the user's PC
     from recorder import (
         CameraRecorder, RetentionPolicy, ffmpeg_available, build_hls_command,
+        choose_video_args,
     )
 
 
@@ -139,7 +141,13 @@ class HlsStreamer:
     def _start(self, cid, url):
         d = self._cam_dir(cid)
         os.makedirs(d, exist_ok=True)
-        proc = self._spawn(build_hls_command(url, d, ffmpeg=self.ffmpeg))
+        # Pick copy vs hardware/software transcode from the source codec — this
+        # is what keeps two feeds smooth instead of stuttering.
+        try:
+            video_args = choose_video_args(url, ffmpeg=self.ffmpeg)
+        except Exception:
+            video_args = None
+        proc = self._spawn(build_hls_command(url, d, ffmpeg=self.ffmpeg, video_args=video_args))
         self._streams[cid] = {"proc": proc, "dir": d, "sent": {}}
 
     def _stop(self, cid):
