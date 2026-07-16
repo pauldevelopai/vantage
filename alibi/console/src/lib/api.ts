@@ -1,6 +1,6 @@
 // API client for Alibi backend
 
-import type { IncidentSummary, IncidentDetail, IncidentExplanation, DecisionRequest, Settings, ShiftReport, Camera, TrailEntry, Site, Posture, SubjectType } from './types';
+import type { IncidentSummary, IncidentDetail, IncidentExplanation, DecisionRequest, Settings, ShiftReport, Camera, TrailEntry, Site, Posture, SubjectType, CostSummary } from './types';
 import { getToken } from './auth';
 
 const API_BASE = '/api';
@@ -582,6 +582,25 @@ export const api = {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.detail || 'Search failed');
     }
+    return res.json();
+  },
+
+  // External intelligence — the non-personal reference data the engine harvests.
+  async getIntelligenceData(): Promise<{
+    boundary: string;
+    sources: Array<{ source_id: string; domain: string; description: string; apify_actor: string | null; retention_days: number }>;
+    stats: { total_live_records: number; by_source: Record<string, number>; by_domain: Record<string, number> };
+    records: Array<{ source_id: string; domain: string; lawful_basis: string; ingested_at: string; retention_until: string; payload: Record<string, any> }>;
+  }> {
+    const res = await fetchWithAuth(`${API_BASE}/intelligence/data`);
+    if (!res.ok) throw new Error('Failed to load intelligence data');
+    return res.json();
+  },
+
+  // Service usage & estimated cost.
+  async getCostSummary(): Promise<CostSummary> {
+    const res = await fetchWithAuth(`${API_BASE}/costs/summary`);
+    if (!res.ok) throw new Error('Failed to load costs');
     return res.json();
   },
 };

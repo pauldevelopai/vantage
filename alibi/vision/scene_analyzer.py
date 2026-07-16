@@ -320,6 +320,12 @@ Be descriptive, factual, and include visual details about people."""
                 if getattr(block, "type", None) == "text"
             ).strip()
 
+            try:
+                from alibi.cost_tracker import record_from_response
+                record_from_response("vision", self.anthropic_vision_model, response)
+            except Exception:
+                pass
+
             if not description:
                 return self._analyze_with_basic_cv(frame, prompt)
 

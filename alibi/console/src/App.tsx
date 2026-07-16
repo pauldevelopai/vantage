@@ -13,6 +13,8 @@ import { SitesPage } from './pages/SitesPage';
 import { WatchlistPage } from './pages/WatchlistPage';
 import { SearchPage } from './pages/SearchPage';
 import PatternsPage from './pages/PatternsPage';
+import { IntelPage } from './pages/IntelPage';
+import { CostsPage } from './pages/CostsPage';
 import { isAuthenticated, getUser, logout, hasRole } from './lib/auth';
 
 type LayoutMode = 'standard' | 'control-room';
@@ -89,6 +91,8 @@ function Layout({ children }: { children: React.ReactNode }) {
               {navLink('/metrics', 'Metrics')}
               {navLink('/vehicle-search', 'Vehicles')}
               {(hasRole('supervisor') || hasRole('admin')) && navLink('/watchlist', 'Watchlist')}
+              {navLink('/intel', 'Intel')}
+              {hasRole('admin') && navLink('/costs', 'Costs')}
               {hasRole('admin') && navLink('/settings', 'Settings')}
             </div>
             <div className="flex items-center gap-2.5 ml-auto flex-shrink-0">
@@ -148,6 +152,8 @@ function App() {
                   <Route path="/cameras" element={<CamerasPage />} />
                   <Route path="/recorders" element={<RecordersPage />} />
                   <Route path="/sites" element={<SitesPage />} />
+                  <Route path="/intel" element={<IntelPage />} />
+                  <Route path="/costs" element={<CostsPage />} />
                   <Route path="/watchlist" element={<WatchlistPage />} />
                   <Route path="/settings" element={<SettingsPage />} />
                 </Routes>
