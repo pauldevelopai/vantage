@@ -282,6 +282,20 @@ def main(argv=None):  # pragma: no cover
         daemon=True,
     ).start()
 
+    # --- LAN scan + heartbeat (unified: this one agent also does discovery) --- #
+    # Reuse the proven scanner loop so "Find my cameras" works from this PC, and
+    # so it reports online. poll_once() heartbeats when idle, scans on a job.
+    def scan_loop():
+        while True:
+            try:
+                if ba.poll_once(headers) == "unauthorized":
+                    print("[agent] credentials rejected — re-pair the recorder.")
+                    return
+            except Exception as e:
+                print(f"[agent] scan/heartbeat failed: {e}")
+            time.sleep(getattr(ba, "POLL_SECONDS", 3))
+    threading.Thread(target=scan_loop, daemon=True).start()
+
     retention = None
     if args.max_gb or args.max_days:
         retention = RetentionPolicy(
