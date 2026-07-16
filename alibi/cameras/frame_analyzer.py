@@ -36,6 +36,43 @@ ANALYZE_MIN_GAP_SECONDS = 8          # at most one vision call per camera per th
 _VEHICLE_WORDS = ("car", "truck", "motorcycle", "bike", "bakkie", "van", "taxi", "bus")
 _last_analyzed: Dict[str, float] = {}
 
+# What each camera last saw, so we can tell PRESENCE from CHANGE.
+_last_seen: Dict[str, tuple] = {}
+
+
+def is_new_activity(camera_id: str, person_count: int, vehicle_count: int,
+                    flagged: bool = False) -> bool:
+    """True if this frame shows MORE than the camera's last frame did.
+
+    Security cares about change, not presence. A car parked on the driveway is
+    detected — correctly — in every single frame, so alerting on presence means
+    'vehicle detected' every few seconds, all night, forever. Real-world proof:
+    a white SUV parked in view raised an event on every frame it appeared in.
+
+    So an event is only worth raising when the count goes UP (someone arrived, a
+    second car pulled in). A scene that stays the same is furniture. Anything
+    flagged (hotlist/watchlist) always passes — that's never furniture.
+
+    Returns True and records the new baseline. Pure enough to test: state is a
+    module dict keyed by camera, reset via `reset_activity_baseline`.
+    """
+    key = (int(person_count or 0), int(vehicle_count or 0))
+    prev = _last_seen.get(camera_id)
+    _last_seen[camera_id] = key
+    if flagged:
+        return True
+    if prev is None:
+        return key != (0, 0)          # first sighting is news, an empty scene isn't
+    return key[0] > prev[0] or key[1] > prev[1]
+
+
+def reset_activity_baseline(camera_id: Optional[str] = None) -> None:
+    """Forget what a camera last saw (or all cameras)."""
+    if camera_id is None:
+        _last_seen.clear()
+    else:
+        _last_seen.pop(camera_id, None)
+
 
 def should_analyze(camera_id: str, now: float, min_gap: float = ANALYZE_MIN_GAP_SECONDS) -> bool:
     """Throttle: True at most once per `min_gap` seconds per camera."""
@@ -78,6 +115,13 @@ def decide_event(
 
     if not (has_person or has_vehicle or safety or hotlist_hit or watchlist_hit):
         return None                                  # honest: nothing to flag
+
+    # Presence isn't news — change is. A car parked in view is detected in every
+    # frame; without this, that's an alert every few seconds forever. Only raise
+    # when there is MORE than the camera last saw (or something flagged).
+    if intel and not is_new_activity(camera_id, person_count, vehicle_count,
+                                     flagged=(hotlist_hit or watchlist_hit or safety)):
+        return None
 
     if has_person:
         event_type, severity = "person_detected", 3
