@@ -2406,6 +2406,56 @@ async def bridge_put_hls(camera_id: str, filename: str, request: Request,
     return {"status": "ok", "bytes": len(body)}
 
 
+# ── Frame AI (phase 4): motion still -> vision -> incident ───────
+#
+# The agent uploads motion-triggered stills (a few seconds apart, only when
+# something moves). The cloud runs vision on each and, when it sees a person /
+# vehicle / safety concern, creates an incident that the explainer + area
+# context + security brief already narrate. Motion-gated on the edge and
+# throttled here, so idle scenes cost nothing. See cameras/frame_analyzer.py.
+
+@app.post("/cameras/bridge/frame", tags=["Camera Bridge"])
+async def bridge_ingest_frame(camera_id: str, request: Request,
+                              bridge_id: str = Depends(_require_bridge)):
+    """The agent posts a motion still; the cloud analyses it and may raise an
+    incident. Throttled per camera so a motion burst can't spam the vision model."""
+    import time as _time
+    from alibi.cameras import frame_analyzer as fa
+    data = await request.body()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty frame")
+    if not fa.should_analyze(camera_id, _time.time()):
+        return {"analyzed": False, "reason": "throttled"}
+    analysis = fa.analyze_bytes(data)
+    if not analysis:
+        return {"analyzed": False, "reason": "analysis_unavailable"}
+
+    frame_id = fa.store_frame(data)
+    event = fa.decide_event(analysis, camera_id, datetime.utcnow(), frame_id)
+    if event is None:
+        return {"analyzed": True, "incident": None,
+                "description": analysis.get("description", "")}
+
+    store = get_store()
+    settings = get_settings()
+    store.append_event(event)
+    incident = process_camera_event(event, store, settings)
+    return {"analyzed": True, "incident": incident.incident_id,
+            "event_type": event.event_type, "severity": event.severity}
+
+
+@app.get("/cameras/frames/{frame_id}", tags=["Cameras"])
+async def get_camera_frame(frame_id: str, current_user: User = Depends(get_current_user)):
+    """Serve a stored evidence frame (the still behind an incident)."""
+    from fastapi.responses import Response
+    from alibi.cameras.frame_analyzer import get_frame
+    data = get_frame(frame_id.replace(".jpg", ""))
+    if data is None:
+        raise HTTPException(status_code=404, detail="Frame not found")
+    return Response(content=data, media_type="image/jpeg",
+                    headers={"Cache-Control": "private, max-age=3600"})
+
+
 # ── Sites (what Vantage is protecting) ──────────────────────────
 #
 # A "site" is the subject a deployment protects — a home, an office, or a
