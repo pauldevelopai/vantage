@@ -149,8 +149,8 @@ def test_hls_command_is_bandwidth_tuned():
 
 def test_hls_command_defaults_are_nimble():
     cmd = build_hls_command("rtsp://x/sub", "/hls/cam1")
-    assert cmd[cmd.index("-r") + 1] == "12"              # low fps by default
-    assert cmd[cmd.index("-maxrate") + 1] == "800k"      # low ceiling for scale
+    assert cmd[cmd.index("-r") + 1] == "10"              # low fps by default
+    assert cmd[cmd.index("-maxrate") + 1] == "500k"      # low ceiling for scale
 
 
 class _FakeProc:

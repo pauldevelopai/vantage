@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { hasRole } from '../lib/auth';
-import type { Site, Posture, SubjectType } from '../lib/types';
+import { LivePlayer } from '../components/LivePlayer';
+import type { Site, Posture, SubjectType, Camera } from '../lib/types';
 
 const SUBJECT_META: Record<SubjectType, { label: string; icon: string; badge: string }> = {
   home:          { label: 'Home',          icon: '🏠', badge: 'bg-green-100 text-green-800' },
@@ -16,6 +17,7 @@ export function SitesPage() {
 
   const [sites, setSites] = useState<Site[]>([]);
   const [postures, setPostures] = useState<Record<SubjectType, Posture> | null>(null);
+  const [cameras, setCameras] = useState<Camera[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,6 +50,7 @@ export function SitesPage() {
   useEffect(() => {
     loadSites();
     loadPostures();
+    api.listCameras().then(d => setCameras(d.cameras)).catch(() => {});
   }, []);
 
   async function handleCreate(e: React.FormEvent) {
@@ -205,7 +208,7 @@ export function SitesPage() {
       ) : (
         <div className="space-y-4 my-4">
           {sites.map(site => (
-            <SiteCard key={site.site_id} site={site} isAdmin={isAdmin} onDelete={() => handleDelete(site)} />
+            <SiteCard key={site.site_id} site={site} cameras={cameras} isAdmin={isAdmin} onDelete={() => handleDelete(site)} />
           ))}
         </div>
       )}
@@ -217,10 +220,16 @@ export function SitesPage() {
   );
 }
 
-function SiteCard({ site, isAdmin, onDelete }: { site: Site; isAdmin: boolean; onDelete: () => void }) {
+function SiteCard({ site, cameras, isAdmin, onDelete }: { site: Site; cameras: Camera[]; isAdmin: boolean; onDelete: () => void }) {
   const [open, setOpen] = useState(false);
+  const [live, setLive] = useState(false);
   const meta = SUBJECT_META[site.subject_type];
   const p = site.posture;
+
+  // The site's cameras, in registration order.
+  const siteCameras = site.camera_ids
+    .map(id => cameras.find(c => c.camera_id === id))
+    .filter((c): c is Camera => !!c);
 
   return (
     <div className="bg-white shadow rounded-lg p-5">
@@ -238,6 +247,14 @@ function SiteCard({ site, isAdmin, onDelete }: { site: Site; isAdmin: boolean; o
           {p?.summary && <p className="text-sm text-gray-600 mt-2">{p.summary}</p>}
         </div>
         <div className="flex items-center gap-3">
+          {site.camera_ids.length > 0 && (
+            <button
+              onClick={() => setLive(v => !v)}
+              className="text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md px-3 py-1.5"
+            >
+              {live ? 'Stop live' : '▶ Live feeds'}
+            </button>
+          )}
           <button onClick={() => setOpen(v => !v)} className="text-sm text-blue-600 hover:text-blue-800">
             {open ? 'Hide' : 'What the AI focuses on'}
           </button>
@@ -246,6 +263,19 @@ function SiteCard({ site, isAdmin, onDelete }: { site: Site; isAdmin: boolean; o
           )}
         </div>
       </div>
+
+      {live && (
+        <div className="mt-4">
+          {siteCameras.length === 0 ? (
+            <p className="text-sm text-gray-400">This site has cameras assigned, but none are loaded yet.</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {siteCameras.map(c => <LivePlayer key={c.camera_id} cameraId={c.camera_id} name={c.name} />)}
+            </div>
+          )}
+          <p className="mt-2 text-xs text-gray-400">Live only while open — streaming stops when you click Stop live or leave.</p>
+        </div>
+      )}
 
       {open && p && (
         <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
