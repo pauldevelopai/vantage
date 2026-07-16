@@ -2896,6 +2896,103 @@ async def get_site(site_id: str, current_user: User = Depends(get_current_user))
     return _site_payload(site)
 
 
+# ── Security Advisor (Phase 4) ──────────────────────────────────
+#
+# "How do I improve my security?" — observed state in, prioritised plain-English
+# recommendations out. Every one cites the fact that triggered it; a healthy
+# deployment returns none. It advises on the SYSTEM, never on people.
+
+@app.get("/advisor", tags=["Advisor"])
+async def security_advisor(site_id: Optional[str] = None,
+                           window_hours: int = 24,
+                           current_user: User = Depends(get_current_user)):
+    """Recommendations derived from the deployment's real state."""
+    from alibi.advisor import build_recommendations, summarise
+
+    state: Dict[str, Any] = {"window_hours": window_hours}
+
+    # Recorders
+    try:
+        from alibi.cameras.bridge import get_bridge_registry
+        # list_bridges() returns public dicts with a computed "online" key
+        # (freshness of the last heartbeat) — not objects with an attribute.
+        bridges = get_bridge_registry().list_bridges()
+        state["recorders_total"] = len(bridges)
+        state["recorders_online"] = sum(1 for b in bridges if b.get("online"))
+    except Exception:
+        pass
+
+    # Cameras + which are on no site
+    site_cam_ids: set = set()
+    sites_state = []
+    try:
+        from alibi.site_profile import get_site_profile_store
+        for s in get_site_profile_store().list():
+            site_cam_ids.update(s.camera_ids or [])
+            sites_state.append({
+                "name": s.name,
+                "camera_ids": list(s.camera_ids or []),
+                "has_context": bool((s.context or "").strip()),
+                "has_hours": bool((s.normal_hours or {}).get("open") or (s.normal_hours or {}).get("close")),
+                "area": (s.area or "").strip(),
+            })
+        state["sites"] = sites_state
+    except Exception:
+        pass
+    try:
+        from alibi.cameras.camera_store import get_camera_store
+        cams = get_camera_store().list_all()
+        state["cameras_total"] = len(cams)
+        state["cameras_unassigned"] = [c.camera_id for c in cams if c.camera_id not in site_cam_ids]
+    except Exception:
+        pass
+
+    # Lists that only pay off once switched on
+    try:
+        from alibi.plates.hotlist_store import HotlistStore
+        state["hotlist_count"] = HotlistStore().count()
+    except Exception:
+        pass
+    try:
+        from alibi.watchlist.watchlist_store import WatchlistStore
+        state["watchlist_count"] = len(WatchlistStore().load_all())
+    except Exception:
+        pass
+    try:
+        from alibi.dataengine.user_sources import get_user_source_store
+        state["intel_sources"] = len(get_user_source_store().list())
+    except Exception:
+        pass
+
+    # Is the vision layer real, or the fallback?
+    try:
+        import os as _os
+        state["vision_backend"] = "claude" if _os.getenv("ANTHROPIC_API_KEY") else (
+            "openai" if _os.getenv("OPENAI_API_KEY") else "basic_cv")
+    except Exception:
+        pass
+
+    # Blind spots for a specific site come from its brief's coverage
+    if site_id:
+        try:
+            brief = await get_site_brief(site_id, window_hours=window_hours,
+                                         current_user=current_user)
+            state["quiet_cameras"] = (brief.get("coverage") or {}).get("quiet_cameras") or []
+            state["incident_count"] = brief.get("incident_count", 0)
+        except Exception:
+            pass
+
+    recs = build_recommendations(state)
+    return {
+        "summary": summarise(recs),
+        "recommendations": [r.to_dict() for r in recs],
+        "generated_ts": datetime.utcnow().isoformat(),
+        "observed": {k: v for k, v in state.items() if k != "sites"},
+        "note": ("Every recommendation is derived from your system's actual state and cites the "
+                 "fact behind it. Advice is about coverage and configuration — never about people."),
+    }
+
+
 @app.get("/sites/{site_id}/brief", tags=["Sites"])
 async def get_site_brief(
     site_id: str,

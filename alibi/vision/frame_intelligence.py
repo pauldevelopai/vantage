@@ -26,12 +26,27 @@ watchlist/hotlist hits, cross-camera links) instead of substring-matching a VLM'
 free text.
 """
 
+import os
 import threading
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 _VEHICLE_CLASSES = {"car", "truck", "bus", "motorcycle"}
+
+# Minimum detection confidence we will act on.
+#
+# The detector returns everything it half-suspects, down to ~0.25. On a real
+# night-time garden that flood looked like: cat 69, car 63, pottedplant 41,
+# train 9, aeroplane 4, bear 1, broccoli 2 — median confidence 0.304, with the
+# "person" detections that raised alerts scoring 0.273. Every frame became
+# "person_detected", the owner would have been alerted all night about shrubs,
+# and each false positive also bought a paid vision call.
+#
+# Genuine subjects score high (a real person in a clear frame: 0.94). 0.6 keeps
+# those and drops ~94% of that noise. Tunable for a site that needs to reach
+# further into the dark, at the cost of more false alarms.
+_MIN_DETECTION_CONFIDENCE = float(os.environ.get("VANTAGE_MIN_DETECTION_CONF", "0.6"))
 
 # Serialise the one-time model load: the first frame(s) trigger a ~30s build of
 # the detection/face/ReID models. Without this, two cameras' first frames could
@@ -48,10 +63,26 @@ def _mce():
     return mce
 
 
+def confident_detections(detections, min_conf: float = None) -> List[Any]:
+    """Drop detections we shouldn't act on. Pure, so the threshold is testable."""
+    floor = _MIN_DETECTION_CONFIDENCE if min_conf is None else min_conf
+    out = []
+    for d in detections or []:
+        try:
+            if float(getattr(d, "confidence", 0)) >= floor:
+                out.append(d)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def _run_detection(mce, frame) -> List[Any]:
     try:
         det = mce._gatekeeper.process_frame(frame, zones_config=None)
-        return det.get("detections", []) or []
+        # Filter at source: everything downstream (counts, the incident decision,
+        # the paid VLM gate, vehicle ReID crops) should only ever see detections
+        # we actually believe.
+        return confident_detections(det.get("detections", []))
     except Exception as e:  # pragma: no cover - depends on model backend
         print(f"[frame-intel] detection failed: {e}")
         return []
