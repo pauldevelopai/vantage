@@ -2445,6 +2445,19 @@ def _build_record_targets() -> list:
     return targets
 
 
+class BridgeStorageRequest(BaseModel):
+    storage: dict
+
+
+@app.post("/cameras/bridge/storage", tags=["Camera Bridge"])
+async def bridge_report_storage(req: BridgeStorageRequest,
+                                bridge_id: str = Depends(_require_bridge)):
+    """The agent reports what it's storing on the PC (folder, size, per-camera)."""
+    from alibi.cameras.bridge import get_bridge_registry
+    get_bridge_registry().set_storage(bridge_id, req.storage)
+    return {"status": "ok"}
+
+
 @app.get("/cameras/bridge/record-targets", tags=["Camera Bridge"])
 async def bridge_record_targets(bridge_id: str = Depends(_require_bridge)):
     """The recording agent pulls the cameras it should record, each with a

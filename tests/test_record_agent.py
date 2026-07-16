@@ -284,6 +284,32 @@ def test_frame_loop_survives_errors():
     frame_loop(up, sleep, should_run=lambda: ticks["n"] < 2)   # must not raise
 
 
+# --- storage stats --------------------------------------------------------- #
+
+def test_storage_stats():
+    from alibi.cameras.record_agent import storage_stats
+
+    class St:
+        def __init__(self, size, mtime): self.st_size = size; self.st_mtime = mtime
+
+    files = {
+        "/rec": ["cam1", "_hls"],                       # _hls skipped
+        "/rec/cam1/recordings": ["a.mp4", "b.mp4"],
+        "/rec/cam1/motion": ["m.jpg"],
+    }
+    sizes = {
+        "/rec/cam1/recordings/a.mp4": St(100, 1.0),
+        "/rec/cam1/recordings/b.mp4": St(200, 5.0),
+        "/rec/cam1/motion/m.jpg": St(10, 3.0),
+    }
+    s = storage_stats("/rec", lister=lambda d: files.get(d, []), statter=lambda p: sizes[p])
+    assert s["total_bytes"] == 310
+    assert s["files"] == 3
+    assert s["cameras"]["cam1"] == {"bytes": 310, "files": 3}
+    assert s["oldest"] == 1.0 and s["newest"] == 5.0
+    assert s["dir"].endswith("/rec")
+
+
 # --- sub-stream derivation ------------------------------------------------- #
 
 def test_derive_substream_dahua():

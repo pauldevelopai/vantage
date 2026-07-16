@@ -244,6 +244,47 @@ def frame_loop(uploader, sleep, poll_seconds=3, should_run=lambda: True):
         sleep(poll_seconds)
 
 
+def storage_stats(base_dir, lister=None, statter=None):
+    """What the recorder is storing on this PC: absolute folder, total bytes,
+    file count, oldest/newest, and a per-camera breakdown. Dependency-injected
+    for tests."""
+    lister = lister or (lambda d: os.listdir(d) if os.path.isdir(d) else [])
+    statter = statter or os.stat
+    total = files = 0
+    oldest = newest = None
+    per_cam = {}
+    for cid in lister(base_dir):
+        if str(cid).startswith("_"):
+            continue
+        cam_bytes = cam_files = 0
+        for sub in ("recordings", "motion"):
+            d = os.path.join(base_dir, cid, sub)
+            for f in lister(d):
+                try:
+                    st = statter(os.path.join(d, f))
+                except OSError:
+                    continue
+                total += st.st_size; files += 1
+                cam_bytes += st.st_size; cam_files += 1
+                mt = st.st_mtime
+                oldest = mt if oldest is None else min(oldest, mt)
+                newest = mt if newest is None else max(newest, mt)
+        if cam_files:
+            per_cam[cid] = {"bytes": cam_bytes, "files": cam_files}
+    return {"dir": os.path.abspath(base_dir), "total_bytes": total, "files": files,
+            "oldest": oldest, "newest": newest, "cameras": per_cam}
+
+
+def storage_loop(base_dir, report, sleep, poll_seconds=60, should_run=lambda: True):
+    """Periodically compute + report storage stats. Injected report/sleep."""
+    while should_run():
+        try:
+            report(storage_stats(base_dir))
+        except Exception as e:
+            print(f"[storage] report failed: {e}")
+        sleep(poll_seconds)
+
+
 def hls_loop(streamer, fetch_watches, sleep, poll_seconds=2,
              should_run=lambda: True):
     """Drive an HlsStreamer: poll which cameras are watched, sync ffmpeg, upload
@@ -372,6 +413,15 @@ def main(argv=None):  # pragma: no cover
     frame_uploader = FrameUploader(base_dir=args.dir, upload=upload_frame)
     threading.Thread(
         target=frame_loop, args=(frame_uploader, time.sleep), daemon=True,
+    ).start()
+
+    # --- report what we're storing (so the console can show it) ------------- #
+    def report_storage(stats):
+        status, _ = ba._http("POST", "/api/cameras/bridge/storage",
+                             {"storage": stats}, headers=headers)
+        return status == 200
+    threading.Thread(
+        target=storage_loop, args=(args.dir, report_storage, time.sleep), daemon=True,
     ).start()
 
     # --- LAN scan + heartbeat (unified: this one agent also does discovery) --- #
