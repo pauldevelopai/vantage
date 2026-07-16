@@ -39,7 +39,11 @@ CRED_FILE = os.environ.get("VANTAGE_BRIDGE_CREDS", os.path.expanduser("~/.vantag
 POLL_SECONDS = 4
 
 CAMERA_PORTS = (554, 8554, 80, 8000, 8080, 8899, 88, 443, 34567, 37777)
+# Ports that mark a general-purpose computer / NAS — a candidate recording PC:
+# SSH, SMB, RDP, VNC, AFP, NetBIOS.
+COMPUTER_PORTS = (22, 445, 3389, 5900, 548, 139)
 RTSP_PORTS = (554, 8554)
+SCAN_PORTS = tuple(sorted(set(CAMERA_PORTS + COMPUTER_PORTS)))
 
 # Compact camera-vendor OUI seed (brand fingerprint from MAC).
 CAMERA_OUI = {
@@ -186,7 +190,7 @@ def sweep(subnet=None, timeout=1.0, max_workers=100):
     subnet = subnet or local_subnet()
     net = ipaddress.IPv4Network(subnet, strict=False)
     mine = local_ip()
-    targets = [(str(ip), p) for ip in net.hosts() if str(ip) != mine for p in CAMERA_PORTS]
+    targets = [(str(ip), p) for ip in net.hosts() if str(ip) != mine for p in SCAN_PORTS]
     found = {}
 
     def _check(ip, port):
@@ -258,7 +262,8 @@ def scan(subnet=None):
             "name": "", "manufacturer": "", "model": "", "resolution": "",
             "discovery_method": "", "already_registered": False, "vendor": "",
             "mac": "", "open_ports": [], "rtsp_confirmed": False,
-            "confidence": 0.0, "is_camera": False, "found_by": [],
+            "confidence": 0.0, "is_camera": False, "is_computer": False,
+            "found_by": [],
         })
 
     for ip, info in ws_discover().items():
@@ -303,6 +308,12 @@ def scan(subnet=None):
             score += 0.2
         c["confidence"] = round(min(score, 1.0), 2)
         c["is_camera"] = bool(c["confidence"] >= 0.5 or c["rtsp_confirmed"])
+        # A non-camera with computer/NAS ports is a candidate recording PC.
+        c["is_computer"] = bool(
+            not c["is_camera"] and any(p in c["open_ports"] for p in COMPUTER_PORTS)
+        )
+        if c["is_computer"] and c["name"].startswith(("Camera (", "None (")):
+            c["name"] = f"Computer ({ip})"
 
     return sorted(cams.values(), key=lambda c: (not c["is_camera"], -c["confidence"], c["ip"]))
 
