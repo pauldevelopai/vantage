@@ -29,7 +29,7 @@ free text.
 import threading
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 _VEHICLE_CLASSES = {"car", "truck", "bus", "motorcycle"}
 
@@ -125,7 +125,8 @@ def _run_plates(mce, frame, camera_id: str, ts: datetime, out: Dict[str, Any]) -
             pass
 
 
-def _run_faces(mce, frame, camera_id: str, ts: datetime, out: Dict[str, Any]) -> None:
+def _run_faces(mce, frame, camera_id: str, ts: datetime, out: Dict[str, Any],
+               frame_id: Optional[str] = None) -> None:
     """Detect faces; match against the watchlist; write a FaceSighting and a
     cross-camera appearance link. Degrades to nothing if the face backend is
     unavailable. Mirrors the phone endpoint."""
@@ -172,12 +173,17 @@ def _run_faces(mce, frame, camera_id: str, ts: datetime, out: Dict[str, Any]) ->
             out["faces"].append({"watchlist_match": False})
 
         try:
+            # Point the sighting at the evidence frame it came from, so a reviewer
+            # can actually SEE the face behind a "seen here before" result rather
+            # than an anonymous row. bbox locates the face within that frame.
             get_face_sighting_store().add_sighting(FaceSighting(
                 sighting_id=str(uuid.uuid4()), camera_id=camera_id, ts=ts.isoformat(),
                 embedding=embedding.tolist() if hasattr(embedding, "tolist") else list(embedding),
                 bbox=tuple(bbox), confidence=best_score if is_match else 0.0,
                 matched_person_id=top[0].person_id if (is_match and top) else None,
-                match_score=best_score if is_match else None, image_path=None, metadata={},
+                match_score=best_score if is_match else None,
+                image_path=(f"/api/cameras/frames/{frame_id}.jpg" if frame_id else None),
+                metadata={"frame_id": frame_id} if frame_id else {},
             ))
             if not is_match and embedding is not None:
                 mce._cross_camera_tracker.record_appearance_sighting(
@@ -218,7 +224,8 @@ def _run_vehicle_reid(mce, frame, detections, camera_id: str, ts: datetime, out:
             print(f"[frame-intel] vehicle-reid failed: {e}")
 
 
-def analyze_and_record(frame, camera_id: str, ts: datetime) -> Dict[str, Any]:
+def analyze_and_record(frame, camera_id: str, ts: datetime,
+                       frame_id: Optional[str] = None) -> Dict[str, Any]:
     """Run the structured CV stack on one BGR frame, WRITE the sighting stores,
     and return the structured findings. Each stage is independently guarded.
 
@@ -254,6 +261,6 @@ def analyze_and_record(frame, camera_id: str, ts: datetime) -> Dict[str, Any]:
     out["vehicle_count"] = sum(1 for d in detections if d.class_name in _VEHICLE_CLASSES)
 
     _run_plates(mce, frame, camera_id, ts, out)
-    _run_faces(mce, frame, camera_id, ts, out)
+    _run_faces(mce, frame, camera_id, ts, out, frame_id=frame_id)
     _run_vehicle_reid(mce, frame, detections, camera_id, ts, out)
     return out

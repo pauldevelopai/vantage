@@ -229,3 +229,35 @@ export interface DashboardOverview {
   cameras: DashboardCamera[];
   alerts: DashboardRow[];
 }
+
+// --- People (own-camera sightings + history) -------------------------------- //
+
+export interface PersonRow {
+  sighting_id: string;
+  camera_id: string;
+  camera_name: string;
+  ts: string;
+  bbox?: number[] | null;
+  image_url?: string | null;
+  matched_person_id?: string | null;
+  matched_label?: string | null;
+  match_score?: number | null;
+}
+
+export interface PriorSighting {
+  camera_id: string;
+  ts: string;
+  score: number;
+  matched_person_id?: string | null;
+}
+
+export interface PersonHistoryResult {
+  seen_before: boolean;
+  times_seen: number;
+  distinct_cameras: string[];
+  first_seen?: string | null;
+  last_seen?: string | null;
+  watchlist_person_id?: string | null;
+  prior_sightings: PriorSighting[];
+  summary: string;
+}

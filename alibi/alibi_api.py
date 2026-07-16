@@ -2677,6 +2677,10 @@ async def bridge_ingest_frame(camera_id: str, request: Request,
         return {"analyzed": False, "reason": "throttled"}
 
     now = datetime.utcnow()
+    # Store the evidence frame FIRST so sightings can reference it — a face
+    # sighting is far more useful to a reviewer when it points at the still it
+    # came from. Every analysed frame is stored regardless.
+    frame_id = fa.store_frame(data)
 
     # The decode + structured CV (detection/plates/faces/ReID) + VLM are all
     # synchronous and heavy — run them in a worker thread so they never block the
@@ -2689,7 +2693,7 @@ async def bridge_ingest_frame(camera_id: str, request: Request,
         intel_ = None
         try:
             from alibi.vision import frame_intelligence as fi
-            intel_ = fi.analyze_and_record(frame, camera_id, now)
+            intel_ = fi.analyze_and_record(frame, camera_id, now, frame_id=frame_id)
         except Exception as e:
             print(f"[frame-ai] structured intelligence failed: {e}")
         # COST GATE: the local detector is free, the vision model is not. Only
@@ -2704,8 +2708,6 @@ async def bridge_ingest_frame(camera_id: str, request: Request,
     intel, analysis = await run_in_threadpool(_analyze)
     if analysis is None:
         return {"analyzed": False, "reason": "decode_failed"}
-
-    frame_id = fa.store_frame(data)
     event = fa.decide_event(analysis, camera_id, now, frame_id, intel=intel)
     if event is None:
         return {"analyzed": True, "incident": None,
@@ -3102,6 +3104,58 @@ async def get_baselines(camera_id: str, current_user: User = Depends(get_current
 
 
 # ── Face Sighting Index ────────────────────────────────────────
+
+# ── People ──────────────────────────────────────────────────────
+#
+# "Who has been here, and where have they been before?" — answered ONLY from this
+# deployment's own cameras. Each row is a real face sighting with the evidence
+# still it came from; the history behind it is a cosine search over our own
+# sighting archive (patterns/person_history). Unknown people stay unknown: we
+# surface continuity ("seen 4 times since Tuesday"), never an identity we guessed.
+
+@app.get("/people/recent", tags=["People"])
+async def people_recent(limit: int = 60, hours: int = 168,
+                        current_user: User = Depends(get_current_user)):
+    """Recent face sightings from our own cameras, newest first."""
+    from datetime import timedelta
+    from alibi.watchlist.face_sighting_store import get_face_sighting_store
+    cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+
+    try:
+        sightings = get_face_sighting_store().get_recent(limit=limit)
+    except Exception:
+        sightings = []
+
+    try:
+        from alibi.cameras.camera_store import get_camera_store
+        names = {c.camera_id: c.name for c in get_camera_store().list_all()}
+    except Exception:
+        names = {}
+    labels = {}
+    try:
+        from alibi.watchlist.watchlist_store import WatchlistStore
+        labels = {e.person_id: e.label for e in WatchlistStore().load_all()}
+    except Exception:
+        pass
+
+    rows = []
+    for s in sightings:
+        if s.ts < cutoff:
+            continue
+        rows.append({
+            "sighting_id": s.sighting_id,
+            "camera_id": s.camera_id,
+            "camera_name": names.get(s.camera_id, s.camera_id),
+            "ts": s.ts,
+            "bbox": list(s.bbox) if s.bbox else None,
+            "image_url": s.image_path,              # the real evidence still
+            "matched_person_id": s.matched_person_id,
+            "matched_label": labels.get(s.matched_person_id) if s.matched_person_id else None,
+            "match_score": s.match_score,
+        })
+    rows.sort(key=lambda r: r["ts"], reverse=True)
+    return {"people": rows, "count": len(rows), "window_hours": hours}
+
 
 @app.get("/faces/recent")
 async def get_recent_faces(

@@ -1,6 +1,6 @@
 // API client for Alibi backend
 
-import type { DashboardOverview, IncidentSummary, IncidentDetail, IncidentExplanation, DecisionRequest, Settings, ShiftReport, Camera, TrailEntry, Site, Posture, SubjectType, CostSummary } from './types';
+import type { DashboardOverview, PersonRow, PersonHistoryResult, IncidentSummary, IncidentDetail, IncidentExplanation, DecisionRequest, Settings, ShiftReport, Camera, TrailEntry, Site, Posture, SubjectType, CostSummary } from './types';
 import { getToken } from './auth';
 
 const API_BASE = '/api';
@@ -112,7 +112,7 @@ export const api = {
     return res.json();
   },
 
-  async getPersonHistory(sightingId: string): Promise<any> {
+  async getPersonHistory(sightingId: string): Promise<PersonHistoryResult> {
     const res = await fetchWithAuth(`${API_BASE}/patterns/person-history/${encodeURIComponent(sightingId)}`);
     if (!res.ok) throw new Error(`Failed to fetch person history: ${res.statusText}`);
     return res.json();
@@ -620,6 +620,12 @@ export const api = {
   async getCostSummary(): Promise<CostSummary> {
     const res = await fetchWithAuth(`${API_BASE}/costs/summary`);
     if (!res.ok) throw new Error('Failed to load costs');
+    return res.json();
+  },
+
+  async getRecentPeople(hours: number = 168): Promise<{ people: PersonRow[]; count: number; window_hours: number }> {
+    const res = await fetchWithAuth(`${API_BASE}/people/recent?hours=${hours}`);
+    if (!res.ok) throw new Error('Failed to load people');
     return res.json();
   },
 
