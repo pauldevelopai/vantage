@@ -1,6 +1,6 @@
 // API client for Alibi backend
 
-import type { DashboardOverview, PersonRow, PersonHistoryResult, SourceVocab, UserSource, IncidentSummary, IncidentDetail, IncidentExplanation, DecisionRequest, Settings, ShiftReport, Camera, TrailEntry, Site, Posture, SubjectType, CostSummary } from './types';
+import type { DashboardOverview, PersonRow, PersonHistoryResult, SourceVocab, UserSource, HotlistEntry, IncidentSummary, IncidentDetail, IncidentExplanation, DecisionRequest, Settings, ShiftReport, Camera, TrailEntry, Site, Posture, SubjectType, CostSummary } from './types';
 import { getToken } from './auth';
 
 const API_BASE = '/api';
@@ -627,6 +627,28 @@ export const api = {
     const res = await fetchWithAuth(`${API_BASE}/people/recent?hours=${hours}`);
     if (!res.ok) throw new Error('Failed to load people');
     return res.json();
+  },
+
+  async getHotlistPlates(): Promise<{ entries: HotlistEntry[]; total: number }> {
+    const res = await fetchWithAuth(`${API_BASE}/hotlist/plates`);
+    if (!res.ok) throw new Error('Failed to load the hotlist');
+    return res.json();
+  },
+
+  async addHotlistPlate(body: { plate: string; reason: string; source_ref: string }): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/hotlist/plates`, {
+      method: 'POST', body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.detail || 'Failed to add the plate');
+    }
+    return res.json();
+  },
+
+  async removeHotlistPlate(plate: string): Promise<void> {
+    const res = await fetchWithAuth(`${API_BASE}/hotlist/plates/${encodeURIComponent(plate)}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Failed to remove the plate');
   },
 
   async getIntelSources(): Promise<SourceVocab> {
