@@ -55,6 +55,7 @@ class Bridge:
     created_at: str
     last_seen: Optional[str] = None
     site_hint: str = ""             # e.g. the LAN subnet the agent reported
+    storage: Optional[Dict[str, Any]] = None   # last-reported recording storage
 
     def is_online(self, now: Optional[datetime] = None) -> bool:
         if not self.last_seen:
@@ -75,6 +76,7 @@ class Bridge:
             "last_seen": self.last_seen,
             "site_hint": self.site_hint,
             "online": self.is_online(now),
+            "storage": self.storage,
         }
 
 
@@ -212,6 +214,18 @@ class BridgeRegistry:
 
     def get_bridge(self, bridge_id: str) -> Optional[Bridge]:
         return self._bridges.get(bridge_id)
+
+    def set_storage(self, bridge_id: str, storage: Dict[str, Any],
+                    now: Optional[datetime] = None) -> bool:
+        """Record the agent's last-reported storage stats (also counts as a
+        heartbeat, since only a live agent reports)."""
+        b = self._bridges.get(bridge_id)
+        if not b:
+            return False
+        b.storage = storage
+        b.last_seen = (now or _now()).isoformat()
+        self._save()
+        return True
 
     def remove_bridge(self, bridge_id: str) -> bool:
         """Unpair a PC. Its token stops working immediately; the agent on that PC

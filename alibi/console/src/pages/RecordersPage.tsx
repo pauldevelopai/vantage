@@ -2,7 +2,19 @@ import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { hasRole } from '../lib/auth';
 
-type Bridge = { bridge_id: string; name: string; online: boolean; site_hint: string; last_seen: string | null };
+type Storage = {
+  dir: string; total_bytes: number; files: number;
+  oldest: number | null; newest: number | null;
+  cameras: Record<string, { bytes: number; files: number }>;
+} | null;
+type Bridge = { bridge_id: string; name: string; online: boolean; site_hint: string; last_seen: string | null; storage?: Storage };
+
+function fmtBytes(n: number): string {
+  if (!n) return '0 B';
+  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(u.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
+  return `${(n / Math.pow(1024, i)).toFixed(i ? 1 : 0)} ${u[i]}`;
+}
 
 export function RecordersPage() {
   const isAdmin = hasRole('admin');
@@ -11,6 +23,7 @@ export function RecordersPage() {
   const [computers, setComputers] = useState<Array<Record<string, any>>>([]);
   const [scanning, setScanning] = useState(false);
   const [scanNote, setScanNote] = useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   async function loadBridges() {
     try {
@@ -109,25 +122,75 @@ export function RecordersPage() {
       <div className="mb-4">
         <h1 className="text-2xl font-semibold text-gray-900">Recorders</h1>
         <p className="text-sm text-gray-500">
-          The always-on PC that records your cameras and runs the live view. One per network.
+          The always-on computer on your camera network that records and streams. One per network.
         </p>
       </div>
 
-      {/* What it is */}
-      <div className="rounded-lg bg-blue-50 border border-blue-100 p-4 mb-6 text-sm text-gray-700">
-        Vantage runs in the cloud, so it can't reach your cameras directly — a small program on a
-        computer on the <span className="font-medium">same network as your cameras</span> does the
-        recording and live streaming, and sends the cloud only what it needs. That computer is your
-        <span className="font-medium"> recorder</span>. Use any always-on machine (a spare PC, a mini-PC, a Mac).
+      {/* Your recorders — the day-to-day view, with storage */}
+      <div className="bg-white shadow rounded-lg p-6 mb-6">
+        <h2 className="text-lg font-medium text-gray-900 mb-2">Your recorders</h2>
+        {bridges.length === 0 ? (
+          <p className="text-sm text-gray-500">None yet. Add one below.</p>
+        ) : (
+          <div className="space-y-4">
+            {bridges.map(b => {
+              const s = b.storage;
+              const camCount = s ? Object.keys(s.cameras || {}).length : 0;
+              return (
+                <div key={b.bridge_id} className="rounded-lg border border-gray-100 p-3">
+                  <div className="flex items-center gap-3">
+                    <span className={`w-2.5 h-2.5 rounded-full flex-none ${b.online ? 'bg-green-500' : 'bg-gray-300'}`} />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium text-gray-900 truncate">{b.name || b.bridge_id}</div>
+                      <div className="text-xs text-gray-500">
+                        {b.online ? 'Online — recording' : 'Offline'}{b.site_hint ? ` · ${b.site_hint}` : ''}
+                      </div>
+                    </div>
+                    {isAdmin && (
+                      <div className="flex items-center gap-3 flex-none">
+                        <button onClick={() => handleRename(b.bridge_id, b.name)} className="text-xs text-blue-600 hover:text-blue-800">Rename</button>
+                        <button onClick={() => handleRemove(b.bridge_id, b.name || b.bridge_id)} className="text-xs text-red-500 hover:text-red-700">Remove</button>
+                      </div>
+                    )}
+                  </div>
+                  {/* Storage the recorder reported */}
+                  {s ? (
+                    <div className="mt-2 pl-5 text-xs text-gray-600">
+                      <div>
+                        <span className="font-medium">{fmtBytes(s.total_bytes)}</span> in {s.files.toLocaleString()} file{s.files === 1 ? '' : 's'}
+                        {camCount > 0 && ` across ${camCount} camera${camCount === 1 ? '' : 's'}`}
+                        {s.oldest && s.newest && (
+                          <> · {new Date(s.oldest * 1000).toLocaleDateString()} → {new Date(s.newest * 1000).toLocaleDateString()}</>
+                        )}
+                      </div>
+                      <div className="text-gray-400 font-mono truncate mt-0.5" title={s.dir}>📁 {s.dir}</div>
+                      {camCount > 0 && (
+                        <ul className="mt-1 space-y-0.5">
+                          {Object.entries(s.cameras).map(([cid, v]) => (
+                            <li key={cid} className="text-gray-500">📷 {cid} — {fmtBytes(v.bytes)} · {v.files} files</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="mt-2 pl-5 text-xs text-gray-400">{b.online ? 'Reporting storage…' : 'No storage reported.'}</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {bridges.length > 0 && (
+          <p className="text-xs text-gray-400 mt-3">Swapping computers? Add the new one below, then Remove the old — its access is revoked at once.</p>
+        )}
       </div>
 
-      {/* Fast path — use the computer you're on right now */}
+      {/* Add a recorder — one primary path, everything else under Advanced */}
       {isAdmin && (
-        <div className="bg-white shadow rounded-lg p-6 mb-6 border-l-4 border-green-500">
-          <h2 className="text-lg font-medium text-gray-900">Use this computer as the recorder</h2>
+        <div className="bg-white shadow rounded-lg p-6">
+          <h2 className="text-lg font-medium text-gray-900">Add a recorder</h2>
           <p className="mt-1 text-sm text-gray-500">
-            The quickest way — if the computer you're on right now is on the same network as your cameras and stays on.
-            It needs <span className="font-medium">Python 3</span> and <span className="font-medium">ffmpeg</span> installed.
+            Use any always-on computer on your camera network. Easiest: the one you're on now (needs Python 3 + ffmpeg installed).
           </p>
           <button
             onClick={handleUseThisComputer} disabled={launching}
@@ -135,134 +198,58 @@ export function RecordersPage() {
           >
             {launching ? 'Preparing…' : `Set up this computer (${isMac ? 'Mac' : 'Windows'})`}
           </button>
-          <ol className="mt-3 text-sm text-gray-600 list-decimal list-inside space-y-1">
-            <li>A file downloads (<span className="font-mono text-xs">Vantage Recorder.{isMac ? 'command' : 'bat'}</span>).</li>
-            {isMac ? (
-              <li><span className="font-medium">Double-click it.</span> The first time, macOS may block it — <span className="font-medium">right-click → Open → Open</span> to allow it.</li>
-            ) : (
-              <li><span className="font-medium">Double-click it.</span> If Windows SmartScreen warns, click <span className="font-medium">More info → Run anyway</span>.</li>
-            )}
-            <li>A window opens and it starts recording. Leave it open (or set it to run at startup later).</li>
-          </ol>
-          <p className="mt-2 text-xs text-gray-400">No terminal, no typing. It pairs itself and appears under “Your recorders” below.</p>
-        </div>
-      )}
+          <p className="mt-2 text-xs text-gray-500">
+            Downloads a file → double-click it{isMac ? ' (first time: right-click → Open to get past macOS Gatekeeper)' : ' (if SmartScreen warns: More info → Run anyway)'} → it starts recording and appears above.
+          </p>
 
-      {/* Set up a different computer — clear numbered steps */}
-      {isAdmin && (
-        <div className="bg-white shadow rounded-lg p-6 mb-6">
-          <h2 className="text-lg font-medium text-gray-900 mb-4">Or set up a different computer</h2>
-          <ol className="space-y-5">
-            <li className="flex gap-3">
-              <span className="flex-none w-7 h-7 rounded-full bg-indigo-600 text-white font-semibold flex items-center justify-center">1</span>
-              <div>
-                <p className="font-medium text-gray-900">Prepare the PC (once)</p>
-                <p className="text-sm text-gray-500 mt-0.5">
-                  On the always-on computer, install two free tools:
-                </p>
-                <ul className="text-sm text-gray-600 list-disc list-inside mt-1 space-y-0.5">
-                  <li><span className="font-medium">Python 3</span> — python.org/downloads (tick “Add to PATH” on Windows)</li>
-                  <li><span className="font-medium">ffmpeg</span> — Windows: <code className="bg-gray-100 px-1 rounded">winget install Gyan.FFmpeg</code> · Mac: <code className="bg-gray-100 px-1 rounded">brew install ffmpeg</code></li>
-                </ul>
+          <button onClick={() => setShowAdvanced(v => !v)} className="mt-4 text-sm text-gray-500 hover:text-gray-700">
+            {showAdvanced ? '▾' : '▸'} Advanced — set up a different computer, or find one on the network
+          </button>
+          {showAdvanced && (
+            <div className="mt-3 space-y-4 border-t border-gray-100 pt-4">
+              <div className="text-sm text-gray-700">
+                <p className="font-medium text-gray-900">Set up a different computer</p>
+                <ol className="list-decimal list-inside mt-1 space-y-1 text-gray-600">
+                  <li>Install <span className="font-medium">Python 3</span> and <span className="font-medium">ffmpeg</span> on it (Windows: <code className="bg-gray-100 px-1 rounded">winget install Gyan.FFmpeg</code> · Mac: <code className="bg-gray-100 px-1 rounded">brew install ffmpeg</code>).</li>
+                  <li>
+                    <button onClick={handleDownload} disabled={downloading} className="text-indigo-600 underline disabled:opacity-50">
+                      {downloading ? 'Preparing…' : 'Download the recorder'}
+                    </button> and copy it there.
+                  </li>
+                  <li>Run: <code className="bg-gray-100 px-1 rounded text-xs">python vantage_recorder.pyz --dir vantage-rec --max-gb 200 --max-days 30</code></li>
+                </ol>
               </div>
-            </li>
-            <li className="flex gap-3">
-              <span className="flex-none w-7 h-7 rounded-full bg-indigo-600 text-white font-semibold flex items-center justify-center">2</span>
               <div>
-                <p className="font-medium text-gray-900">Download the recorder</p>
-                <p className="text-sm text-gray-500 mt-0.5">One file, already paired to your account — nothing to type in.</p>
-                <button
-                  onClick={handleDownload} disabled={downloading}
-                  className="mt-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md hover:bg-indigo-700 disabled:opacity-50"
-                >
-                  {downloading ? 'Preparing…' : 'Download the recorder'}
-                </button>
-              </div>
-            </li>
-            <li className="flex gap-3">
-              <span className="flex-none w-7 h-7 rounded-full bg-indigo-600 text-white font-semibold flex items-center justify-center">3</span>
-              <div>
-                <p className="font-medium text-gray-900">Run it</p>
-                <p className="text-sm text-gray-500 mt-0.5">
-                  Open a terminal in the download folder and run:
-                </p>
-                <pre className="mt-1 bg-gray-900 text-gray-100 text-xs rounded-md p-3 overflow-x-auto">python vantage_recorder.pyz --dir vantage-rec --max-gb 200 --max-days 30</pre>
-                <p className="text-xs text-gray-500 mt-1">
-                  (<code className="bg-gray-100 px-1 rounded">--max-gb</code> / <code className="bg-gray-100 px-1 rounded">--max-days</code> bound the disk it uses.) It pairs itself and appears below. Leave it running — set it to auto-start on boot for a permanent recorder.
-                </p>
-              </div>
-            </li>
-          </ol>
-        </div>
-      )}
-
-      {/* Connected recorders */}
-      <div className="bg-white shadow rounded-lg p-6 mb-6">
-        <h2 className="text-lg font-medium text-gray-900 mb-1">Your recorders</h2>
-        {bridges.length === 0 ? (
-          <p className="text-sm text-gray-500">No recorder connected yet. Follow the steps above; it appears here the moment it starts.</p>
-        ) : (
-          <ul className="divide-y divide-gray-100">
-            {bridges.map(b => (
-              <li key={b.bridge_id} className="flex items-center gap-3 py-2.5">
-                <span className={`w-2.5 h-2.5 rounded-full ${b.online ? 'bg-green-500' : 'bg-gray-300'}`} />
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium text-gray-900 truncate">{b.name || b.bridge_id}</div>
-                  <div className="text-xs text-gray-500">
-                    {b.online ? 'Online — recording' : 'Offline'}{b.site_hint ? ` · ${b.site_hint}` : ''}
-                  </div>
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-medium text-gray-900">Find a computer on the network</p>
+                  <button
+                    onClick={handleScan} disabled={scanning || !anyOnline}
+                    title={!anyOnline ? 'Start a recorder first' : undefined}
+                    className="px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                  >
+                    {scanning ? 'Scanning…' : 'Scan for computers'}
+                  </button>
                 </div>
-                {isAdmin && (
-                  <div className="flex items-center gap-3">
-                    <button onClick={() => handleRename(b.bridge_id, b.name)} className="text-xs text-blue-600 hover:text-blue-800">Rename</button>
-                    <button onClick={() => handleRemove(b.bridge_id, b.name || b.bridge_id)} className="text-xs text-red-500 hover:text-red-700">Remove</button>
-                  </div>
+                {computers.length > 0 ? (
+                  <ul className="mt-2 space-y-1.5">
+                    {computers.map((c, i) => (
+                      <li key={`pc-${c.ip}-${i}`} className="flex items-center gap-3 rounded-md border border-gray-100 bg-gray-50 px-3 py-2">
+                        <span className="text-lg" role="img" aria-label="computer">🖥️</span>
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium text-gray-900 truncate">{c.name && !String(c.name).startsWith('Camera (') ? c.name : 'Computer'}</div>
+                          <div className="text-xs text-gray-500">at {c.ip}</div>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-2 text-xs text-gray-400">{scanNote || 'Runs a scan from a connected recorder and lists computers that could host one.'}</p>
                 )}
-              </li>
-            ))}
-          </ul>
-        )}
-        {bridges.length > 0 && (
-          <p className="text-xs text-gray-400 mt-3">Swapping PCs? Run the recorder on the new one, then Remove the old — its access is revoked immediately.</p>
-        )}
-      </div>
-
-      {/* Find candidate recording PCs on the LAN */}
-      <div className="bg-white shadow rounded-lg p-6">
-        <div className="flex items-center justify-between mb-1">
-          <h2 className="text-lg font-medium text-gray-900">Computers on your network</h2>
-          {isAdmin && (
-            <button
-              onClick={handleScan}
-              disabled={scanning || !anyOnline}
-              title={!anyOnline ? 'Start a recorder first' : undefined}
-              className="px-3 py-1.5 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
-            >
-              {scanning ? 'Scanning…' : 'Scan for computers'}
-            </button>
+              </div>
+            </div>
           )}
         </div>
-        <p className="text-sm text-gray-500 mb-3">
-          Machines that could be a recorder. A running recorder scans its network and lists them; any always-on one is a good choice — set it up with the steps above.
-          {!anyOnline && ' (Start a recorder first — the scan runs from it.)'}
-        </p>
-        {computers.length > 0 ? (
-          <ul className="space-y-1.5">
-            {computers.map((c, i) => (
-              <li key={`pc-${c.ip}-${i}`} className="flex items-center gap-3 rounded-md border border-gray-100 bg-gray-50 px-3 py-2">
-                <span className="text-lg" role="img" aria-label="computer">🖥️</span>
-                <div className="min-w-0">
-                  <div className="text-sm font-medium text-gray-900 truncate">{c.name && !String(c.name).startsWith('Camera (') ? c.name : 'Computer'}</div>
-                  <div className="text-xs text-gray-500">at {c.ip}</div>
-                </div>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-sm text-gray-400">{scanNote || 'No scan run yet — hit “Scan for computers”.'}</p>
-        )}
-        {computers.length > 0 && scanNote && <p className="text-xs text-gray-400 mt-2">{scanNote}</p>}
-      </div>
+      )}
     </div>
   );
 }
