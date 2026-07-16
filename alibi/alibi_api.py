@@ -1113,7 +1113,19 @@ class CameraCreateRequest(BaseModel):
     enabled: bool = True
     location: str = ""
     area: str = ""  # Suburb/area — links this camera to place-context (§9)
+    site_id: str = ""  # optional — link this camera to a protected site
     vms_config: dict = Field(default_factory=dict)
+
+
+def _link_camera_to_site(site_id: str, camera_id: str) -> None:
+    """Add a camera to a site's camera list (so the site's brief covers it)."""
+    if not site_id:
+        return
+    from alibi.site_profile import get_site_profile_store
+    store = get_site_profile_store()
+    site = store.get(site_id)
+    if site and camera_id not in site.camera_ids:
+        store.update(site_id, camera_ids=list(site.camera_ids) + [camera_id])
 
 
 class CameraUpdateRequest(BaseModel):
@@ -1155,6 +1167,7 @@ async def add_camera(
         vms_config=req.vms_config,
     )
     store.add(camera)
+    _link_camera_to_site(req.site_id, camera.camera_id)
 
     audit_store = get_store()
     audit_store.append_audit("camera_added", {"camera_id": req.camera_id, "user": current_user.username})
@@ -1970,6 +1983,7 @@ class AddDiscoveredRequest(BaseModel):
     password: str = ""
     vendor: str = ""       # brand hint from discovery, for URL resolution
     manufacturer: str = ""
+    site_id: str = ""      # optional — link this camera to a protected site
 
 
 @app.post("/cameras/add-discovered")
@@ -2022,6 +2036,7 @@ async def add_discovered_camera(
     )
 
     store.add(camera)
+    _link_camera_to_site(getattr(req, "site_id", ""), camera.camera_id)
     return {"status": "ok", "camera": camera.to_dict()}
 
 

@@ -245,6 +245,7 @@ export const api = {
     source_type?: string;
     location?: string;
     area?: string;
+    site_id?: string;
     vms_config?: Record<string, any>;
   }): Promise<Camera> {
     const res = await fetchWithAuth(`${API_BASE}/cameras`, {
@@ -471,6 +472,7 @@ export const api = {
     password?: string;
     vendor?: string;
     manufacturer?: string;
+    site_id?: string;
   }): Promise<any> {
     const res = await fetchWithAuth(`${API_BASE}/cameras/add-discovered`, {
       method: 'POST',
