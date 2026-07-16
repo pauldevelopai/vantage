@@ -2677,6 +2677,10 @@ async def bridge_ingest_frame(camera_id: str, request: Request,
         return {"analyzed": False, "reason": "throttled"}
 
     now = datetime.utcnow()
+    # Store the evidence frame FIRST so sightings can reference it — a face
+    # sighting is far more useful to a reviewer when it points at the still it
+    # came from. Every analysed frame is stored regardless.
+    frame_id = fa.store_frame(data)
 
     # The decode + structured CV (detection/plates/faces/ReID) + VLM are all
     # synchronous and heavy — run them in a worker thread so they never block the
@@ -2689,7 +2693,7 @@ async def bridge_ingest_frame(camera_id: str, request: Request,
         intel_ = None
         try:
             from alibi.vision import frame_intelligence as fi
-            intel_ = fi.analyze_and_record(frame, camera_id, now)
+            intel_ = fi.analyze_and_record(frame, camera_id, now, frame_id=frame_id)
         except Exception as e:
             print(f"[frame-ai] structured intelligence failed: {e}")
         # COST GATE: the local detector is free, the vision model is not. Only
@@ -2704,8 +2708,6 @@ async def bridge_ingest_frame(camera_id: str, request: Request,
     intel, analysis = await run_in_threadpool(_analyze)
     if analysis is None:
         return {"analyzed": False, "reason": "decode_failed"}
-
-    frame_id = fa.store_frame(data)
     event = fa.decide_event(analysis, camera_id, now, frame_id, intel=intel)
     if event is None:
         return {"analyzed": True, "incident": None,
@@ -2986,6 +2988,124 @@ async def costs_summary(window_days: int = 30, current_user: User = Depends(get_
     return summary(window_days=window_days)
 
 
+# ── Intel: owner-declared data sources ──────────────────────────
+#
+# "Feed the brain as you go." The owner declares a source from the console; the
+# same boundary the code-declared registry enforces applies here — an allowed
+# (non-personal) domain, a stated lawful basis, and a positive retention. The
+# catalogue alongside it is the honest roadmap of routes we have researched but do
+# NOT have yet, each with what it would actually take.
+
+class UserSourceCreate(BaseModel):
+    name: str
+    domain: str
+    lawful_basis: str
+    retention_days: int
+    description: str = ""
+    endpoint: str = ""
+    notes: str = ""
+
+
+class UserSourceRecords(BaseModel):
+    records: List[dict]
+
+
+@app.get("/intelligence/sources", tags=["Intelligence"])
+async def list_user_sources(current_user: User = Depends(get_current_user)):
+    """Sources the owner has declared, plus the vocabulary the console needs."""
+    from alibi.dataengine.user_sources import get_user_source_store, CATALOGUE
+    from alibi.dataengine.schemas import DataDomain, LawfulBasis
+    return {
+        "sources": [s.to_dict() for s in get_user_source_store().list()],
+        "catalogue": CATALOGUE,
+        "domains": [{"value": d.value, "label": d.value.replace("_", " ")} for d in DataDomain],
+        "lawful_bases": [{"value": b.value, "label": b.value.replace("_", " ")} for b in LawfulBasis],
+        "boundary": ("Non-personal data only. Vantage has no data domain for personal "
+                     "dossiers — a source for them cannot be declared, by design."),
+    }
+
+
+@app.post("/intelligence/sources", tags=["Intelligence"])
+async def create_user_source(req: UserSourceCreate,
+                             current_user: User = Depends(require_role([Role.ADMIN]))):
+    """Declare a new source. Rejected unless it names an allowed domain, a lawful
+    basis, and a retention period."""
+    from alibi.dataengine.user_sources import get_user_source_store
+    try:
+        src = get_user_source_store().add(
+            name=req.name, domain=req.domain, lawful_basis=req.lawful_basis,
+            retention_days=req.retention_days, description=req.description,
+            endpoint=req.endpoint, notes=req.notes,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return src.to_dict()
+
+
+@app.post("/intelligence/sources/{source_id}/records", tags=["Intelligence"])
+async def feed_user_source(source_id: str, req: UserSourceRecords,
+                           current_user: User = Depends(require_role([Role.ADMIN]))):
+    """Feed records into a declared source. They are stored under that source's
+    declared domain, lawful basis and retention — never outside it."""
+    from alibi.dataengine.user_sources import get_user_source_store
+    store_u = get_user_source_store()
+    src = store_u.get(source_id)
+    if not src:
+        raise HTTPException(status_code=404, detail="Source not found")
+    if not req.records:
+        raise HTTPException(status_code=400, detail="No records supplied")
+
+    import uuid as _uuid
+    from alibi.dataengine.store import DataEngineStore
+    from alibi.dataengine.schemas import DataDomain, LawfulBasis, SourceSpec, build_record
+    from alibi.dataengine.guard import assert_non_personal, PersonalDataRejected
+
+    # Reconstruct the declaration as a SourceSpec so retention is derived from it,
+    # exactly like a code-declared source.
+    spec = SourceSpec(
+        source_id=src.source_id, domain=DataDomain(src.domain),
+        lawful_basis=LawfulBasis(src.lawful_basis),
+        retention_days=src.retention_days, description=src.description or src.name,
+    )
+    ds = DataEngineStore()
+    written, rejected = 0, []
+    for rec in req.records:
+        if not isinstance(rec, dict):
+            rejected.append("a record was not an object")
+            continue
+        try:
+            # Fail-closed: the same guard every ingested record passes. If the
+            # owner pastes anything person-identifying, it is refused here.
+            assert_non_personal(rec)
+        except PersonalDataRejected as e:
+            rejected.append(str(e))
+            continue
+        try:
+            ds.append(build_record(
+                record_id="rec_" + _uuid.uuid4().hex[:12], spec=spec, payload=rec,
+                provenance={"declared_by": current_user.username if current_user else "admin",
+                            "source_name": src.name, "endpoint": src.endpoint or None,
+                            "entered": "console"},
+            ))
+            written += 1
+        except Exception as e:
+            rejected.append(str(e))
+
+    store_u.bump_records(source_id, written)
+    if written == 0 and rejected:
+        raise HTTPException(status_code=400, detail="; ".join(rejected[:3]))
+    return {"status": "ok", "written": written, "rejected": rejected, "source_id": source_id}
+
+
+@app.delete("/intelligence/sources/{source_id}", tags=["Intelligence"])
+async def delete_user_source(source_id: str,
+                             current_user: User = Depends(require_role([Role.ADMIN]))):
+    from alibi.dataengine.user_sources import get_user_source_store
+    if not get_user_source_store().delete(source_id):
+        raise HTTPException(status_code=404, detail="Source not found")
+    return {"status": "deleted"}
+
+
 @app.get("/intelligence/data", tags=["Intelligence"])
 async def intelligence_data(current_user: User = Depends(get_current_user)):
     """External, non-personal reference data the Data Engine harvests (crime/area
@@ -3102,6 +3222,58 @@ async def get_baselines(camera_id: str, current_user: User = Depends(get_current
 
 
 # ── Face Sighting Index ────────────────────────────────────────
+
+# ── People ──────────────────────────────────────────────────────
+#
+# "Who has been here, and where have they been before?" — answered ONLY from this
+# deployment's own cameras. Each row is a real face sighting with the evidence
+# still it came from; the history behind it is a cosine search over our own
+# sighting archive (patterns/person_history). Unknown people stay unknown: we
+# surface continuity ("seen 4 times since Tuesday"), never an identity we guessed.
+
+@app.get("/people/recent", tags=["People"])
+async def people_recent(limit: int = 60, hours: int = 168,
+                        current_user: User = Depends(get_current_user)):
+    """Recent face sightings from our own cameras, newest first."""
+    from datetime import timedelta
+    from alibi.watchlist.face_sighting_store import get_face_sighting_store
+    cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+
+    try:
+        sightings = get_face_sighting_store().get_recent(limit=limit)
+    except Exception:
+        sightings = []
+
+    try:
+        from alibi.cameras.camera_store import get_camera_store
+        names = {c.camera_id: c.name for c in get_camera_store().list_all()}
+    except Exception:
+        names = {}
+    labels = {}
+    try:
+        from alibi.watchlist.watchlist_store import WatchlistStore
+        labels = {e.person_id: e.label for e in WatchlistStore().load_all()}
+    except Exception:
+        pass
+
+    rows = []
+    for s in sightings:
+        if s.ts < cutoff:
+            continue
+        rows.append({
+            "sighting_id": s.sighting_id,
+            "camera_id": s.camera_id,
+            "camera_name": names.get(s.camera_id, s.camera_id),
+            "ts": s.ts,
+            "bbox": list(s.bbox) if s.bbox else None,
+            "image_url": s.image_path,              # the real evidence still
+            "matched_person_id": s.matched_person_id,
+            "matched_label": labels.get(s.matched_person_id) if s.matched_person_id else None,
+            "match_score": s.match_score,
+        })
+    rows.sort(key=lambda r: r["ts"], reverse=True)
+    return {"people": rows, "count": len(rows), "window_hours": hours}
+
 
 @app.get("/faces/recent")
 async def get_recent_faces(

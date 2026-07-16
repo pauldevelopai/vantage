@@ -1,6 +1,6 @@
 // API client for Alibi backend
 
-import type { DashboardOverview, IncidentSummary, IncidentDetail, IncidentExplanation, DecisionRequest, Settings, ShiftReport, Camera, TrailEntry, Site, Posture, SubjectType, CostSummary } from './types';
+import type { DashboardOverview, PersonRow, PersonHistoryResult, SourceVocab, UserSource, IncidentSummary, IncidentDetail, IncidentExplanation, DecisionRequest, Settings, ShiftReport, Camera, TrailEntry, Site, Posture, SubjectType, CostSummary } from './types';
 import { getToken } from './auth';
 
 const API_BASE = '/api';
@@ -112,7 +112,7 @@ export const api = {
     return res.json();
   },
 
-  async getPersonHistory(sightingId: string): Promise<any> {
+  async getPersonHistory(sightingId: string): Promise<PersonHistoryResult> {
     const res = await fetchWithAuth(`${API_BASE}/patterns/person-history/${encodeURIComponent(sightingId)}`);
     if (!res.ok) throw new Error(`Failed to fetch person history: ${res.statusText}`);
     return res.json();
@@ -621,6 +621,45 @@ export const api = {
     const res = await fetchWithAuth(`${API_BASE}/costs/summary`);
     if (!res.ok) throw new Error('Failed to load costs');
     return res.json();
+  },
+
+  async getRecentPeople(hours: number = 168): Promise<{ people: PersonRow[]; count: number; window_hours: number }> {
+    const res = await fetchWithAuth(`${API_BASE}/people/recent?hours=${hours}`);
+    if (!res.ok) throw new Error('Failed to load people');
+    return res.json();
+  },
+
+  async getIntelSources(): Promise<SourceVocab> {
+    const res = await fetchWithAuth(`${API_BASE}/intelligence/sources`);
+    if (!res.ok) throw new Error('Failed to load intel sources');
+    return res.json();
+  },
+
+  async createIntelSource(body: Record<string, any>): Promise<UserSource> {
+    const res = await fetchWithAuth(`${API_BASE}/intelligence/sources`, {
+      method: 'POST', body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.detail || 'Failed to add the source');
+    }
+    return res.json();
+  },
+
+  async feedIntelSource(sourceId: string, records: any[]): Promise<{ written: number; rejected: string[] }> {
+    const res = await fetchWithAuth(`${API_BASE}/intelligence/sources/${encodeURIComponent(sourceId)}/records`, {
+      method: 'POST', body: JSON.stringify({ records }),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.detail || 'Failed to store records');
+    }
+    return res.json();
+  },
+
+  async deleteIntelSource(sourceId: string): Promise<void> {
+    const res = await fetchWithAuth(`${API_BASE}/intelligence/sources/${encodeURIComponent(sourceId)}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Failed to remove the source');
   },
 
   async getDashboardOverview(range: string = '24h'): Promise<DashboardOverview> {

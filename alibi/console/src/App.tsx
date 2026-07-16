@@ -10,6 +10,7 @@ import { VehicleSearchPage } from './pages/VehicleSearchPage';
 import { CamerasPage } from './pages/CamerasPage';
 import { RecordersPage } from './pages/RecordersPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { PeoplePage } from './pages/PeoplePage';
 import { SitesPage } from './pages/SitesPage';
 import { WatchlistPage } from './pages/WatchlistPage';
 import { SearchPage } from './pages/SearchPage';
@@ -89,6 +90,7 @@ function Layout({ children }: { children: React.ReactNode }) {
               <div className="w-px h-5 bg-white/10 mx-1.5 flex-shrink-0" />
               {/* Intelligence — AI analysis of the footage */}
               {navLink('/incidents', 'Incidents')}
+              {navLink('/people', 'People')}
               {navLink('/patterns', 'Patterns')}
               {navLink('/reports', 'Reports')}
               {navLink('/search', 'Search')}
@@ -151,6 +153,7 @@ function App() {
                   <Route path="/overview" element={<DashboardPage />} />
                   <Route path="/incidents" element={<IncidentsPage />} />
                   <Route path="/incidents/:id" element={<IncidentDetailPage />} />
+                  <Route path="/people" element={<PeoplePage />} />
                   <Route path="/patterns" element={<PatternsPage />} />
                   <Route path="/reports" element={<ReportsPage />} />
                   <Route path="/metrics" element={<MetricsPage />} />

@@ -229,3 +229,73 @@ export interface DashboardOverview {
   cameras: DashboardCamera[];
   alerts: DashboardRow[];
 }
+
+// --- People (own-camera sightings + history) -------------------------------- //
+
+export interface PersonRow {
+  sighting_id: string;
+  camera_id: string;
+  camera_name: string;
+  ts: string;
+  bbox?: number[] | null;
+  image_url?: string | null;
+  matched_person_id?: string | null;
+  matched_label?: string | null;
+  match_score?: number | null;
+}
+
+export interface PriorSighting {
+  camera_id: string;
+  ts: string;
+  score: number;
+  matched_person_id?: string | null;
+}
+
+export interface PersonHistoryResult {
+  seen_before: boolean;
+  times_seen: number;
+  distinct_cameras: string[];
+  first_seen?: string | null;
+  last_seen?: string | null;
+  watchlist_person_id?: string | null;
+  prior_sightings: PriorSighting[];
+  summary: string;
+}
+
+// --- Intel data sources ----------------------------------------------------- //
+
+export interface UserSource {
+  source_id: string;
+  name: string;
+  domain: string;
+  lawful_basis: string;
+  retention_days: number;
+  description: string;
+  endpoint: string;
+  notes: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  record_count: number;
+}
+
+export interface CatalogueEntry {
+  key: string;
+  name: string;
+  provides: string;
+  why: string;
+  status: 'available' | 'gated' | 'blocked' | 'rejected';
+  requirement: string;
+  url?: string;
+  domain: string;
+  lawful_basis: string;
+  recommended?: boolean;
+}
+
+export interface SourceVocab {
+  sources: UserSource[];
+  catalogue: CatalogueEntry[];
+  domains: Array<{ value: string; label: string }>;
+  lawful_bases: Array<{ value: string; label: string }>;
+  boundary: string;
+}
