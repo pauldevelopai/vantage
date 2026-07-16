@@ -419,6 +419,21 @@ export const api = {
     URL.revokeObjectURL(url);
   },
 
+  // A double-clickable launcher for this computer (recorder embedded).
+  async downloadRecorderLauncher(platform: 'mac' | 'windows'): Promise<void> {
+    const res = await fetchWithAuth(`${API_BASE}/cameras/bridge/download-launcher?platform=${platform}`);
+    if (!res.ok) throw new Error('Failed to prepare the launcher');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = platform === 'windows' ? 'Vantage Recorder.bat' : 'Vantage Recorder.command';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
+
   async renameBridge(bridgeId: string, name: string): Promise<void> {
     const res = await fetchWithAuth(`${API_BASE}/cameras/bridge/${bridgeId}`, {
       method: 'PATCH',

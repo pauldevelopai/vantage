@@ -60,6 +60,28 @@ def test_config_is_baked_into_bridge_agent():
     assert 'os.environ.get("VANTAGE_PAIRING_CODE", "Z9Z9")' in ba
 
 
+def test_mac_launcher_embeds_extractable_recorder():
+    """The double-click .command must contain a base64 recorder that extracts
+    exactly the way the shell one-liner does (lines after the marker)."""
+    import base64, io, zipfile
+    from alibi.alibi_api import _build_recorder_zipapp, _mac_launcher, _LAUNCHER_MARKER
+    cmd = _mac_launcher(base64.b64encode(_build_recorder_zipapp("https://x.test", "CODE1")).decode())
+    assert cmd.startswith("#!/bin/bash")
+    lines = cmd.splitlines()
+    payload = "".join(lines[lines.index(_LAUNCHER_MARKER) + 1:])
+    z = zipfile.ZipFile(io.BytesIO(base64.b64decode(payload)))
+    assert set(z.namelist()) == {"recorder.py", "bridge_agent.py", "record_agent.py", "__main__.py"}
+    # this Vantage's URL is baked into the bundled bridge agent
+    assert b"https://x.test" in z.read("bridge_agent.py")
+
+
+def test_windows_launcher_is_batch():
+    from alibi.alibi_api import _windows_launcher
+    bat = _windows_launcher("QUJD")
+    assert bat.startswith("@echo off")
+    assert "powershell" in bat and "FromBase64String" in bat
+
+
 def test_modules_use_flat_import_fallback():
     """The zip layout is flat (no `alibi/` package), so record_agent must be able
     to import `recorder` / `bridge_agent` by bare name."""
