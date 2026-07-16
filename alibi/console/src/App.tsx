@@ -8,6 +8,7 @@ import { LoginPage } from './pages/LoginPage';
 import { MetricsPage } from './pages/MetricsPage';
 import { VehicleSearchPage } from './pages/VehicleSearchPage';
 import { CamerasPage } from './pages/CamerasPage';
+import { RecordersPage } from './pages/RecordersPage';
 import { SitesPage } from './pages/SitesPage';
 import { WatchlistPage } from './pages/WatchlistPage';
 import { SearchPage } from './pages/SearchPage';
@@ -75,14 +76,18 @@ function Layout({ children }: { children: React.ReactNode }) {
               Vantage
             </Link>
             <div className="hidden sm:flex items-center gap-0.5 overflow-x-auto flex-1" style={{ scrollbarWidth: 'none' }}>
+              {/* Setup — your cameras, recorders, and what you're protecting */}
+              {navLink('/cameras', 'Cameras')}
+              {navLink('/recorders', 'Recorders')}
+              {navLink('/sites', 'Sites')}
+              <div className="w-px h-5 bg-white/10 mx-1.5 flex-shrink-0" />
+              {/* Intelligence — AI analysis of the footage */}
               {navLink('/incidents', 'Incidents')}
               {navLink('/patterns', 'Patterns')}
               {navLink('/reports', 'Reports')}
               {navLink('/search', 'Search')}
               {navLink('/metrics', 'Metrics')}
               {navLink('/vehicle-search', 'Vehicles')}
-              {navLink('/cameras', 'Cameras')}
-              {navLink('/sites', 'Sites')}
               {(hasRole('supervisor') || hasRole('admin')) && navLink('/watchlist', 'Watchlist')}
               {hasRole('admin') && navLink('/settings', 'Settings')}
             </div>
@@ -141,6 +146,7 @@ function App() {
                   <Route path="/search" element={<SearchPage />} />
                   <Route path="/vehicle-search" element={<VehicleSearchPage />} />
                   <Route path="/cameras" element={<CamerasPage />} />
+                  <Route path="/recorders" element={<RecordersPage />} />
                   <Route path="/sites" element={<SitesPage />} />
                   <Route path="/watchlist" element={<WatchlistPage />} />
                   <Route path="/settings" element={<SettingsPage />} />

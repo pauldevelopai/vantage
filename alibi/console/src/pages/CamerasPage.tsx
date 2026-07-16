@@ -146,7 +146,6 @@ export function CamerasPage() {
   const [showOtherDevices, setShowOtherDevices] = useState(false);
   const [showBridge, setShowBridge] = useState(false);
   const [bridges, setBridges] = useState<Array<{ bridge_id: string; name: string; online: boolean; site_hint: string; last_seen: string | null }>>([]);
-  const [downloadingAgent, setDownloadingAgent] = useState(false);
 
   // Form state
   const [formId, setFormId] = useState('');
@@ -301,18 +300,6 @@ export function CamerasPage() {
     if (online) loadLatestBridgeScan(online.bridge_id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showBridge, bridges, scanning]);
-
-  async function handleDownloadAgent() {
-    setDownloadingAgent(true);
-    try {
-      await api.downloadBridgeAgent();
-    } catch (error) {
-      console.error('Failed to download agent:', error);
-      alert('Failed to download the Vantage Bridge agent');
-    } finally {
-      setDownloadingAgent(false);
-    }
-  }
 
   // Show the last completed scan for a bridge (resilient to a frozen poll / reload).
   async function loadLatestBridgeScan(bridgeId: string) {
@@ -499,11 +486,10 @@ export function CamerasPage() {
       {/* Camera Bridge — scan the WiFi where the user's cameras are */}
       {showBridge && isAdmin && (
         <div className="bg-white shadow rounded-lg p-6 mb-6 border-l-4 border-indigo-400">
-          <h2 className="text-lg font-medium text-gray-900">Add cameras on your network</h2>
+          <h2 className="text-lg font-medium text-gray-900">Find cameras on your network</h2>
           <p className="mt-1 text-sm text-gray-500">
-            Vantage runs in the cloud, so it can't see the WiFi your cameras are on.
-            Run the small <span className="font-medium">Vantage Bridge</span> on a computer on
-            that network — then scan from here and your cameras appear.
+            Your <span className="font-medium">recorder</span> scans the network it's on and finds the cameras.
+            Start it (on the <a href="/recorders" className="text-indigo-600 underline">Recorders</a> page), then scan here.
           </p>
 
           {(() => {
@@ -529,31 +515,23 @@ export function CamerasPage() {
                       </button>
                     </div>
                   ))}
-                  <p className="text-xs text-gray-400">Bridge connected. Results appear below the scan.</p>
+                  <p className="text-xs text-gray-400">Recorder connected. Found cameras appear below.</p>
                 </div>
               );
             }
             return (
-              <div className="mt-4 rounded-md border border-gray-200 bg-gray-50 p-4">
-                <ol className="text-sm text-gray-700 space-y-2 list-decimal list-inside">
-                  <li>
-                    <button
-                      onClick={handleDownloadAgent}
-                      disabled={downloadingAgent}
-                      className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:bg-indigo-300 align-middle mx-1"
-                    >
-                      {downloadingAgent ? 'Preparing…' : 'Download Vantage Bridge'}
-                    </button>
-                    onto a computer that's on the same WiFi as your cameras.
-                  </li>
-                  <li>Open it (<code className="text-xs bg-white px-1 rounded border">python3 vantage_bridge.py</code>). It pairs automatically — nothing to type.</li>
-                  <li>This panel updates the moment it connects; then hit <span className="font-medium">Scan this network</span>.</li>
-                </ol>
-                <p className="mt-3 text-xs text-gray-400 flex items-center gap-1.5">
-                  <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
-                  Waiting for a bridge to connect…
-                  {bridges.length > 0 && ' (a paired bridge is currently offline)'}
+              <div className="mt-4 rounded-md border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">
+                <p>
+                  No recorder is online yet. Set one up on the{' '}
+                  <a href="/recorders" className="text-indigo-600 underline font-medium">Recorders</a> page —
+                  once it's running, come back here and a <span className="font-medium">Scan this network</span> button appears.
                 </p>
+                <p className="mt-2 text-gray-500">
+                  In a hurry, or the scan can't reach a camera? Use <span className="font-medium">Add manually</span> (top right) with the camera's address.
+                </p>
+                {bridges.length > 0 && (
+                  <p className="mt-2 text-xs text-gray-400">A recorder is paired but currently offline — start it.</p>
+                )}
               </div>
             );
           })()}

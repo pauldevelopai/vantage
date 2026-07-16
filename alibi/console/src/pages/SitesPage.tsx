@@ -26,12 +26,6 @@ export function SitesPage() {
     name: string; subject_type: SubjectType; area: string; address: string; notes: string;
   }>({ name: '', subject_type: 'home', area: '', address: '', notes: '' });
 
-  // Recording PCs (the bridge agent)
-  const [bridges, setBridges] = useState<Array<{
-    bridge_id: string; name: string; last_seen: string | null; site_hint: string; online: boolean;
-  }>>([]);
-  const [downloading, setDownloading] = useState(false);
-
   async function loadSites() {
     try {
       const data = await api.listSites();
@@ -51,19 +45,9 @@ export function SitesPage() {
     } catch { /* postures are advisory; page still works without them */ }
   }
 
-  async function loadBridges() {
-    try {
-      const data = await api.listBridges();
-      setBridges(data.bridges);
-    } catch { /* non-fatal */ }
-  }
-
   useEffect(() => {
     loadSites();
     loadPostures();
-    loadBridges();
-    const t = setInterval(loadBridges, 5000);
-    return () => clearInterval(t);
   }, []);
 
   async function handleCreate(e: React.FormEvent) {
@@ -95,38 +79,6 @@ export function SitesPage() {
       await loadSites();
     } catch (e: any) {
       alert(e.message || 'Failed to delete site');
-    }
-  }
-
-  async function handleDownloadRecorder() {
-    setDownloading(true);
-    try {
-      await api.downloadRecorder();
-    } catch {
-      alert('Failed to download the Vantage recorder');
-    } finally {
-      setDownloading(false);
-    }
-  }
-
-  async function handleRenamePC(bridgeId: string, current: string) {
-    const name = prompt('Name this recording PC (e.g. "Office PC", "Mac (temporary)")', current);
-    if (!name || name.trim() === current) return;
-    try {
-      await api.renameBridge(bridgeId, name.trim());
-      await loadBridges();
-    } catch (e: any) {
-      alert(e.message || 'Failed to rename PC');
-    }
-  }
-
-  async function handleRemovePC(bridgeId: string, label: string) {
-    if (!confirm(`Remove "${label}"? It will stop recording immediately and must be re-added to record again.`)) return;
-    try {
-      await api.removeBridge(bridgeId);
-      await loadBridges();
-    } catch (e: any) {
-      alert(e.message || 'Failed to remove PC');
     }
   }
 
@@ -258,80 +210,9 @@ export function SitesPage() {
         </div>
       )}
 
-      {/* Recording PC onboarding — "add a PC from the portal" */}
-      <div className="bg-white shadow rounded-lg p-6 my-6 border-l-4 border-indigo-400">
-        <h2 className="text-lg font-medium text-gray-900">Add the recording PC</h2>
-        <p className="mt-1 text-sm text-gray-500">
-          Vantage records and watches from one always-on PC on the same network as your cameras.
-          You only run our software on it — no camera-vendor apps, no NVR to configure.
-        </p>
-
-        <ol className="mt-4 space-y-3 text-sm text-gray-700">
-          <li className="flex gap-3">
-            <span className="flex-none w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 font-medium flex items-center justify-center">1</span>
-            <div>
-              <p className="font-medium text-gray-900">Download the recorder</p>
-              <p className="text-gray-500">One file, already paired to your account — nothing to type in.</p>
-              {isAdmin && (
-                <button
-                  onClick={handleDownloadRecorder} disabled={downloading}
-                  className="mt-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md hover:bg-indigo-700 disabled:opacity-50"
-                >
-                  {downloading ? 'Preparing…' : 'Download the recorder'}
-                </button>
-              )}
-            </div>
-          </li>
-          <li className="flex gap-3">
-            <span className="flex-none w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 font-medium flex items-center justify-center">2</span>
-            <div>
-              <p className="font-medium text-gray-900">Run it on the always-on PC</p>
-              <p className="text-gray-500">On that PC (needs Python + ffmpeg): <code className="px-1 py-0.5 bg-gray-100 rounded">python vantage_recorder.pyz</code>. It pairs itself, records every camera to that PC, and appears below.</p>
-            </div>
-          </li>
-          <li className="flex gap-3">
-            <span className="flex-none w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 font-medium flex items-center justify-center">3</span>
-            <div className="flex-1">
-              <p className="font-medium text-gray-900">Confirm it's connected</p>
-              {bridges.length === 0 ? (
-                <p className="text-gray-500">No recording PC connected yet. Once you run the file, it shows up here.</p>
-              ) : (
-                <ul className="mt-1 space-y-1">
-                  {bridges.map(b => (
-                    <li key={b.bridge_id} className="flex items-center gap-2">
-                      <span className={`w-2 h-2 rounded-full ${b.online ? 'bg-green-400' : 'bg-gray-300'}`} />
-                      <span className="text-gray-900">{b.name || b.bridge_id}</span>
-                      <span className="text-xs text-gray-500">
-                        {b.online ? 'online' : 'offline'}{b.site_hint ? ` · ${b.site_hint}` : ''}
-                      </span>
-                      {isAdmin && (
-                        <span className="ml-auto flex items-center gap-2">
-                          <button
-                            onClick={() => handleRenamePC(b.bridge_id, b.name)}
-                            className="text-xs text-blue-600 hover:text-blue-800"
-                          >
-                            Rename
-                          </button>
-                          <button
-                            onClick={() => handleRemovePC(b.bridge_id, b.name || b.bridge_id)}
-                            className="text-xs text-red-500 hover:text-red-700"
-                          >
-                            Remove
-                          </button>
-                        </span>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {isAdmin && bridges.length > 0 && (
-                <p className="text-xs text-gray-400 mt-2">
-                  Swapping PCs? Run the recorder on the new one, then Remove the old — its access is revoked immediately.</p>
-              )}
-            </div>
-          </li>
-        </ol>
-      </div>
+      <p className="text-xs text-gray-400 mt-6">
+        The recording PC lives on its own page now — see <span className="font-medium">Recorders</span> in the top nav.
+      </p>
     </div>
   );
 }
