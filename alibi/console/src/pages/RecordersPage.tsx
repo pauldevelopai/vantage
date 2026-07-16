@@ -9,6 +9,8 @@ export function RecordersPage() {
   const [bridges, setBridges] = useState<Bridge[]>([]);
   const [downloading, setDownloading] = useState(false);
   const [computers, setComputers] = useState<Array<Record<string, any>>>([]);
+  const [scanning, setScanning] = useState(false);
+  const [scanNote, setScanNote] = useState<string | null>(null);
 
   async function loadBridges() {
     try {
@@ -55,6 +57,40 @@ export function RecordersPage() {
     if (!confirm(`Remove "${label}"? It stops recording immediately and must be re-added to record again.`)) return;
     try { await api.removeBridge(bridgeId); await loadBridges(); }
     catch (e: any) { alert(e.message || 'Failed to remove'); }
+  }
+
+  async function handleScan() {
+    const online = bridges.find(b => b.online);
+    if (!online) { setScanNote('Start a recorder first — the scan runs from a recorder on your network.'); return; }
+    setScanning(true);
+    setScanNote(null);
+    try {
+      const { job_id } = await api.scanViaBridge(online.bridge_id);
+      const deadline = Date.now() + 180000;
+      // Poll until the recorder reports back.
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        await new Promise(r => setTimeout(r, 2000));
+        let status;
+        try { status = await api.getBridgeScanStatus(job_id); } catch { continue; }
+        if (status.status === 'done') {
+          const pcs = (status.results || []).filter((r: any) => r.is_computer === true);
+          setComputers(pcs);
+          setScanNote(pcs.length === 0
+            ? 'No candidate computers found. Only machines with file-sharing or remote-access enabled show up — the recorder itself is excluded.'
+            : null);
+          break;
+        }
+        if (status.status === 'error' || Date.now() > deadline) {
+          setScanNote('Scan didn’t complete. Make sure the recorder is online and try again.');
+          break;
+        }
+      }
+    } catch (e: any) {
+      setScanNote(e.message || 'Scan failed');
+    } finally {
+      setScanning(false);
+    }
   }
 
   const anyOnline = bridges.some(b => b.online);
@@ -155,13 +191,26 @@ export function RecordersPage() {
         )}
       </div>
 
-      {/* Candidate recording PCs found on the LAN */}
-      {computers.length > 0 && (
-        <div className="bg-white shadow rounded-lg p-6">
-          <h2 className="text-lg font-medium text-gray-900 mb-1">Computers on your network</h2>
-          <p className="text-sm text-gray-500 mb-3">
-            The last camera scan found these computers. Any always-on one is a good recorder — set it up with the steps above.
-          </p>
+      {/* Find candidate recording PCs on the LAN */}
+      <div className="bg-white shadow rounded-lg p-6">
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="text-lg font-medium text-gray-900">Computers on your network</h2>
+          {isAdmin && (
+            <button
+              onClick={handleScan}
+              disabled={scanning || !anyOnline}
+              title={!anyOnline ? 'Start a recorder first' : undefined}
+              className="px-3 py-1.5 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+            >
+              {scanning ? 'Scanning…' : 'Scan for computers'}
+            </button>
+          )}
+        </div>
+        <p className="text-sm text-gray-500 mb-3">
+          Machines that could be a recorder. A running recorder scans its network and lists them; any always-on one is a good choice — set it up with the steps above.
+          {!anyOnline && ' (Start a recorder first — the scan runs from it.)'}
+        </p>
+        {computers.length > 0 ? (
           <ul className="space-y-1.5">
             {computers.map((c, i) => (
               <li key={`pc-${c.ip}-${i}`} className="flex items-center gap-3 rounded-md border border-gray-100 bg-gray-50 px-3 py-2">
@@ -173,11 +222,11 @@ export function RecordersPage() {
               </li>
             ))}
           </ul>
-        </div>
-      )}
-      {!anyOnline && bridges.length > 0 && (
-        <p className="text-xs text-gray-400 mt-2">Tip: your recorder is offline. Start it to enable live view, recording, and camera scanning.</p>
-      )}
+        ) : (
+          <p className="text-sm text-gray-400">{scanNote || 'No scan run yet — hit “Scan for computers”.'}</p>
+        )}
+        {computers.length > 0 && scanNote && <p className="text-xs text-gray-400 mt-2">{scanNote}</p>}
+      </div>
     </div>
   );
 }
