@@ -1,6 +1,6 @@
 // API client for Alibi backend
 
-import type { DashboardOverview, PersonRow, PersonHistoryResult, SourceVocab, UserSource, HotlistEntry, IncidentSummary, IncidentDetail, IncidentExplanation, DecisionRequest, Settings, ShiftReport, Camera, TrailEntry, Site, Posture, SubjectType, CostSummary } from './types';
+import type { DashboardOverview, PersonRow, PersonHistoryResult, SourceVocab, UserSource, HotlistEntry, SiteBrief, AdvisorResult, IncidentSummary, IncidentDetail, IncidentExplanation, DecisionRequest, Settings, ShiftReport, Camera, TrailEntry, Site, Posture, SubjectType, CostSummary } from './types';
 import { getToken } from './auth';
 
 const API_BASE = '/api';
@@ -626,6 +626,19 @@ export const api = {
   async getRecentPeople(hours: number = 168): Promise<{ people: PersonRow[]; count: number; window_hours: number }> {
     const res = await fetchWithAuth(`${API_BASE}/people/recent?hours=${hours}`);
     if (!res.ok) throw new Error('Failed to load people');
+    return res.json();
+  },
+
+  async getSiteBrief(siteId: string, windowHours: number = 24): Promise<SiteBrief> {
+    const res = await fetchWithAuth(`${API_BASE}/sites/${encodeURIComponent(siteId)}/brief?window_hours=${windowHours}`);
+    if (!res.ok) throw new Error('Failed to load the brief');
+    return res.json();
+  },
+
+  async getAdvisor(siteId?: string): Promise<AdvisorResult> {
+    const q = siteId ? `?site_id=${encodeURIComponent(siteId)}` : '';
+    const res = await fetchWithAuth(`${API_BASE}/advisor${q}`);
+    if (!res.ok) throw new Error('Failed to load recommendations');
     return res.json();
   },
 

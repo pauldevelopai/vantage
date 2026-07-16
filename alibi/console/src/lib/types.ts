@@ -307,3 +307,51 @@ export interface HotlistEntry {
   source_ref: string;
   metadata?: Record<string, any>;
 }
+
+// --- Security Advisor + brief ----------------------------------------------- //
+
+export interface BriefFinding {
+  kind: string;
+  detail: string;
+  severity_hint: string;
+  incident_ids: string[];
+}
+
+export interface SiteBrief {
+  site_id: string;
+  site_name: string;
+  subject_type: string;
+  window_hours: number;
+  incident_count: number;
+  coverage: {
+    cameras_configured: string[];
+    cameras_with_activity: string[];
+    quiet_cameras: string[];
+    scoped_to_site_cameras: boolean;
+  };
+  findings: BriefFinding[];
+  narrative: string;
+  source: string;
+  brief_sections: string[];
+  area_context?: any;
+  disclaimer: string;
+  generated_ts: string;
+}
+
+export interface Recommendation {
+  key: string;
+  title: string;
+  detail: string;
+  priority: 'critical' | 'high' | 'medium' | 'low';
+  evidence: string;
+  action: string;
+  link: string;
+}
+
+export interface AdvisorResult {
+  summary: string;
+  recommendations: Recommendation[];
+  generated_ts: string;
+  observed: Record<string, any>;
+  note: string;
+}
