@@ -32,6 +32,12 @@ interface DiscoveredCamera {
 }
 
 
+/** Hide the password in an rtsp URL for display. */
+function maskUrl(src: string): string {
+  if (!src) return '';
+  return src.replace(/(rtsp:\/\/[^:/@]+:)[^@]*(@)/i, '$1••••$2');
+}
+
 function EditCameraModal({ camera, sites, onClose, onSaved }: { camera: Camera; sites: Site[]; onClose: () => void; onSaved: () => void }) {
   const [name, setName] = useState(camera.name);
   const [source, setSource] = useState(camera.source);
@@ -874,14 +880,15 @@ export function CamerasPage() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-gray-900 truncate">{cam.name}</span>
+                    <span className="text-xs text-gray-400 font-mono">{cam.camera_id}</span>
                     {cam.area && (
                       <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
                         {cam.area}
                       </span>
                     )}
                   </div>
-                  <div className="text-sm text-gray-500 truncate">
-                    {cam.location || 'Added — your recording PC handles the video'}
+                  <div className="text-xs text-gray-500 truncate font-mono" title={maskUrl(cam.source)}>
+                    {cam.source ? maskUrl(cam.source) : 'No stream URL — click Edit to add one'}
                   </div>
                 </div>
               </div>
