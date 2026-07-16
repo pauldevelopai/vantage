@@ -208,7 +208,7 @@ export function SitesPage() {
       ) : (
         <div className="space-y-4 my-4">
           {sites.map(site => (
-            <SiteCard key={site.site_id} site={site} cameras={cameras} isAdmin={isAdmin} onDelete={() => handleDelete(site)} />
+            <SiteCard key={site.site_id} site={site} cameras={cameras} isAdmin={isAdmin} onDelete={() => handleDelete(site)} onChanged={loadSites} />
           ))}
         </div>
       )}
@@ -220,9 +220,10 @@ export function SitesPage() {
   );
 }
 
-function SiteCard({ site, cameras, isAdmin, onDelete }: { site: Site; cameras: Camera[]; isAdmin: boolean; onDelete: () => void }) {
+function SiteCard({ site, cameras, isAdmin, onDelete, onChanged }: { site: Site; cameras: Camera[]; isAdmin: boolean; onDelete: () => void; onChanged: () => void }) {
   const [open, setOpen] = useState(false);
   const [live, setLive] = useState(false);
+  const [editCams, setEditCams] = useState(false);
   const meta = SUBJECT_META[site.subject_type];
   const p = site.posture;
 
@@ -230,6 +231,21 @@ function SiteCard({ site, cameras, isAdmin, onDelete }: { site: Site; cameras: C
   const siteCameras = site.camera_ids
     .map(id => cameras.find(c => c.camera_id === id))
     .filter((c): c is Camera => !!c);
+
+  async function toggleCamera(cameraId: string, on: boolean) {
+    const next = on
+      ? [...site.camera_ids, cameraId]
+      : site.camera_ids.filter(id => id !== cameraId);
+    try {
+      await api.updateSite(site.site_id, { camera_ids: next });
+      onChanged();
+    } catch (e: any) {
+      alert(e.message || 'Failed to update site cameras');
+    }
+  }
+
+  // Detect stale ids the site references but no camera matches.
+  const staleCount = site.camera_ids.filter(id => !cameras.some(c => c.camera_id === id)).length;
 
   return (
     <div className="bg-white shadow rounded-lg p-5">
@@ -247,12 +263,17 @@ function SiteCard({ site, cameras, isAdmin, onDelete }: { site: Site; cameras: C
           {p?.summary && <p className="text-sm text-gray-600 mt-2">{p.summary}</p>}
         </div>
         <div className="flex items-center gap-3">
-          {site.camera_ids.length > 0 && (
+          {siteCameras.length > 0 && (
             <button
               onClick={() => setLive(v => !v)}
               className="text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md px-3 py-1.5"
             >
               {live ? 'Stop live' : '▶ Live feeds'}
+            </button>
+          )}
+          {isAdmin && (
+            <button onClick={() => setEditCams(v => !v)} className="text-sm text-gray-700 hover:text-gray-900">
+              {editCams ? 'Done' : 'Cameras'}
             </button>
           )}
           <button onClick={() => setOpen(v => !v)} className="text-sm text-blue-600 hover:text-blue-800">
@@ -263,6 +284,34 @@ function SiteCard({ site, cameras, isAdmin, onDelete }: { site: Site; cameras: C
           )}
         </div>
       </div>
+
+      {staleCount > 0 && !editCams && (
+        <p className="mt-2 text-xs text-amber-600">
+          {staleCount} assigned camera{staleCount === 1 ? '' : 's'} no longer exist. Click <span className="font-medium">Cameras</span> to fix which cameras this site watches.
+        </p>
+      )}
+
+      {editCams && (
+        <div className="mt-4 rounded-md border border-gray-200 bg-gray-50 p-3">
+          <p className="text-sm font-medium text-gray-900 mb-1">Which cameras does this site watch?</p>
+          {cameras.length === 0 ? (
+            <p className="text-sm text-gray-500">No cameras added yet — add them on the Cameras page first.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {cameras.map(c => (
+                <label key={c.camera_id} className="flex items-center gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={site.camera_ids.includes(c.camera_id)}
+                    onChange={e => toggleCamera(c.camera_id, e.target.checked)}
+                  />
+                  📷 {c.name} <span className="text-xs text-gray-400">{c.camera_id}</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {live && (
         <div className="mt-4">
