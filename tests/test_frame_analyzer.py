@@ -66,6 +66,56 @@ def test_event_types_are_never_accusatory():
             assert e.event_type in ("person_detected", "vehicle_detected", "activity_detected")
 
 
+# --- structured CV intel drives the event --------------------------------- #
+
+def test_structured_person_detection_makes_event_even_if_vlm_blind():
+    # VLM saw nothing, but the detector found a person -> real event.
+    intel = {"person_count": 1, "vehicle_count": 0}
+    e = decide_event(_r(desc="quiet scene"), "cam1", NOW, "f8", intel=intel)
+    assert e is not None and e.event_type == "person_detected"
+    assert e.metadata["intel"]["person_count"] == 1
+
+
+def test_structured_vehicle_detection_makes_vehicle_event():
+    intel = {"person_count": 0, "vehicle_count": 2}
+    e = decide_event(_r(desc="driveway"), "cam1", NOW, "f9", intel=intel)
+    assert e.event_type == "vehicle_detected"
+    assert e.metadata["intel"]["vehicle_count"] == 2
+
+
+def test_hotlist_plate_raises_event_and_maxes_review_severity():
+    # Nothing else notable, but a hotlist plate is the strongest "worth a look".
+    intel = {"hotlist_hit": True, "hotlist_reason": "stolen",
+             "plates": [{"text": "CA123456", "display": "CA 123 456"}]}
+    e = decide_event(_r(desc="a car passes"), "cam1", NOW, "f10", intel=intel)
+    assert e is not None
+    assert e.severity == 4                        # bumped to the review ceiling
+    assert e.metadata["intel"]["hotlist_hit"] is True
+    assert e.metadata["intel"]["plates"][0]["display"] == "CA 123 456"
+
+
+def test_watchlist_face_raises_event():
+    intel = {"watchlist_hit": True, "watchlist_label": "Person of interest"}
+    e = decide_event(_r(desc="someone at the gate"), "cam1", NOW, "f11", intel=intel)
+    assert e is not None and e.severity == 4
+    assert e.metadata["intel"]["watchlist_label"] == "Person of interest"
+
+
+def test_intel_absent_preserves_legacy_behaviour():
+    # No intel -> identical to before (VLM-only decision).
+    assert decide_event(_r(desc="empty garden"), "cam1", NOW, "f12") is None
+    e = decide_event(_r(objects=["person"]), "cam1", NOW, "f13")
+    assert e.event_type == "person_detected" and "intel" not in e.metadata
+
+
+def test_hotlist_and_watchlist_labels_are_not_accusatory():
+    intel = {"hotlist_hit": True, "watchlist_hit": True,
+             "watchlist_label": "match", "hotlist_reason": "flagged"}
+    e = decide_event(_r(objects=["person", "car"]), "cam1", NOW, "f14", intel=intel)
+    assert not contains_forbidden_language(e.event_type)
+    assert e.event_type in ("person_detected", "vehicle_detected", "activity_detected")
+
+
 # --- throttle -------------------------------------------------------------- #
 
 def test_throttle_one_per_gap():

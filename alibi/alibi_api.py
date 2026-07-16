@@ -2549,30 +2549,74 @@ async def bridge_put_hls(camera_id: str, filename: str, request: Request,
 async def bridge_ingest_frame(camera_id: str, request: Request,
                               bridge_id: str = Depends(_require_bridge)):
     """The agent posts a motion still; the cloud analyses it and may raise an
-    incident. Throttled per camera so a motion burst can't spam the vision model."""
+    incident. Throttled per camera so a motion burst can't spam the models.
+
+    Two layers run on the one (already motion-gated, throttled) frame:
+      * the VLM scene description (narration), and
+      * the structured CV stack — the same detection/plate/face/vehicle-ReID
+        pipeline the phone endpoint uses — which WRITES the sighting stores the
+        pattern/history engine reads, and surfaces hotlist/watchlist hits.
+    """
     import time as _time
+    from fastapi.concurrency import run_in_threadpool
     from alibi.cameras import frame_analyzer as fa
     data = await request.body()
     if not data:
         raise HTTPException(status_code=400, detail="Empty frame")
     if not fa.should_analyze(camera_id, _time.time()):
         return {"analyzed": False, "reason": "throttled"}
-    analysis = fa.analyze_bytes(data)
-    if not analysis:
-        return {"analyzed": False, "reason": "analysis_unavailable"}
+
+    now = datetime.utcnow()
+
+    # The decode + structured CV (detection/plates/faces/ReID) + VLM are all
+    # synchronous and heavy — run them in a worker thread so they never block the
+    # event loop (which is also serving live-view HLS). Structured intel writes the
+    # sighting stores; both layers degrade to empty/None on failure.
+    def _analyze():
+        frame = fa.decode(data)
+        if frame is None:
+            return None, None
+        intel_ = None
+        try:
+            from alibi.vision import frame_intelligence as fi
+            intel_ = fi.analyze_and_record(frame, camera_id, now)
+        except Exception as e:
+            print(f"[frame-ai] structured intelligence failed: {e}")
+        analysis_ = fa.analyze_frame(frame) or {}
+        return intel_, analysis_
+
+    intel, analysis = await run_in_threadpool(_analyze)
+    if analysis is None:
+        return {"analyzed": False, "reason": "decode_failed"}
 
     frame_id = fa.store_frame(data)
-    event = fa.decide_event(analysis, camera_id, datetime.utcnow(), frame_id)
+    event = fa.decide_event(analysis, camera_id, now, frame_id, intel=intel)
     if event is None:
         return {"analyzed": True, "incident": None,
-                "description": analysis.get("description", "")}
+                "description": analysis.get("description", ""),
+                "intel": _intel_summary(intel)}
 
     store = get_store()
     settings = get_settings()
     store.append_event(event)
     incident = process_camera_event(event, store, settings)
     return {"analyzed": True, "incident": incident.incident_id,
-            "event_type": event.event_type, "severity": event.severity}
+            "event_type": event.event_type, "severity": event.severity,
+            "intel": _intel_summary(intel)}
+
+
+def _intel_summary(intel):
+    """Compact structured-CV summary for the agent's log / debugging."""
+    if not intel:
+        return None
+    return {
+        "person_count": intel.get("person_count", 0),
+        "vehicle_count": intel.get("vehicle_count", 0),
+        "plates": [p.get("display") or p.get("text") for p in (intel.get("plates") or [])],
+        "hotlist_hit": intel.get("hotlist_hit", False),
+        "watchlist_hit": intel.get("watchlist_hit", False),
+        "cross_camera_alerts": len(intel.get("cross_camera_alerts") or []),
+    }
 
 
 @app.get("/cameras/frames/{frame_id}", tags=["Cameras"])

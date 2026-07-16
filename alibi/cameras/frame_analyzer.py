@@ -51,18 +51,32 @@ def decide_event(
     camera_id: str,
     now: datetime,
     frame_id: str,
+    intel: Optional[Dict[str, Any]] = None,
 ) -> Optional[CameraEvent]:
-    """Map a SceneAnalyzer result to a CameraEvent, or None if nothing in the
-    frame merits a reviewer's attention. Pure + non-accusatory."""
+    """Map a frame's findings to a CameraEvent, or None if nothing merits a
+    reviewer's attention. Pure + non-accusatory.
+
+    `analysis` is the VLM scene result (description, objects, safety). `intel` is
+    the optional structured-CV result from `frame_intelligence.analyze_and_record`
+    (real person/vehicle counts, plate reads, watchlist/hotlist hits). When intel
+    is present it is the RELIABLE signal — real detections drive the event and the
+    VLM description becomes narration; a hotlist plate or watchlist face raises the
+    event even if the VLM missed it."""
+    intel = intel or {}
     objs = [str(o).lower() for o in (analysis.get("detected_objects") or [])]
     desc = str(analysis.get("description") or "")
     low = desc.lower()
 
-    has_person = "person" in objs or "people" in low or "person" in low
-    has_vehicle = any(v in objs for v in _VEHICLE_WORDS) or any(v in low for v in _VEHICLE_WORDS)
+    # Structured detections (reliable) OR the VLM's read (fallback).
+    person_count = int(intel.get("person_count") or 0)
+    vehicle_count = int(intel.get("vehicle_count") or 0)
+    has_person = person_count > 0 or "person" in objs or "people" in low or "person" in low
+    has_vehicle = vehicle_count > 0 or any(v in objs for v in _VEHICLE_WORDS) or any(v in low for v in _VEHICLE_WORDS)
     safety = bool(analysis.get("safety_concern"))
+    hotlist_hit = bool(intel.get("hotlist_hit"))
+    watchlist_hit = bool(intel.get("watchlist_hit"))
 
-    if not (has_person or has_vehicle or safety):
+    if not (has_person or has_vehicle or safety or hotlist_hit or watchlist_hit):
         return None                                  # honest: nothing to flag
 
     if has_person:
@@ -73,12 +87,37 @@ def decide_event(
         event_type, severity = "activity_detected", 2
     if safety:
         severity = min(severity + 1, 4)              # worth a closer look; never the max
+    # A hotlist plate or watchlist face is the strongest "worth a look" signal —
+    # bump to the review ceiling (still capped below max; never an accusation).
+    if hotlist_hit or watchlist_hit:
+        severity = 4
 
     conf = analysis.get("confidence", 0.7)
     try:
         conf = max(0.0, min(float(conf), 1.0))
     except (TypeError, ValueError):
         conf = 0.7
+
+    metadata: Dict[str, Any] = {
+        "source": "frame_ai",
+        "description": desc,
+        "detected_objects": objs,
+        "safety_concern": safety,
+    }
+    # Fold in the structured evidence when we have it.
+    if intel:
+        metadata["intel"] = {
+            "person_count": person_count,
+            "vehicle_count": vehicle_count,
+            "plates": intel.get("plates") or [],
+            "faces": intel.get("faces") or [],
+            "hotlist_hit": hotlist_hit,
+            "hotlist_reason": intel.get("hotlist_reason"),
+            "watchlist_hit": watchlist_hit,
+            "watchlist_label": intel.get("watchlist_label"),
+            "cross_camera_alerts": intel.get("cross_camera_alerts") or [],
+            "detections": intel.get("detections") or [],
+        }
 
     return CameraEvent(
         event_id=f"frm_{frame_id}",
@@ -89,12 +128,7 @@ def decide_event(
         confidence=conf,
         severity=severity,
         snapshot_url=f"/api/cameras/frames/{frame_id}.jpg",
-        metadata={
-            "source": "frame_ai",
-            "description": desc,
-            "detected_objects": objs,
-            "safety_concern": safety,
-        },
+        metadata=metadata,
     )
 
 
@@ -127,10 +161,15 @@ def _decode(data: bytes):
     return cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
 
 
-def analyze_bytes(data: bytes, analyzer=None) -> Optional[Dict[str, Any]]:
-    """Run vision on JPEG bytes -> the SceneAnalyzer result dict (or None on a
-    decode/vision failure). `analyzer` is injectable for tests."""
-    frame = _decode(data)
+# Public alias — the endpoint decodes once and shares the frame with both the VLM
+# and the structured CV stack (avoids decoding the same JPEG twice).
+def decode(data: bytes):
+    return _decode(data)
+
+
+def analyze_frame(frame, analyzer=None) -> Optional[Dict[str, Any]]:
+    """Run the VLM on an already-decoded BGR frame -> SceneAnalyzer result dict
+    (or None on failure). `analyzer` is injectable for tests."""
     if frame is None:
         return None
     if analyzer is None:
@@ -141,3 +180,9 @@ def analyze_bytes(data: bytes, analyzer=None) -> Optional[Dict[str, Any]]:
     except Exception as e:
         print(f"[frame-ai] analysis failed: {e}")
         return None
+
+
+def analyze_bytes(data: bytes, analyzer=None) -> Optional[Dict[str, Any]]:
+    """Run vision on JPEG bytes -> the SceneAnalyzer result dict (or None on a
+    decode/vision failure). `analyzer` is injectable for tests."""
+    return analyze_frame(_decode(data), analyzer=analyzer)
