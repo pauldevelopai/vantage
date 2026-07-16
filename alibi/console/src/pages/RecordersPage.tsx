@@ -46,6 +46,15 @@ export function RecordersPage() {
     finally { setDownloading(false); }
   }
 
+  const isMac = /Mac/i.test(navigator.platform || navigator.userAgent);
+  const [launching, setLaunching] = useState(false);
+  async function handleUseThisComputer() {
+    setLaunching(true);
+    try { await api.downloadRecorderLauncher(isMac ? 'mac' : 'windows'); }
+    catch { alert('Failed to prepare the launcher'); }
+    finally { setLaunching(false); }
+  }
+
   async function handleRename(bridgeId: string, current: string) {
     const name = prompt('Name this recording PC (e.g. "Office PC", "Mac (temporary)")', current);
     if (!name || name.trim() === current) return;
@@ -112,10 +121,37 @@ export function RecordersPage() {
         <span className="font-medium"> recorder</span>. Use any always-on machine (a spare PC, a mini-PC, a Mac).
       </div>
 
-      {/* Set up a recorder — clear numbered steps */}
+      {/* Fast path — use the computer you're on right now */}
+      {isAdmin && (
+        <div className="bg-white shadow rounded-lg p-6 mb-6 border-l-4 border-green-500">
+          <h2 className="text-lg font-medium text-gray-900">Use this computer as the recorder</h2>
+          <p className="mt-1 text-sm text-gray-500">
+            The quickest way — if the computer you're on right now is on the same network as your cameras and stays on.
+            It needs <span className="font-medium">Python 3</span> and <span className="font-medium">ffmpeg</span> installed.
+          </p>
+          <button
+            onClick={handleUseThisComputer} disabled={launching}
+            className="mt-3 px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-md hover:bg-green-700 disabled:opacity-50"
+          >
+            {launching ? 'Preparing…' : `Set up this computer (${isMac ? 'Mac' : 'Windows'})`}
+          </button>
+          <ol className="mt-3 text-sm text-gray-600 list-decimal list-inside space-y-1">
+            <li>A file downloads (<span className="font-mono text-xs">Vantage Recorder.{isMac ? 'command' : 'bat'}</span>).</li>
+            {isMac ? (
+              <li><span className="font-medium">Double-click it.</span> The first time, macOS may block it — <span className="font-medium">right-click → Open → Open</span> to allow it.</li>
+            ) : (
+              <li><span className="font-medium">Double-click it.</span> If Windows SmartScreen warns, click <span className="font-medium">More info → Run anyway</span>.</li>
+            )}
+            <li>A window opens and it starts recording. Leave it open (or set it to run at startup later).</li>
+          </ol>
+          <p className="mt-2 text-xs text-gray-400">No terminal, no typing. It pairs itself and appears under “Your recorders” below.</p>
+        </div>
+      )}
+
+      {/* Set up a different computer — clear numbered steps */}
       {isAdmin && (
         <div className="bg-white shadow rounded-lg p-6 mb-6">
-          <h2 className="text-lg font-medium text-gray-900 mb-4">Set up a recorder</h2>
+          <h2 className="text-lg font-medium text-gray-900 mb-4">Or set up a different computer</h2>
           <ol className="space-y-5">
             <li className="flex gap-3">
               <span className="flex-none w-7 h-7 rounded-full bg-indigo-600 text-white font-semibold flex items-center justify-center">1</span>

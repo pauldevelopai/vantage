@@ -2179,6 +2179,105 @@ def _bake_agent_config(src: str, base_url: str, code: str) -> str:
     )
 
 
+def _build_recorder_zipapp(base_url: str, code: str) -> bytes:
+    """Build the personalized recorder zipapp (recorder + bridge + agent +
+    __main__), URL & pairing code baked in. Returns the .pyz bytes."""
+    import io
+    import zipfile
+    from alibi.cameras import recorder, bridge_agent, record_agent
+    with open(recorder.__file__) as f:
+        recorder_src = f.read()
+    with open(record_agent.__file__) as f:
+        record_agent_src = f.read()
+    with open(bridge_agent.__file__) as f:
+        bridge_agent_src = _bake_agent_config(f.read(), base_url, code)
+    main_src = "import sys\nimport record_agent\nsys.exit(record_agent.main())\n"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("recorder.py", recorder_src)
+        z.writestr("bridge_agent.py", bridge_agent_src)
+        z.writestr("record_agent.py", record_agent_src)
+        z.writestr("__main__.py", main_src)
+    return buf.getvalue()
+
+
+_LAUNCHER_MARKER = "#___VANTAGE_PAYLOAD___"
+
+
+def _mac_launcher(zip_b64: str) -> str:
+    """A double-clickable macOS .command that extracts the embedded recorder and
+    runs it — no typing. The base64 zipapp is appended after the marker."""
+    return (
+        "#!/bin/bash\n"
+        "# Vantage Recorder — double-click to run. Records this network's cameras.\n"
+        "set -e\n"
+        'DIR="$HOME/VantageRecorder"\n'
+        'mkdir -p "$DIR/rec"\n'
+        'echo "Setting up the Vantage recorder…"\n'
+        # everything after the marker line is the base64 payload
+        f"awk 'f{{print}} /^{_LAUNCHER_MARKER}$/{{f=1}}' \"$0\" | base64 --decode > \"$DIR/vantage_recorder.pyz\"\n"
+        'if ! command -v python3 >/dev/null 2>&1; then\n'
+        '  echo "" ; echo "Python 3 is needed. Install it from https://www.python.org/downloads/ then double-click this file again."\n'
+        '  read -n 1 -s -r -p "Press any key to close." ; exit 1\n'
+        'fi\n'
+        'if ! command -v ffmpeg >/dev/null 2>&1; then\n'
+        '  echo "" ; echo "ffmpeg is needed. Install Homebrew (https://brew.sh) then run:  brew install ffmpeg"\n'
+        '  read -n 1 -s -r -p "Press any key to close." ; exit 1\n'
+        'fi\n'
+        'echo "Recorder running — recording to $DIR/rec. Leave this window open."\n'
+        'exec python3 "$DIR/vantage_recorder.pyz" --dir "$DIR/rec" --max-gb 200 --max-days 30\n'
+        f"{_LAUNCHER_MARKER}\n"
+        f"{zip_b64}\n"
+    )
+
+
+def _windows_launcher(zip_b64: str) -> str:
+    """A double-clickable Windows .bat that extracts the embedded recorder (via
+    PowerShell) and runs it."""
+    ps = (
+        "$ErrorActionPreference='Stop';"
+        "$d=Join-Path $env:USERPROFILE 'VantageRecorder';"
+        "New-Item -ItemType Directory -Force -Path (Join-Path $d 'rec')|Out-Null;"
+        "$b='" + zip_b64 + "';"
+        "[IO.File]::WriteAllBytes((Join-Path $d 'vantage_recorder.pyz'),[Convert]::FromBase64String($b));"
+        "python (Join-Path $d 'vantage_recorder.pyz') '--dir' (Join-Path $d 'rec') '--max-gb' '200' '--max-days' '30'"
+    )
+    return (
+        "@echo off\r\n"
+        "REM Vantage Recorder - double-click to run.\r\n"
+        "echo Setting up the Vantage recorder...\r\n"
+        f"powershell -NoProfile -ExecutionPolicy Bypass -Command \"{ps}\"\r\n"
+        "pause\r\n"
+    )
+
+
+@app.get("/cameras/bridge/download-launcher", tags=["Camera Bridge"])
+async def bridge_download_launcher(
+    request: Request,
+    platform: str = "mac",
+    current_user: User = Depends(require_role([Role.ADMIN])),
+):
+    """A double-clickable launcher for THIS computer — the recorder embedded, so
+    the owner downloads one file and double-clicks it (no terminal). macOS gets a
+    .command, Windows a .bat."""
+    import base64
+    from fastapi.responses import Response
+    from alibi.cameras.bridge import get_bridge_registry
+
+    pc = get_bridge_registry().create_pairing_code(created_by=current_user.username)
+    base_url = str(request.base_url).rstrip("/")
+    zip_b64 = base64.b64encode(_build_recorder_zipapp(base_url, pc.code)).decode()
+
+    if platform == "windows":
+        body, filename = _windows_launcher(zip_b64), "Vantage Recorder.bat"
+    else:
+        body, filename = _mac_launcher(zip_b64), "Vantage Recorder.command"
+    return Response(
+        content=body, media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.get("/cameras/bridge/download-recorder", tags=["Camera Bridge"])
 async def bridge_download_recorder(
     request: Request,
