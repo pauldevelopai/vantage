@@ -91,6 +91,8 @@ function Layout({ children }: { children: React.ReactNode }) {
               {navLink('/metrics', 'Metrics')}
               {navLink('/vehicle-search', 'Vehicles')}
               {(hasRole('supervisor') || hasRole('admin')) && navLink('/watchlist', 'Watchlist')}
+              <div className="w-px h-5 bg-white/10 mx-1.5 flex-shrink-0" />
+              {/* Data & configuration */}
               {navLink('/intel', 'Intel')}
               {hasRole('admin') && navLink('/costs', 'Costs')}
               {hasRole('admin') && navLink('/settings', 'Settings')}

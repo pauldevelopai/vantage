@@ -70,6 +70,7 @@ function CameraLiveView({ camera, onClose }: { camera: Camera; onClose: () => vo
       hls.attachMedia(videoRef.current!);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         if (cancelled) return;
+        clearTimeout(giveUp);          // playing now — cancel the "no video" fallback
         setStatus('live');
         videoRef.current?.play().catch(() => {});
       });
@@ -125,10 +126,66 @@ function CameraLiveView({ camera, onClose }: { camera: Camera; onClose: () => vo
   );
 }
 
+function EditCameraModal({ camera, onClose, onSaved }: { camera: Camera; onClose: () => void; onSaved: () => void }) {
+  const [name, setName] = useState(camera.name);
+  const [source, setSource] = useState(camera.source);
+  const [area, setArea] = useState(camera.area || '');
+  const [enabled, setEnabled] = useState(camera.enabled);
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    setSaving(true);
+    try {
+      await api.updateCamera(camera.camera_id, { name, source, area, enabled });
+      onSaved();
+      onClose();
+    } catch (e: any) {
+      alert(e.message || 'Failed to save');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-medium text-gray-900">Edit camera</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-sm">Close ✕</button>
+        </div>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+            <input value={name} onChange={e => setName(e.target.value)} className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Stream URL (RTSP, incl. login)</label>
+            <input value={source} onChange={e => setSource(e.target.value)} className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm font-mono" />
+            <p className="text-xs text-gray-400 mt-1">e.g. rtsp://admin:pass@192.168.3.91:554/cam/realmonitor?channel=1&amp;subtype=0</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Area / Suburb</label>
+            <input value={area} onChange={e => setArea(e.target.value)} placeholder="Sandton" className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm" />
+          </div>
+          <label className="flex items-center gap-2 text-sm text-gray-700">
+            <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} />
+            Enabled (recording + live view)
+          </label>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200">Cancel</button>
+          <button onClick={save} disabled={saving} className="px-4 py-2 text-sm text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50">{saving ? 'Saving…' : 'Save'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function CamerasPage() {
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [loading, setLoading] = useState(true);
   const [liveCamera, setLiveCamera] = useState<Camera | null>(null);
+  const [editCamera, setEditCamera] = useState<Camera | null>(null);
   const [sites, setSites] = useState<Site[]>([]);
   const [formSiteId, setFormSiteId] = useState('');   // link the added camera to a site
   const [showForm, setShowForm] = useState(false);
@@ -909,6 +966,14 @@ export function CamerasPage() {
                 </button>
                 {isAdmin && (
                   <button
+                    onClick={() => setEditCamera(cam)}
+                    className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
+                  >
+                    Edit
+                  </button>
+                )}
+                {isAdmin && (
+                  <button
                     onClick={() => handleDelete(cam.camera_id)}
                     className="px-3 py-1.5 text-xs font-medium text-red-600 bg-red-50 rounded-md hover:bg-red-100"
                   >
@@ -923,6 +988,9 @@ export function CamerasPage() {
 
       {liveCamera && (
         <CameraLiveView camera={liveCamera} onClose={() => setLiveCamera(null)} />
+      )}
+      {editCamera && (
+        <EditCameraModal camera={editCamera} onClose={() => setEditCamera(null)} onSaved={loadCameras} />
       )}
     </div>
   );
