@@ -302,10 +302,20 @@ def test_storage_stats():
         "/rec/cam1/recordings/b.mp4": St(200, 5.0),
         "/rec/cam1/motion/m.jpg": St(10, 3.0),
     }
-    s = storage_stats("/rec", lister=lambda d: files.get(d, []), statter=lambda p: sizes[p])
+    class Du:
+        def __init__(self, total, used, free): self.total = total; self.used = used; self.free = free
+
+    s = storage_stats("/rec", lister=lambda d: files.get(d, []), statter=lambda p: sizes[p],
+                      disk_usage=lambda p: Du(1000, 690, 310))
     assert s["total_bytes"] == 310
     assert s["files"] == 3
-    assert s["cameras"]["cam1"] == {"bytes": 310, "files": 3}
+    cam = s["cameras"]["cam1"]
+    assert cam["bytes"] == 310 and cam["files"] == 3
+    # newest few actual files, sorted newest-first, with kind
+    assert [f["name"] for f in cam["recent"]] == ["b.mp4", "m.jpg", "a.mp4"]
+    assert cam["recent"][0] == {"name": "b.mp4", "bytes": 200, "mtime": 5.0, "kind": "recording"}
+    assert cam["recent"][1]["kind"] == "motion"
+    assert s["disk"] == {"total": 1000, "used": 690, "free": 310}
     assert s["oldest"] == 1.0 and s["newest"] == 5.0
     assert s["dir"].endswith("/rec")
 
