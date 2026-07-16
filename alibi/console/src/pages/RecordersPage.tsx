@@ -63,6 +63,13 @@ export function RecordersPage() {
     ? 'cd ~/Downloads\npython3 vantage_recorder.pyz --dir ~/vantage-rec --max-gb 200 --max-days 30'
     : 'cd %USERPROFILE%\\Downloads\npython vantage_recorder.pyz --dir vantage-rec --max-gb 200 --max-days 30';
   const [launching, setLaunching] = useState(false);
+  const [copied, setCopied] = useState(false);
+  function copyCmd() {
+    navigator.clipboard?.writeText(cmdLines).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }).catch(() => {});
+  }
   async function handleUseThisComputer() {
     setLaunching(true);
     try { await api.downloadRecorderLauncher(isMac ? 'mac' : 'windows'); }
@@ -210,7 +217,15 @@ export function RecordersPage() {
               </li>
               <li>
                 <span className="font-medium">3. Open Terminal and run these two lines:</span>
-                <pre className="mt-1 bg-gray-900 text-gray-100 text-xs rounded-md p-3 overflow-x-auto whitespace-pre">{cmdLines}</pre>
+                <div className="relative mt-1">
+                  <pre className="bg-gray-900 text-gray-100 text-xs rounded-md p-3 pr-16 overflow-x-auto whitespace-pre">{cmdLines}</pre>
+                  <button
+                    onClick={copyCmd}
+                    className="absolute top-2 right-2 px-2 py-1 text-xs font-medium rounded bg-gray-700 text-gray-100 hover:bg-gray-600"
+                  >
+                    {copied ? 'Copied ✓' : 'Copy'}
+                  </button>
+                </div>
                 <span className="text-xs text-gray-500">You should see <code className="bg-gray-100 px-1 rounded">paired as brg_…</code>. Leave the window open — it appears under “Your recorders” above.</span>
               </li>
             </ol>
@@ -252,7 +267,11 @@ export function RecordersPage() {
                   ))}
                 </ul>
               ) : (
-                <p className="mt-2 text-xs text-gray-400">{scanNote || 'Runs a scan from a connected recorder and lists computers that could host one.'}</p>
+                <p className={`mt-2 text-xs ${!anyOnline ? 'text-amber-600' : 'text-gray-400'}`}>
+                  {scanNote || (!anyOnline
+                    ? 'Your recorder is offline — start it (steps above) and this scan will work. The scan runs on the recorder, on your network.'
+                    : 'Runs a scan from your recorder and lists computers that could host one.')}
+                </p>
               )}
             </div>
           </div>
