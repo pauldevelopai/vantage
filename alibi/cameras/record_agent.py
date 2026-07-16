@@ -186,6 +186,56 @@ class HlsStreamer:
         return sorted(self._streams)
 
 
+class FrameUploader:
+    """Ships motion stills to the cloud for AI. The recorder's motion job already
+    writes a JPEG per motion second; we upload the newest, rate-limited to at most
+    one per `interval` seconds per camera — so a busy scene can't flood the vision
+    model. Motion-gated (no motion -> no frames -> no AI). Dependency-injected."""
+
+    def __init__(self, base_dir, upload, interval=8, lister=None, reader=None,
+                 clock=time.time):
+        self.base_dir = base_dir
+        self._upload = upload                      # upload(camera_id, jpeg) -> bool
+        self.interval = interval
+        self._lister = lister or (lambda d: os.listdir(d) if os.path.isdir(d) else [])
+        self._reader = reader or (lambda p: open(p, "rb").read())
+        self._clock = clock
+        self._seen = {}                            # camera_id -> last filename sent
+        self._last_sent = {}                       # camera_id -> ts
+
+    def tick(self):
+        now = self._clock()
+        for cid in self._lister(self.base_dir):
+            if cid.startswith("_"):                # skip _hls etc.
+                continue
+            motion_dir = os.path.join(self.base_dir, cid, "motion")
+            frames = sorted(n for n in self._lister(motion_dir) if n.endswith(".jpg"))
+            if not frames:
+                continue
+            newest = frames[-1]
+            if self._seen.get(cid) == newest:
+                continue                           # already sent the latest
+            if now - self._last_sent.get(cid, 0) < self.interval:
+                continue                           # rate limit
+            try:
+                data = self._reader(os.path.join(motion_dir, newest))
+            except OSError:
+                continue
+            if self._upload(cid, data):
+                self._seen[cid] = newest
+                self._last_sent[cid] = now
+
+
+def frame_loop(uploader, sleep, poll_seconds=3, should_run=lambda: True):
+    """Drive a FrameUploader on its own thread."""
+    while should_run():
+        try:
+            uploader.tick()
+        except Exception as e:
+            print(f"[frame-ai] upload failed: {e}")
+        sleep(poll_seconds)
+
+
 def hls_loop(streamer, fetch_watches, sleep, poll_seconds=2,
              should_run=lambda: True):
     """Drive an HlsStreamer: poll which cameras are watched, sync ffmpeg, upload
@@ -280,6 +330,24 @@ def main(argv=None):  # pragma: no cover
     threading.Thread(
         target=hls_loop, args=(streamer, fetch_watches, time.sleep),
         daemon=True,
+    ).start()
+
+    # --- frame AI (phase 4): ship motion stills for cloud analysis ---------- #
+    def upload_frame(camera_id, data):
+        url = ba.VANTAGE_URL.rstrip("/") + f"/api/cameras/bridge/frame?camera_id={camera_id}"
+        req = ba.urlrequest.Request(
+            url, data=data, method="POST",
+            headers={**headers, "Content-Type": "application/octet-stream"},
+        )
+        try:
+            with ba.urlrequest.urlopen(req, timeout=20):
+                return True
+        except Exception:
+            return False
+
+    frame_uploader = FrameUploader(base_dir=args.dir, upload=upload_frame)
+    threading.Thread(
+        target=frame_loop, args=(frame_uploader, time.sleep), daemon=True,
     ).start()
 
     # --- LAN scan + heartbeat (unified: this one agent also does discovery) --- #

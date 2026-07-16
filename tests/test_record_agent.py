@@ -4,7 +4,9 @@ per assigned camera in sync with the cloud's target list, and the run loop. Uses
 a fake recorder (no ffmpeg) and injected fetch/sleep/clock.
 """
 
-from alibi.cameras.record_agent import RecordAgent, run_loop, HlsStreamer, hls_loop
+from alibi.cameras.record_agent import (
+    RecordAgent, run_loop, HlsStreamer, hls_loop, FrameUploader, frame_loop,
+)
 from alibi.cameras.recorder import build_hls_command
 from alibi.cameras.rtsp_resolver import derive_substream_url
 
@@ -217,6 +219,63 @@ def test_hls_loop_survives_errors():
     ticks = {"n": 0}
     def sleep(_): ticks["n"] += 1
     hls_loop(s, boom, sleep, should_run=lambda: ticks["n"] < 2)  # must not raise
+
+
+# --- frame AI upload (phase 4) --------------------------------------------- #
+
+def _frame_uploader(interval=8):
+    uploaded = []
+    files = {}   # dir -> {name: bytes}
+    t = {"now": 1000.0}
+    def lister(d): return list(files.get(d, {}))
+    def reader(p):
+        import os as _os
+        return files[_os.path.dirname(p)][_os.path.basename(p)]
+    def upload(cid, data): uploaded.append((cid, data)); return True
+    up = FrameUploader(base_dir="/rec", upload=upload, interval=interval,
+                       lister=lister, reader=reader, clock=lambda: t["now"])
+    return up, uploaded, files, t
+
+
+def test_frame_uploader_sends_newest_motion_frame():
+    up, uploaded, files, t = _frame_uploader()
+    files["/rec"] = {"cam1": {}}                       # base lists camera dirs
+    files["/rec/cam1/motion"] = {"cam1_01.jpg": b"a", "cam1_02.jpg": b"b"}
+    up.tick()
+    assert uploaded == [("cam1", b"b")]                # newest only
+
+
+def test_frame_uploader_skips_hls_and_empty():
+    up, uploaded, files, t = _frame_uploader()
+    files["/rec"] = {"cam1": {}, "_hls": {}}
+    files["/rec/cam1/motion"] = {}                     # no frames
+    up.tick()
+    assert uploaded == []
+
+
+def test_frame_uploader_rate_limits_and_dedupes():
+    up, uploaded, files, t = _frame_uploader(interval=8)
+    files["/rec"] = {"cam1": {}}
+    files["/rec/cam1/motion"] = {"a.jpg": b"a"}
+    up.tick()
+    assert len(uploaded) == 1
+    up.tick()                                          # same file -> skip
+    assert len(uploaded) == 1
+    files["/rec/cam1/motion"]["b.jpg"] = b"b"          # new file, but within interval
+    up.tick()
+    assert len(uploaded) == 1
+    t["now"] += 9                                      # past the interval
+    up.tick()
+    assert uploaded[-1] == ("cam1", b"b")
+
+
+def test_frame_loop_survives_errors():
+    up, _u, _f, _t = _frame_uploader()
+    def boom(): raise RuntimeError("x")
+    up.tick = boom
+    ticks = {"n": 0}
+    def sleep(_): ticks["n"] += 1
+    frame_loop(up, sleep, should_run=lambda: ticks["n"] < 2)   # must not raise
 
 
 # --- sub-stream derivation ------------------------------------------------- #
