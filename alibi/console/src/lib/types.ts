@@ -151,6 +151,16 @@ export interface TrailEntry {
   metadata: Record<string, any>;
 }
 
+/** Service usage & estimated cost. */
+export interface CostSummary {
+  currency: string;
+  window_days: number;
+  total_usd: number;
+  by_service: Record<string, { calls: number; input_tokens: number; output_tokens: number; usd: number }>;
+  by_day: Array<{ day: string; usd: number; calls: number }>;
+  note: string;
+}
+
 /** The subject a Vantage deployment protects. */
 export type SubjectType = 'home' | 'office' | 'neighbourhood';
 

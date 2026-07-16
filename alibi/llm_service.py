@@ -87,6 +87,11 @@ def _call_anthropic(
             for block in response.content
             if getattr(block, "type", None) == "text"
         ).strip()
+        try:
+            from alibi.cost_tracker import record_from_response
+            record_from_response("llm_text", model, response)
+        except Exception:
+            pass
         return text or None
     except Exception as e:
         print(f"[LLM] Anthropic call failed: {e}")

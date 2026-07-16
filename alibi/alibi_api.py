@@ -2674,6 +2674,44 @@ async def rebuild_search_index(current_user: User = Depends(get_current_user)):
 
 # ── Intelligence Search ───────────────────────────────────────
 
+@app.get("/costs/summary", tags=["Costs"])
+async def costs_summary(window_days: int = 30, current_user: User = Depends(get_current_user)):
+    """Estimated service spend from recorded Claude token usage."""
+    from alibi.cost_tracker import summary
+    window_days = max(1, min(int(window_days or 30), 365))
+    return summary(window_days=window_days)
+
+
+@app.get("/intelligence/data", tags=["Intelligence"])
+async def intelligence_data(current_user: User = Depends(get_current_user)):
+    """External, non-personal reference data the Data Engine harvests (crime/area
+    context, POI, detection reference) — what we collect, and what's live now.
+    Boundary: official/reference/aggregate data only, never personal dossiers."""
+    from alibi.dataengine.store import DataEngineStore
+    from alibi.dataengine import sources as src
+    store = DataEngineStore()
+    records = store.query()
+    return {
+        "boundary": ("Non-personal, official / reference / aggregate data only "
+                     "(POPIA & GDPR). No dossiers on individuals."),
+        "sources": [
+            {"source_id": s.source_id, "domain": s.domain.value,
+             "description": s.description, "apify_actor": s.apify_actor,
+             "retention_days": s.retention_days}
+            for s in src.list_sources()
+        ],
+        "stats": store.stats(),
+        "records": [
+            {"source_id": r.source_id, "domain": r.domain.value,
+             "lawful_basis": r.lawful_basis.value,
+             "ingested_at": r.ingested_at.isoformat(),
+             "retention_until": r.retention_until.isoformat(),
+             "payload": r.payload}
+            for r in records[:100]
+        ],
+    }
+
+
 @app.get("/intelligence/search")
 async def search_intelligence(
     q: str,
