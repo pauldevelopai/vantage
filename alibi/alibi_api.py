@@ -2582,7 +2582,13 @@ async def bridge_ingest_frame(camera_id: str, request: Request,
             intel_ = fi.analyze_and_record(frame, camera_id, now)
         except Exception as e:
             print(f"[frame-ai] structured intelligence failed: {e}")
-        analysis_ = fa.analyze_frame(frame) or {}
+        # COST GATE: the local detector is free, the vision model is not. Only
+        # spend a paid VLM call on a frame where the detector actually found a
+        # person/vehicle (or a hotlist/watchlist hit). Wind, rain, and shifting
+        # shadows trip the motion trigger constantly and are worth $0 to narrate.
+        # If the structured layer is unavailable we fall back to always calling,
+        # so a CV failure degrades to the old behaviour rather than going blind.
+        analysis_ = fa.analyze_frame(frame) or {} if _worth_narrating(intel_) else {}
         return intel_, analysis_
 
     intel, analysis = await run_in_threadpool(_analyze)
@@ -2603,6 +2609,16 @@ async def bridge_ingest_frame(camera_id: str, request: Request,
     return {"analyzed": True, "incident": incident.incident_id,
             "event_type": event.event_type, "severity": event.severity,
             "intel": _intel_summary(intel)}
+
+
+def _worth_narrating(intel) -> bool:
+    """True if a frame earns a PAID vision call: the free local detector found a
+    person/vehicle, or a hotlist/watchlist hit. `None` (structured CV
+    unavailable) falls back to True so we never go blind."""
+    if intel is None:
+        return True
+    return bool(intel.get("person_count") or intel.get("vehicle_count")
+                or intel.get("hotlist_hit") or intel.get("watchlist_hit"))
 
 
 def _intel_summary(intel):

@@ -75,7 +75,7 @@ def test_record_command_transcodes_audio_when_enabled():
 def test_motion_command_uses_scene_filter():
     cmd = build_motion_command("rtsp://x/sub", "/mo", threshold=0.4, prefix="cam1")  # explicit value
     vf = cmd[cmd.index("-vf") + 1]
-    assert "select='gt(scene,0.4)'" in vf       # ffmpeg does the motion detection
+    assert "gt(scene,0.4)" in vf                # ffmpeg does the motion detection
     assert "format=yuvj420p" in vf              # JPEG-range for the mjpeg encoder
     assert "scale=" in vf                       # small frames for cheap upload
     assert "-strftime" in cmd                   # so %Y%m%d… expands in the filename
@@ -88,6 +88,22 @@ def test_motion_threshold_clamped():
         return c[c.index("-vf") + 1]
     assert "gt(scene,1.0)" in vf_of(5.0)
     assert "gt(scene,0.0)" in vf_of(-2.0)
+
+
+def test_motion_stills_are_rate_capped():
+    """select runs per FRAME, so without a gap a 15fps stream writes ~15 JPEGs a
+    second during motion — wasted disk + CPU, since the cloud analyses at most one
+    frame per camera per 8s."""
+    vf = (lambda c: c[c.index("-vf") + 1])(build_motion_command("u", "/d"))
+    assert "prev_selected_t" in vf                    # min-gap enforced
+    assert "gte(t-prev_selected_t,1.0)" in vf
+    assert "isnan(prev_selected_t)" in vf             # first frame still allowed
+
+    vf2 = (lambda c: c[c.index("-vf") + 1])(build_motion_command("u", "/d", min_gap_seconds=5))
+    assert "gte(t-prev_selected_t,5.0)" in vf2
+
+    vf3 = (lambda c: c[c.index("-vf") + 1])(build_motion_command("u", "/d", min_gap_seconds=0))
+    assert "prev_selected_t" not in vf3               # opt out => every motion frame
 
 
 def test_ffmpeg_available_true_and_false():
@@ -154,6 +170,7 @@ def _recorder(tmp_path, **kw):
         p = FakeProc(cmd)
         spawned.append(p)
         return p
+    kw.setdefault("probe", lambda url: None)   # never touch a real ffprobe/network
     rec = CameraRecorder(
         camera_id="cam1",
         record_url="rtsp://x/main",
@@ -263,3 +280,43 @@ def test_default_motion_threshold_is_in_surveillance_range():
     cmd = build_motion_command("rtsp://x/sub", "/mo")
     vf = cmd[cmd.index("-vf") + 1]
     assert f"gt(scene,{DEFAULT_MOTION_THRESHOLD})" in vf
+
+
+# --- HEVC recordings must be playable on macOS ----------------------------- #
+
+def test_hevc_recording_is_tagged_hvc1_so_quicktime_can_play_it():
+    """ffmpeg tags copied H.265 as `hev1` by default, which QuickTime/Finder
+    silently refuse to open. The camera's own bytes are fine — only the tag
+    differs — so an H.265 source must be written as `hvc1`."""
+    cmd = build_record_command("rtsp://x/main", "/rec", video_codec="hevc")
+    assert cmd[cmd.index("-tag:v") + 1] == "hvc1"
+    assert cmd[cmd.index("-c:v") + 1] == "copy"     # still no re-encode
+
+
+def test_h264_recording_is_not_mistagged():
+    # hvc1 is an HEVC-only tag; an H.264 copy must not get it.
+    cmd = build_record_command("rtsp://x/main", "/rec", video_codec="h264")
+    assert "-tag:v" not in cmd
+    cmd_unknown = build_record_command("rtsp://x/main", "/rec")   # probe failed
+    assert "-tag:v" not in cmd_unknown
+
+
+def test_recorder_probes_codec_once_and_tags_the_record_job(tmp_path):
+    calls = []
+    def probe(url):
+        calls.append(url)
+        return "hevc"
+    rec, spawned = _recorder(tmp_path, probe=probe)
+    rec.start()
+    record_cmd = spawned[0].cmd
+    assert record_cmd[record_cmd.index("-tag:v") + 1] == "hvc1"
+    assert calls == ["rtsp://x/main"]              # probed the RECORD url, once
+    rec._build_jobs()                              # rebuilds don't re-probe
+    assert len(calls) == 1
+
+
+def test_probe_failure_still_records(tmp_path):
+    def boom(url): raise OSError("no ffprobe")
+    rec, spawned = _recorder(tmp_path, probe=boom)
+    rec.start()                                    # must not raise
+    assert "-tag:v" not in spawned[0].cmd
