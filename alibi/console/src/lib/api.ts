@@ -342,6 +342,7 @@ export const api = {
     normal_hours?: Record<string, any>;
     camera_ids?: string[];
     notes?: string;
+    context?: string;
   }): Promise<Site> {
     const res = await fetchWithAuth(`${API_BASE}/sites`, {
       method: 'POST',
@@ -363,6 +364,7 @@ export const api = {
     normal_hours: Record<string, any>;
     camera_ids: string[];
     notes: string;
+    context: string;
   }>): Promise<Site> {
     const res = await fetchWithAuth(`${API_BASE}/sites/${siteId}`, {
       method: 'PUT',

@@ -26,7 +26,8 @@ export function SitesPage() {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<{
     name: string; subject_type: SubjectType; area: string; address: string; notes: string;
-  }>({ name: '', subject_type: 'home', area: '', address: '', notes: '' });
+    open: string; close: string; context: string;
+  }>({ name: '', subject_type: 'home', area: '', address: '', notes: '', open: '', close: '', context: '' });
 
   async function loadSites() {
     try {
@@ -64,8 +65,10 @@ export function SitesPage() {
         area: form.area.trim(),
         address: form.address.trim(),
         notes: form.notes.trim(),
+        context: form.context.trim(),
+        normal_hours: (form.open || form.close) ? { open: form.open, close: form.close } : {},
       });
-      setForm({ name: '', subject_type: 'home', area: '', address: '', notes: '' });
+      setForm({ name: '', subject_type: 'home', area: '', address: '', notes: '', open: '', close: '', context: '' });
       setShowForm(false);
       await loadSites();
     } catch (e: any) {
@@ -174,13 +177,25 @@ export function SitesPage() {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700">Notes <span className="text-gray-400">(optional)</span></label>
-              <input
-                type="text" value={form.notes}
-                onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-                className="mt-1 w-full rounded-md border-gray-300 shadow-sm text-sm p-2 border"
-              />
+              <label className="block text-sm font-medium text-gray-700">Normal hours <span className="text-gray-400">(optional)</span></label>
+              <div className="flex items-center gap-2 mt-1">
+                <input type="time" value={form.open} onChange={e => setForm(f => ({ ...f, open: e.target.value }))} className="rounded-md border-gray-300 shadow-sm text-sm p-2 border" />
+                <span className="text-gray-400 text-sm">to</span>
+                <input type="time" value={form.close} onChange={e => setForm(f => ({ ...f, close: e.target.value }))} className="rounded-md border-gray-300 shadow-sm text-sm p-2 border" />
+              </div>
+              <p className="mt-1 text-xs text-gray-500">When the site is normally active — activity outside this is weighted higher.</p>
             </div>
+          </div>
+
+          <div className="mt-4">
+            <label className="block text-sm font-medium text-gray-700">Context for the AI <span className="text-gray-400">(optional, helps the intelligence)</span></label>
+            <textarea
+              value={form.context} rows={3}
+              onChange={e => setForm(f => ({ ...f, context: e.target.value }))}
+              placeholder="Who's normally here, known vehicles, routines, specific concerns. e.g. 'Two residents; usually empty 8am–5pm weekdays; known cars: white Toyota, blue bakkie; watch the back gate.'"
+              className="mt-1 w-full rounded-md border-gray-300 shadow-sm text-sm p-2 border"
+            />
+            <p className="mt-1 text-xs text-gray-500">Background only — it helps judge what's normal vs worth a look. Never used to accuse anyone.</p>
           </div>
 
           <div className="mt-4">
@@ -224,8 +239,31 @@ function SiteCard({ site, cameras, isAdmin, onDelete, onChanged }: { site: Site;
   const [open, setOpen] = useState(false);
   const [live, setLive] = useState(false);
   const [editCams, setEditCams] = useState(false);
+  const [editInfo, setEditInfo] = useState(false);
+  const [info, setInfo] = useState({
+    area: site.area || '', context: site.context || '',
+    open: site.normal_hours?.open || '', close: site.normal_hours?.close || '',
+  });
+  const [savingInfo, setSavingInfo] = useState(false);
   const meta = SUBJECT_META[site.subject_type];
   const p = site.posture;
+
+  async function saveInfo() {
+    setSavingInfo(true);
+    try {
+      await api.updateSite(site.site_id, {
+        area: info.area,
+        context: info.context,
+        normal_hours: (info.open || info.close) ? { open: info.open, close: info.close } : {},
+      });
+      setEditInfo(false);
+      onChanged();
+    } catch (e: any) {
+      alert(e.message || 'Failed to save');
+    } finally {
+      setSavingInfo(false);
+    }
+  }
 
   // The site's cameras, in registration order.
   const siteCameras = site.camera_ids
@@ -276,6 +314,11 @@ function SiteCard({ site, cameras, isAdmin, onDelete, onChanged }: { site: Site;
               {editCams ? 'Done' : 'Cameras'}
             </button>
           )}
+          {isAdmin && (
+            <button onClick={() => setEditInfo(v => !v)} className="text-sm text-gray-700 hover:text-gray-900">
+              {editInfo ? 'Close' : 'Info'}
+            </button>
+          )}
           <button onClick={() => setOpen(v => !v)} className="text-sm text-blue-600 hover:text-blue-800">
             {open ? 'Hide' : 'What the AI focuses on'}
           </button>
@@ -323,6 +366,33 @@ function SiteCard({ site, cameras, isAdmin, onDelete, onChanged }: { site: Site;
             </div>
           )}
           <p className="mt-2 text-xs text-gray-400">Live only while open — streaming stops when you click Stop live or leave.</p>
+        </div>
+      )}
+
+      {editInfo && (
+        <div className="mt-4 rounded-md border border-gray-200 bg-gray-50 p-3 space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-700">Area / suburb <span className="text-gray-400">(links area crime context)</span></label>
+            <input value={info.area} onChange={e => setInfo(v => ({ ...v, area: e.target.value }))} placeholder="Parkview" className="mt-1 w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700">Normal hours</label>
+            <div className="flex items-center gap-2 mt-1">
+              <input type="time" value={info.open} onChange={e => setInfo(v => ({ ...v, open: e.target.value }))} className="rounded-md border border-gray-300 px-2 py-1.5 text-sm" />
+              <span className="text-gray-400 text-sm">to</span>
+              <input type="time" value={info.close} onChange={e => setInfo(v => ({ ...v, close: e.target.value }))} className="rounded-md border border-gray-300 px-2 py-1.5 text-sm" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700">Context for the AI</label>
+            <textarea value={info.context} rows={3} onChange={e => setInfo(v => ({ ...v, context: e.target.value }))}
+              placeholder="Who's normally here, known vehicles, routines, concerns…"
+              className="mt-1 w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm" />
+            <p className="text-xs text-gray-400 mt-1">Background that helps judge what's normal — never used to accuse anyone.</p>
+          </div>
+          <button onClick={saveInfo} disabled={savingInfo} className="px-3 py-1.5 text-sm text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50">
+            {savingInfo ? 'Saving…' : 'Save'}
+          </button>
         </div>
       )}
 
