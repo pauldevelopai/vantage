@@ -2,10 +2,14 @@ import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { hasRole } from '../lib/auth';
 
+type FileEntry = { name: string; bytes: number; mtime: number; kind: string };
+type CamStorage = { bytes: number; files: number; recent?: FileEntry[] };
 type Storage = {
   dir: string; total_bytes: number; files: number;
   oldest: number | null; newest: number | null;
-  cameras: Record<string, { bytes: number; files: number }>;
+  disk?: { total: number; used: number; free: number };
+  caps?: { max_gb?: number; max_days?: number };
+  cameras: Record<string, CamStorage>;
 } | null;
 type Bridge = { bridge_id: string; name: string; online: boolean; site_hint: string; last_seen: string | null; storage?: Storage };
 
@@ -16,6 +20,11 @@ function fmtBytes(n: number): string {
   return `${(n / Math.pow(1024, i)).toFixed(i ? 1 : 0)} ${u[i]}`;
 }
 
+function fmtWhen(ts: number): string {
+  const d = new Date(ts * 1000);
+  return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
 export function RecordersPage() {
   const isAdmin = hasRole('admin');
   const [bridges, setBridges] = useState<Bridge[]>([]);
@@ -23,6 +32,15 @@ export function RecordersPage() {
   const [computers, setComputers] = useState<Array<Record<string, any>>>([]);
   const [scanning, setScanning] = useState(false);
   const [scanNote, setScanNote] = useState<string | null>(null);
+  const [openCam, setOpenCam] = useState<Set<string>>(new Set());
+
+  function toggleCam(key: string) {
+    setOpenCam(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
 
   async function loadBridges() {
     try {
@@ -166,18 +184,89 @@ export function RecordersPage() {
                   {s ? (
                     <div className="mt-2 pl-5 text-xs text-gray-600">
                       <div>
-                        <span className="font-medium">{fmtBytes(s.total_bytes)}</span> in {s.files.toLocaleString()} file{s.files === 1 ? '' : 's'}
+                        Using <span className="font-medium">{fmtBytes(s.total_bytes)}</span> in {s.files.toLocaleString()} file{s.files === 1 ? '' : 's'}
                         {camCount > 0 && ` across ${camCount} camera${camCount === 1 ? '' : 's'}`}
                         {s.oldest && s.newest && (
                           <> · {new Date(s.oldest * 1000).toLocaleDateString()} → {new Date(s.newest * 1000).toLocaleDateString()}</>
                         )}
                       </div>
+
+                      {/* Folder on the recording PC */}
                       <div className="text-gray-400 font-mono truncate mt-0.5" title={s.dir}>📁 {s.dir}</div>
+
+                      {/* Disk headroom on that PC's drive */}
+                      {s.disk && s.disk.total > 0 && (
+                        <div className="mt-1.5">
+                          <div className="flex items-center justify-between text-gray-500">
+                            <span>💽 Disk: <span className="font-medium">{fmtBytes(s.disk.free)}</span> free of {fmtBytes(s.disk.total)}</span>
+                            <span className="text-gray-400">{Math.round((s.disk.used / s.disk.total) * 100)}% full</span>
+                          </div>
+                          <div className="mt-0.5 h-1.5 w-full rounded-full bg-gray-100 overflow-hidden">
+                            <div
+                              className={`h-full ${s.disk.used / s.disk.total > 0.9 ? 'bg-red-500' : 'bg-indigo-500'}`}
+                              style={{ width: `${Math.min(100, (s.disk.used / s.disk.total) * 100)}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Retention cap — how much is kept before old footage rolls off */}
+                      {s.caps && (s.caps.max_gb || s.caps.max_days) && (
+                        <div className="mt-1 text-gray-500">
+                          ♻️ Keeping up to
+                          {s.caps.max_gb ? ` ${s.caps.max_gb} GB` : ''}
+                          {s.caps.max_gb && s.caps.max_days ? ' /' : ''}
+                          {s.caps.max_days ? ` ${s.caps.max_days} days` : ''} — older footage is deleted automatically.
+                        </div>
+                      )}
+
+                      {/* Per-camera, expandable to the actual recent files */}
                       {camCount > 0 && (
-                        <ul className="mt-1 space-y-0.5">
-                          {Object.entries(s.cameras).map(([cid, v]) => (
-                            <li key={cid} className="text-gray-500">📷 {cid} — {fmtBytes(v.bytes)} · {v.files} files</li>
-                          ))}
+                        <ul className="mt-1.5 space-y-1">
+                          {Object.entries(s.cameras).map(([cid, v]) => {
+                            const key = `${b.bridge_id}:${cid}`;
+                            const open = openCam.has(key);
+                            const recent = v.recent || [];
+                            return (
+                              <li key={cid}>
+                                <button
+                                  onClick={() => toggleCam(key)}
+                                  className="flex w-full items-center gap-1 text-left text-gray-600 hover:text-gray-900"
+                                >
+                                  <span className="text-gray-400">{open ? '▾' : '▸'}</span>
+                                  <span>📷 {cid}</span>
+                                  <span className="text-gray-400">— {fmtBytes(v.bytes)} · {v.files} files</span>
+                                </button>
+                                {open && (
+                                  recent.length > 0 ? (
+                                    <div className="ml-4 mt-1 overflow-x-auto rounded border border-gray-100">
+                                      <table className="min-w-full text-[11px]">
+                                        <tbody>
+                                          {recent.map((f, i) => (
+                                            <tr key={`${f.name}-${i}`} className="border-b border-gray-50 last:border-0">
+                                              <td className="px-2 py-1 text-gray-400 w-14">
+                                                {f.kind === 'motion'
+                                                  ? <span title="motion still">🟠 still</span>
+                                                  : <span title="recording clip">🎞️ clip</span>}
+                                              </td>
+                                              <td className="px-2 py-1 font-mono text-gray-600 truncate max-w-[16rem]" title={f.name}>{f.name}</td>
+                                              <td className="px-2 py-1 text-gray-500 whitespace-nowrap text-right w-20">{fmtBytes(f.bytes)}</td>
+                                              <td className="px-2 py-1 text-gray-400 whitespace-nowrap text-right w-28">{fmtWhen(f.mtime)}</td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                      {v.files > recent.length && (
+                                        <div className="px-2 py-1 text-[11px] text-gray-400">Newest {recent.length} shown · {v.files - recent.length} more on the recorder’s disk.</div>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <div className="ml-4 mt-1 text-[11px] text-gray-400">No files yet.</div>
+                                  )
+                                )}
+                              </li>
+                            );
+                          })}
                         </ul>
                       )}
                     </div>

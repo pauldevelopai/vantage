@@ -244,10 +244,12 @@ def frame_loop(uploader, sleep, poll_seconds=3, should_run=lambda: True):
         sleep(poll_seconds)
 
 
-def storage_stats(base_dir, lister=None, statter=None):
+def storage_stats(base_dir, lister=None, statter=None, disk_usage=None,
+                  recent_per_cam=15):
     """What the recorder is storing on this PC: absolute folder, total bytes,
-    file count, oldest/newest, and a per-camera breakdown. Dependency-injected
-    for tests."""
+    file count, oldest/newest, free/total disk of the volume, and a per-camera
+    breakdown that includes the newest few actual files (name, size, time, kind).
+    Dependency-injected for tests."""
     lister = lister or (lambda d: os.listdir(d) if os.path.isdir(d) else [])
     statter = statter or os.stat
     total = files = 0
@@ -257,6 +259,7 @@ def storage_stats(base_dir, lister=None, statter=None):
         if str(cid).startswith("_"):
             continue
         cam_bytes = cam_files = 0
+        entries = []
         for sub in ("recordings", "motion"):
             d = os.path.join(base_dir, cid, sub)
             for f in lister(d):
@@ -269,10 +272,26 @@ def storage_stats(base_dir, lister=None, statter=None):
                 mt = st.st_mtime
                 oldest = mt if oldest is None else min(oldest, mt)
                 newest = mt if newest is None else max(newest, mt)
+                entries.append({"name": f, "bytes": st.st_size, "mtime": mt,
+                                "kind": "motion" if sub == "motion" else "recording"})
         if cam_files:
-            per_cam[cid] = {"bytes": cam_bytes, "files": cam_files}
-    return {"dir": os.path.abspath(base_dir), "total_bytes": total, "files": files,
-            "oldest": oldest, "newest": newest, "cameras": per_cam}
+            entries.sort(key=lambda e: e["mtime"], reverse=True)
+            per_cam[cid] = {"bytes": cam_bytes, "files": cam_files,
+                            "recent": entries[:recent_per_cam]}
+    stats = {"dir": os.path.abspath(base_dir), "total_bytes": total, "files": files,
+             "oldest": oldest, "newest": newest, "cameras": per_cam}
+    # Free/total space of the volume holding the recordings — so the console can
+    # show headroom, not just what we've used.
+    du = disk_usage
+    if du is None:
+        import shutil
+        du = shutil.disk_usage
+    try:
+        u = du(base_dir)
+        stats["disk"] = {"total": u.total, "used": u.used, "free": u.free}
+    except Exception:
+        pass
+    return stats
 
 
 def storage_loop(base_dir, report, sleep, poll_seconds=60, should_run=lambda: True):
@@ -416,7 +435,15 @@ def main(argv=None):  # pragma: no cover
     ).start()
 
     # --- report what we're storing (so the console can show it) ------------- #
+    caps = {}
+    if args.max_gb:
+        caps["max_gb"] = args.max_gb
+    if args.max_days:
+        caps["max_days"] = args.max_days
+
     def report_storage(stats):
+        if caps:
+            stats = {**stats, "caps": caps}
         status, _ = ba._http("POST", "/api/cameras/bridge/storage",
                              {"storage": stats}, headers=headers)
         return status == 200
