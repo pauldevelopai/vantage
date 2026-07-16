@@ -186,7 +186,9 @@ def ws_discover(timeout=4.0):
     return found
 
 
-def sweep(subnet=None, timeout=1.0, max_workers=100):
+def sweep(subnet=None, timeout=0.7, max_workers=300):
+    # Socket probes are I/O-bound, so heavy parallelism + a short timeout keeps a
+    # /24 sweep to a few seconds even with the extra computer-port checks.
     subnet = subnet or local_subnet()
     net = ipaddress.IPv4Network(subnet, strict=False)
     mine = local_ip()
