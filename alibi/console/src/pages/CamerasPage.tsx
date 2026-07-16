@@ -28,6 +28,7 @@ interface DiscoveredCamera {
   rtsp_confirmed?: boolean;
   confidence?: number;
   is_camera?: boolean;
+  is_computer?: boolean;   // a computer/NAS — a candidate recording PC
   found_by?: string[];
 }
 
@@ -410,7 +411,8 @@ export function CamerasPage() {
   // Respect the scanner's verdict: is_camera === false are NOT cameras (routers,
   // IoT, computers with a web port). Treat undefined as a camera for safety.
   const discoveredCameras = discovered.filter(d => d.is_camera !== false);
-  const otherDevices = discovered.filter(d => d.is_camera === false);
+  const computers = discovered.filter(d => d.is_camera === false && d.is_computer === true);
+  const otherDevices = discovered.filter(d => d.is_camera === false && d.is_computer !== true);
   const newDiscoveredCameras = discoveredCameras.filter(d => !d.already_registered);
 
   const renderDiscoveredRow = (cam: DiscoveredCamera, idx: number) => (
@@ -816,7 +818,32 @@ export function CamerasPage() {
             </div>
           )}
 
-          {/* Non-cameras the scan turned up (routers, IoT, computers) — hidden by
+          {/* Computers/NAS on the network — candidate recording PCs. */}
+          {computers.length > 0 && (
+            <div className="mt-4 rounded-lg border border-gray-200 bg-white p-3">
+              <p className="text-sm font-medium text-gray-900">
+                Computers on your network ({computers.length})
+              </p>
+              <p className="text-xs text-gray-500 mb-2">
+                Any always-on one of these can be your <span className="font-medium">recording PC</span> — install the recorder on it (Sites → Add the recording PC).
+              </p>
+              <div className="space-y-1.5">
+                {computers.map((c, idx) => (
+                  <div key={`pc-${c.ip}-${idx}`} className="flex items-center gap-3 rounded-md border border-gray-100 bg-gray-50 px-3 py-2">
+                    <span className="text-lg" role="img" aria-label="computer">🖥️</span>
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-gray-900 truncate">
+                        {c.name && !c.name.startsWith('Camera (') ? c.name : 'Computer'}
+                      </div>
+                      <div className="text-xs text-gray-500">at {c.ip}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Non-cameras the scan turned up (routers, IoT) — hidden by
               default so they're not mistaken for cameras. */}
           {otherDevices.length > 0 && (
             <div className="mt-3">
