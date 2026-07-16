@@ -34,7 +34,14 @@ from typing import Callable, List, Optional, Sequence
 FFMPEG = "ffmpeg"
 
 # ffmpeg's scene score is 0..1; ~0.3–0.5 is "something meaningfully changed".
-DEFAULT_MOTION_THRESHOLD = 0.4
+# ffmpeg's `scene` score is the FRACTION of the frame that changed, so useful
+# surveillance motion is a small number: a person or vehicle entering frame scores
+# roughly 0.01-0.05, while 0.4 is a hard scene cut (a channel change). The old
+# 0.4 default meant the trigger essentially never fired — no motion stills, so no
+# frames reached the cloud and the whole intelligence layer was starved.
+# 0.02 catches a person/vehicle while ignoring sensor noise; the cloud throttles
+# analysis to one frame per camera per 8s regardless, so erring low is cheap.
+DEFAULT_MOTION_THRESHOLD = 0.02
 DEFAULT_SEGMENT_SECONDS = 600          # 10-minute segments
 _RESTART_BACKOFF_SECONDS = 10          # wait before relaunching a died ffmpeg
 

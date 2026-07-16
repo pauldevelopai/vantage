@@ -25,12 +25,12 @@ import time
 try:  # in-repo (tests, the cloud box)
     from alibi.cameras.recorder import (
         CameraRecorder, RetentionPolicy, ffmpeg_available, build_hls_command,
-        choose_video_args,
+        choose_video_args, DEFAULT_MOTION_THRESHOLD,
     )
 except ImportError:  # flat zipapp layout on the user's PC
     from recorder import (
         CameraRecorder, RetentionPolicy, ffmpeg_available, build_hls_command,
-        choose_video_args,
+        choose_video_args, DEFAULT_MOTION_THRESHOLD,
     )
 
 
@@ -39,21 +39,26 @@ class RecordAgent:
     record-target list."""
 
     def __init__(self, base_dir, retention=None, recorder_factory=None,
-                 clock=time.time):
+                 clock=time.time, motion_threshold=None):
         self.base_dir = base_dir
         self.retention = retention
+        self.motion_threshold = motion_threshold
         self._recorders = {}        # camera_id -> CameraRecorder
         self._urls = {}             # camera_id -> (record_url, motion_url)
         self._clock = clock
         self._recorder_factory = recorder_factory or self._default_factory
 
     def _default_factory(self, target):
+        kwargs = {}
+        if self.motion_threshold is not None:
+            kwargs["motion_threshold"] = self.motion_threshold
         return CameraRecorder(
             camera_id=target["camera_id"],
             record_url=target["record_url"],
             motion_url=target.get("motion_url"),
             base_dir=self.base_dir,
             retention=self.retention,
+            **kwargs,
         )
 
     # -- sync the running set to the desired targets ------------------------ #
@@ -356,6 +361,10 @@ def main(argv=None):  # pragma: no cover
     p.add_argument("--max-days", type=float, default=float(os.environ.get("VANTAGE_MAX_DAYS", "0")) or None)
     p.add_argument("--poll-seconds", type=int, default=15)
     p.add_argument("--refresh-seconds", type=int, default=60)
+    p.add_argument("--motion-threshold", type=float,
+                   default=float(os.environ.get("VANTAGE_MOTION_THRESHOLD", "0")) or None,
+                   help="Scene-change score 0..1 that counts as motion (default ~0.02; "
+                        "lower = more sensitive). Motion stills are what feed the AI.")
     args = p.parse_args(argv)
 
     if not ffmpeg_available():
@@ -472,8 +481,11 @@ def main(argv=None):  # pragma: no cover
             max_age_seconds=int(args.max_days * 86400) if args.max_days else None,
         )
 
-    agent = RecordAgent(base_dir=args.dir, retention=retention)
+    agent = RecordAgent(base_dir=args.dir, retention=retention,
+                        motion_threshold=args.motion_threshold)
     print(f"[record-agent] paired as {creds['bridge_id']}; recording to {args.dir}")
+    print(f"[record-agent] motion trigger at {args.motion_threshold or DEFAULT_MOTION_THRESHOLD} "
+          f"(motion stills are what feed the AI)")
     try:
         run_loop(agent, fetch_targets, time.sleep,
                  poll_seconds=args.poll_seconds, refresh_seconds=args.refresh_seconds)

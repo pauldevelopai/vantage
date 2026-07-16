@@ -73,7 +73,7 @@ def test_record_command_transcodes_audio_when_enabled():
 
 
 def test_motion_command_uses_scene_filter():
-    cmd = build_motion_command("rtsp://x/sub", "/mo", threshold=0.4, prefix="cam1")
+    cmd = build_motion_command("rtsp://x/sub", "/mo", threshold=0.4, prefix="cam1")  # explicit value
     vf = cmd[cmd.index("-vf") + 1]
     assert "select='gt(scene,0.4)'" in vf       # ffmpeg does the motion detection
     assert "format=yuvj420p" in vf              # JPEG-range for the mjpeg encoder
@@ -247,3 +247,19 @@ def test_stop_terminates_running_jobs(tmp_path):
     rec.start()
     rec.stop()
     assert all(p.terminated for p in spawned)
+
+
+def test_default_motion_threshold_is_in_surveillance_range():
+    """The scene score is the FRACTION of frame changed: a person entering scores
+    ~0.01-0.05, a hard scene cut ~0.4. A default up at 0.4 never fires, which
+    starves the whole cloud AI pipeline (no motion stills => no frames). Pin the
+    default to a range that actually triggers on people/vehicles."""
+    from alibi.cameras.recorder import DEFAULT_MOTION_THRESHOLD
+    assert 0.005 <= DEFAULT_MOTION_THRESHOLD <= 0.06, (
+        f"motion threshold {DEFAULT_MOTION_THRESHOLD} is outside the range that "
+        "detects real surveillance motion"
+    )
+    # and the default must reach the ffmpeg filter
+    cmd = build_motion_command("rtsp://x/sub", "/mo")
+    vf = cmd[cmd.index("-vf") + 1]
+    assert f"gt(scene,{DEFAULT_MOTION_THRESHOLD})" in vf
