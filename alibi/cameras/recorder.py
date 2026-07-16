@@ -57,9 +57,16 @@ def build_record_command(
     prefix: str = "cam",
     ffmpeg: str = FFMPEG,
     audio: bool = False,
+    video_codec: Optional[str] = None,
 ) -> List[str]:
     """Continuous segmented recording. Video is always stream-copied (no
     re-encode → tiny CPU).
+
+    `video_codec` is the probed source codec (see probe_video_codec). When the
+    camera sends H.265, the copied track MUST be tagged `hvc1`: ffmpeg defaults to
+    `hev1`, and QuickTime / Finder / Photos on macOS silently refuse to play an
+    `hev1` MP4 (VLC plays either). Same bytes, one tag — this is the difference
+    between a recording the owner can open and one they can't.
 
     Audio is OFF by default, for two reasons: (1) many cameras (Dahua etc.) send
     G.711 / PCM a-law, which MP4 cannot hold — copying it makes ffmpeg refuse to
@@ -68,11 +75,13 @@ def build_record_command(
     opt-in. When enabled, audio is transcoded to AAC so it fits the MP4 container.
     """
     audio_args = ["-c:a", "aac"] if audio else ["-an"]
+    tag_args = ["-tag:v", "hvc1"] if str(video_codec or "").lower() in ("hevc", "h265") else []
     return [
         ffmpeg, "-nostdin", "-loglevel", "error",
         "-rtsp_transport", "tcp",
         "-i", rtsp_url,
         "-c:v", "copy",
+        *tag_args,
         *audio_args,
         "-f", "segment",
         "-segment_time", str(int(segment_seconds)),
@@ -89,19 +98,33 @@ def build_motion_command(
     threshold: float = DEFAULT_MOTION_THRESHOLD,
     prefix: str = "cam",
     ffmpeg: str = FFMPEG,
+    min_gap_seconds: float = 1.0,
 ) -> List[str]:
-    """Write a JPEG only when the scene changes past `threshold` (= motion).
+    """Write a JPEG only when the scene changes past `threshold` (= motion), and
+    at most one per `min_gap_seconds`.
 
     ffmpeg does the detection via its scene filter, so the PC needs no CV libs.
     Point this at the low-res SUB stream to keep it cheap.
+
+    The rate cap matters: `select` evaluates EVERY frame, so sustained motion on a
+    15fps stream would otherwise write ~15 JPEGs a second — pointless disk churn
+    and JPEG-encode CPU on the owner's PC, since the cloud only analyses one frame
+    per camera per 8s anyway. `prev_selected_t` gives us the gap (isnan(...) lets
+    the first frame through).
     """
     threshold = max(0.0, min(float(threshold), 1.0))
+    gap = max(0.0, float(min_gap_seconds))
     # Normalize before the JPEG encoder: cameras often send full-range 4:2:0 HEVC
     # that ffmpeg's mjpeg encoder rejects ("Non full-range YUV is non-standard" /
     # encoder-init failure). `format=yuvj420p` gives it the JPEG-range pixels it
     # wants; capping width keeps frames small (cheap to store + upload); single
     # thread avoids the frame-thread encoder-init fault seen on some builds.
-    vf = f"select='gt(scene,{threshold})',scale='min(iw,640)':-2,format=yuvj420p"
+    gate = f"gt(scene,{threshold})"
+    if gap > 0:
+        # AND (*) a minimum gap since the previously selected frame; OR (+) the
+        # very first frame, whose prev_selected_t is NaN.
+        gate = f"({gate})*(isnan(prev_selected_t)+gte(t-prev_selected_t,{gap}))"
+    vf = f"select='{gate}',scale='min(iw,640)':-2,format=yuvj420p"
     return [
         ffmpeg, "-nostdin", "-loglevel", "error",
         "-rtsp_transport", "tcp",
@@ -316,6 +339,8 @@ class CameraRecorder:
         ffmpeg: str = FFMPEG,
         spawn: Callable = subprocess.Popen,
         clock: Callable[[], float] = None,
+        video_codec: Optional[str] = None,
+        probe: Optional[Callable] = None,
     ):
         self.camera_id = camera_id
         self.record_url = record_url
@@ -331,6 +356,11 @@ class CameraRecorder:
         import time as _time
         self._clock = clock or _time.time
         self._jobs: List[_Job] = []
+        # Source codec drives the MP4 tag (hvc1 for H.265 so macOS can play it).
+        # Given explicitly => no probe; otherwise probed once, lazily, on start.
+        self._record_codec = video_codec
+        self._codec_probed = video_codec is not None
+        self._probe = probe or probe_video_codec
 
     # -- directory layout --------------------------------------------------- #
 
@@ -347,12 +377,25 @@ class CameraRecorder:
         if self.record_motion:
             os.makedirs(self.motion_dir, exist_ok=True)
 
+    def _probe_record_codec(self) -> Optional[str]:
+        """Probe the record stream's codec once, so an H.265 camera's recordings
+        get the `hvc1` tag QuickTime needs. Never fatal: on a probe failure we
+        just record untagged (as before)."""
+        if not self._codec_probed:
+            try:
+                self._record_codec = self._probe(self.record_url)
+            except Exception:
+                self._record_codec = None
+            self._codec_probed = True
+        return self._record_codec
+
     def _build_jobs(self) -> List[_Job]:
         jobs = [_Job("record", build_record_command(
             self.record_url, self.recordings_dir,
             segment_seconds=self.segment_seconds,
             prefix=self.camera_id, ffmpeg=self.ffmpeg,
             audio=self.record_audio,
+            video_codec=self._probe_record_codec(),
         ))]
         if self.record_motion:
             jobs.append(_Job("motion", build_motion_command(
