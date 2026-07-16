@@ -141,10 +141,16 @@ def test_hls_command_transcodes_to_h264():
 
 
 def test_hls_command_is_bandwidth_tuned():
-    cmd = build_hls_command("rtsp://x/sub", "/hls/cam1", fps=15, maxrate_kbps=1200)
-    assert cmd[cmd.index("-r") + 1] == "15"              # framerate cap
-    assert cmd[cmd.index("-maxrate") + 1] == "1200k"     # hard bitrate ceiling
+    cmd = build_hls_command("rtsp://x/sub", "/hls/cam1", fps=12, maxrate_kbps=800)
+    assert cmd[cmd.index("-r") + 1] == "12"              # framerate cap
+    assert cmd[cmd.index("-maxrate") + 1] == "800k"      # hard bitrate ceiling
     assert "-bufsize" in cmd and "-crf" in cmd           # quality target + smoothing
+
+
+def test_hls_command_defaults_are_nimble():
+    cmd = build_hls_command("rtsp://x/sub", "/hls/cam1")
+    assert cmd[cmd.index("-r") + 1] == "12"              # low fps by default
+    assert cmd[cmd.index("-maxrate") + 1] == "800k"      # low ceiling for scale
 
 
 class _FakeProc:

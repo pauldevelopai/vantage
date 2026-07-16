@@ -116,12 +116,12 @@ def build_hls_command(
     rtsp_url: str,
     out_dir: str,
     ffmpeg: str = FFMPEG,
-    max_width: int = 854,
-    seg_seconds: int = 2,
+    max_width: int = 640,
+    seg_seconds: int = 1,
     list_size: int = 6,
-    fps: int = 15,
-    crf: int = 26,
-    maxrate_kbps: int = 1200,
+    fps: int = 12,
+    crf: int = 28,
+    maxrate_kbps: int = 800,
 ) -> List[str]:
     """RTSP -> H.264 HLS for on-demand live view in the browser.
 
@@ -143,7 +143,7 @@ def build_hls_command(
         "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
         "-crf", str(crf),
         "-maxrate", f"{maxrate_kbps}k", "-bufsize", f"{maxrate_kbps * 2}k",
-        "-pix_fmt", "yuv420p", "-g", str(fps * 2),
+        "-pix_fmt", "yuv420p", "-g", str(max(1, fps * seg_seconds)),
         "-r", str(fps),
         "-vf", f"scale='min(iw,{max_width})':-2",
         "-f", "hls",
