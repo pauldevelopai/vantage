@@ -270,6 +270,19 @@ function SiteCard({ site, cameras, isAdmin, onDelete, onChanged }: { site: Site;
     .map(id => cameras.find(c => c.camera_id === id))
     .filter((c): c is Camera => !!c);
 
+  // Detect stale ids the site references but no camera matches.
+  const staleCount = site.camera_ids.filter(id => !cameras.some(c => c.camera_id === id)).length;
+
+  // Self-heal: once cameras are loaded, silently drop ids for cameras that no
+  // longer exist (left over from removed/re-added cameras). Runs once per stale
+  // detection — after the prune, staleCount is 0 and this no-ops.
+  useEffect(() => {
+    if (cameras.length === 0 || staleCount === 0) return;
+    const valid = site.camera_ids.filter(id => cameras.some(c => c.camera_id === id));
+    api.updateSite(site.site_id, { camera_ids: valid }).then(onChanged).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [staleCount, cameras.length]);
+
   async function toggleCamera(cameraId: string, on: boolean) {
     const next = on
       ? [...site.camera_ids, cameraId]
@@ -282,9 +295,6 @@ function SiteCard({ site, cameras, isAdmin, onDelete, onChanged }: { site: Site;
     }
   }
 
-  // Detect stale ids the site references but no camera matches.
-  const staleCount = site.camera_ids.filter(id => !cameras.some(c => c.camera_id === id)).length;
-
   return (
     <div className="bg-white shadow rounded-lg p-5">
       <div className="flex items-start justify-between">
@@ -296,7 +306,7 @@ function SiteCard({ site, cameras, isAdmin, onDelete, onChanged }: { site: Site;
           <p className="text-sm text-gray-500 mt-0.5">
             {site.area || 'No area set'}
             {site.address ? ` · ${site.address}` : ''}
-            {` · ${site.camera_ids.length} camera${site.camera_ids.length === 1 ? '' : 's'}`}
+            {` · ${siteCameras.length} camera${siteCameras.length === 1 ? '' : 's'}`}
           </p>
           {p?.summary && <p className="text-sm text-gray-600 mt-2">{p.summary}</p>}
         </div>

@@ -32,10 +32,16 @@ export function LivePlayer({ cameraId, name }: { cameraId: string; name: string 
       hls = new Hls({
         xhrSetup: (xhr: XMLHttpRequest) => { if (token) xhr.setRequestHeader('Authorization', 'Bearer ' + token); },
         lowLatencyMode: false,          // buffer instead of chasing the edge -> smooth
-        liveSyncDurationCount: 4,       // sit ~4 segments behind live
-        maxBufferLength: 12,            // keep up to 12s buffered
-        maxMaxBufferLength: 30,
+        // Sit well behind the live edge and hold a deep buffer: the video makes a
+        // London round-trip (recorder -> cloud -> browser), so segments arrive with
+        // jitter. Trading ~12-15s of latency for a cushion is what stops the stutter.
+        liveSyncDurationCount: 3,       // ~3 x 4s segments behind live edge
+        liveMaxLatencyDurationCount: 15,// tolerate falling far behind before seeking
+        maxBufferLength: 30,            // keep up to 30s buffered ahead
+        maxMaxBufferLength: 60,
+        backBufferLength: 0,            // don't hoard already-played video
         fragLoadingMaxRetry: 8,
+        fragLoadingMaxRetryTimeout: 8000,
       });
       hls.loadSource(src);
       hls.attachMedia(videoRef.current!);
