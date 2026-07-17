@@ -162,6 +162,22 @@ def refresh(
     else:
         report.areas_refreshed = due  # what WOULD have been fetched
 
+    # 3b. Crime-stats harvest — its own (monthly) freshness gate, same budget
+    # spirit: quarterly data, one small crawl per area when due.
+    if not dry_run:
+        from alibi.dataengine.crime_stats import crime_needs_refresh, harvest_area_crime_stats
+        for area in candidates[:max_areas]:
+            try:
+                if not crime_needs_refresh(area, store, now=now):
+                    continue
+                result = harvest_area_crime_stats(area, store=store, client=client, now=now)
+                if result.error:
+                    report.errors.append(f"crime-stats {area}: {result.error}")
+                else:
+                    report.stored += result.stored
+            except Exception as e:  # fail-safe
+                report.errors.append(f"crime-stats {area}: {e}")
+
     # 4. Prune expired records — costs nothing, always runs.
     try:
         report.pruned = 0 if dry_run else store.prune(now=now)
