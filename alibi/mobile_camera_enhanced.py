@@ -273,11 +273,16 @@ async def analyze_frame_secure(
     triggered_rules = {}
 
     if result["eligible"]:
-        # Run tracking
-        from ultralytics import YOLO
-        model = YOLO("yolov8n.pt")
-        yolo_results = model.track(frame, persist=True, conf=0.5, verbose=False)
-        tracks = tracker.update(yolo_results, zones_config=None, timestamp=timestamp)
+        # Track using the detections the gatekeeper ALREADY produced (D-FINE,
+        # Apache-2.0) rather than running a second, AGPL-licensed YOLO pass.
+        #
+        # The old code did `YOLO("yolov8n.pt")` right here — loading a whole model
+        # from disk on every single request — purely to borrow ultralytics'
+        # ByteTrack for track IDs. SimpleTracker does that association itself, so
+        # detection runs once and no AGPL code is on this path.
+        from alibi.vision.simple_tracker import detections_from_gatekeeper
+        detections_for_tracking = detections_from_gatekeeper(result)
+        tracks = tracker.update(detections_for_tracking, timestamp=timestamp)
 
         # Evaluate rules
         triggered_rules = rule_evaluator.evaluate(tracks)
