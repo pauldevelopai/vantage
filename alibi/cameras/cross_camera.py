@@ -364,6 +364,8 @@ class CrossCameraTracker:
                 "last_seen": recent[-1][0].isoformat(),
                 "cameras": sorted({e["camera_id"] for _ts, e in recent}),
                 "hours": hour_buckets,
+                "days": len({ts.date() for ts, _e in recent}),
+                "active_hours": sum(1 for n in hour_buckets if n > 0),
             })
         out.sort(key=lambda r: r["count"], reverse=True)
         return out

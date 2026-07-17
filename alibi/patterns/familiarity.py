@@ -1,0 +1,172 @@
+"""
+Familiar vs new — the system saying out loud what it understands about a scene.
+
+Three pieces:
+  * classify_entity  — is this recurring vehicle a RESIDENT (your own car), a
+                       REGULAR (comes back on a rhythm), NEW to the scene, or
+                       just occasional? Pure maths over its sighting record.
+  * vehicle labels   — the owner can NAME a recurring vehicle ("Paul's Fortuner"),
+                       exactly like enrolling a face: identity only ever comes
+                       from the owner, never guessed.
+  * pattern_findings — explicit, quotable sentences about what is happening:
+                       "Vehicle A (your 'Fortuner') is here all the time — it's
+                       part of the scene." / "Vehicle C is NEW — first seen 14:02."
+
+Everything derives from our own cameras' sighting record. Situational language,
+no accusations, no guessed identity.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+LABELS_FILE = Path("alibi/data/vehicle_labels.json")
+
+NEW_WINDOW_HOURS = 24          # first seen within this = "new to the scene"
+RESIDENT_MIN_DAYS = 3          # seen on this many distinct days = lives here
+RESIDENT_MIN_HOURS_ACTIVE = 6  # ...and across this many different hours of day
+REGULAR_MIN_DAYS = 2
+
+
+def classify_entity(count: int, first_seen: str, last_seen: str, days: int,
+                    active_hours: int, now: Optional[datetime] = None) -> str:
+    """resident | regular | new | occasional — from the sighting record alone.
+
+    resident: on camera across several days AND many hours of the day (a parked
+              own car is seen morning-to-night). It IS the scene.
+    regular:  returns across days but in concentrated hours (the gardener, the
+              school run) — a rhythm, not furniture.
+    new:      first ever sighting within the last NEW_WINDOW_HOURS.
+    occasional: everything else.
+    """
+    now = now or datetime.utcnow()
+    try:
+        first = datetime.fromisoformat(first_seen)
+    except (ValueError, TypeError):
+        first = now
+    if (now - first) <= timedelta(hours=NEW_WINDOW_HOURS):
+        return "new"
+    if days >= RESIDENT_MIN_DAYS and active_hours >= RESIDENT_MIN_HOURS_ACTIVE:
+        return "resident"
+    if days >= REGULAR_MIN_DAYS:
+        return "regular"
+    return "occasional"
+
+
+# ── Owner labels for recurring vehicles (the "that's MY car" button) ────────
+
+def get_vehicle_labels() -> Dict[str, Dict[str, Any]]:
+    try:
+        if LABELS_FILE.exists():
+            data = json.loads(LABELS_FILE.read_text())
+            if isinstance(data, dict):
+                return data
+    except (json.JSONDecodeError, OSError):
+        pass
+    return {}
+
+
+def set_vehicle_label(entity_id: str, label: str, set_by: str,
+                      now: Optional[datetime] = None) -> Dict[str, Any]:
+    """Name a recurring vehicle. Empty label removes the name."""
+    labels = get_vehicle_labels()
+    label = (label or "").strip()
+    if label:
+        labels[entity_id] = {"label": label, "set_by": set_by,
+                             "set_at": (now or datetime.utcnow()).isoformat()}
+    else:
+        labels.pop(entity_id, None)
+    LABELS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    LABELS_FILE.write_text(json.dumps(labels))
+    return labels.get(entity_id) or {}
+
+
+# ── Explicit pattern sentences ─────────────────────────────────────────────
+
+_CLASS_PHRASE = {
+    "resident": "here all the time — part of the scene",
+    "regular": "comes back on a rhythm",
+    "new": "NEW to the scene",
+    "occasional": "seen occasionally",
+}
+
+
+def _hour_phrase(busiest_hour_local: Optional[int]) -> str:
+    if busiest_hour_local is None:
+        return ""
+    return f", mostly around {busiest_hour_local:02d}:00"
+
+
+def pattern_findings(vehicle_entities: List[Dict[str, Any]],
+                     labels: Optional[Dict[str, Dict[str, Any]]] = None,
+                     camera_normals: Optional[Dict[str, Dict[str, int]]] = None,
+                     people_by_hour: Optional[List[int]] = None,
+                     tz_offset_hours: int = 2,
+                     now: Optional[datetime] = None) -> List[Dict[str, Any]]:
+    """Explicit sentences about what is happening, each with a kind so the UI
+    can badge it. vehicle_entities rows need: label (display), entity_id, count,
+    first_seen, last_seen, days, active_hours, busiest_hour_utc, cameras.
+
+    Order: new arrivals first (that's what security wants to know), then
+    regulars, then residents, then the always-there scene note."""
+    labels = labels or {}
+    findings: List[Dict[str, Any]] = []
+
+    classed = []
+    for v in vehicle_entities:
+        cls = classify_entity(v["count"], v["first_seen"], v["last_seen"],
+                              v.get("days", 1), v.get("active_hours", 1), now=now)
+        classed.append((cls, v))
+
+    order = {"new": 0, "regular": 1, "resident": 2, "occasional": 3}
+    classed.sort(key=lambda cv: (order[cv[0]], -cv[1]["count"]))
+
+    for cls, v in classed:
+        owner = labels.get(v["entity_id"], {}).get("label")
+        name = f"{v['label']}" + (f" (your “{owner}”)" if owner else "")
+        busiest = v.get("busiest_hour_utc")
+        busiest_local = (busiest + tz_offset_hours) % 24 if busiest is not None else None
+        cams = ", ".join(v.get("cameras") or [])
+        if cls == "new":
+            try:
+                first_t = datetime.fromisoformat(v["first_seen"]) + timedelta(hours=tz_offset_hours)
+                first_txt = first_t.strftime("%H:%M")
+            except (ValueError, TypeError):
+                first_txt = "today"
+            text = (f"{name} is NEW to the scene — first seen {first_txt} at {cams}, "
+                    f"{v['count']} sighting{'s' if v['count'] != 1 else ''} so far.")
+        elif cls == "regular":
+            text = (f"{name} keeps coming back — seen on {v.get('days', '?')} different days"
+                    f"{_hour_phrase(busiest_local)} ({cams}). A pattern worth knowing about.")
+        elif cls == "resident":
+            text = (f"{name} is {_CLASS_PHRASE['resident']} — seen {v['count']}× across "
+                    f"{v.get('days', '?')} days at {cams}."
+                    + ("" if owner else " If it's yours, name it and it stays quiet."))
+        else:
+            text = f"{name}: {v['count']} sighting{'s' if v['count'] != 1 else ''} ({cams})."
+        findings.append({"kind": cls, "entity_id": v["entity_id"], "label": v["label"],
+                         "owner_label": owner, "text": text})
+
+    # What each camera holds ALL the time — the learned scene itself.
+    for cam, normal in (camera_normals or {}).items():
+        parts = [f"{n} {k}{'s' if n != 1 else ''}" for k, n in normal.items() if n > 0]
+        if parts:
+            findings.append({
+                "kind": "scene", "entity_id": None, "label": cam, "owner_label": None,
+                "text": (f"{cam} normally shows {' and '.join(parts)} — the system treats "
+                         f"that as the scene and only flags more than this."),
+            })
+
+    # When people usually appear (no identity — just the rhythm of the site).
+    if people_by_hour and sum(people_by_hour) >= 3:
+        busiest = people_by_hour.index(max(people_by_hour))
+        findings.append({
+            "kind": "people", "entity_id": None, "label": "People", "owner_label": None,
+            "text": (f"People appear most often around "
+                     f"{(busiest + tz_offset_hours) % 24:02d}:00 "
+                     f"({sum(people_by_hour)} person events in this window)."),
+        })
+    return findings
