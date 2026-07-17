@@ -416,8 +416,13 @@ _tracker_instance: Optional[CrossCameraTracker] = None
 
 
 def get_cross_camera_tracker() -> CrossCameraTracker:
-    """Get or create global cross-camera tracker."""
+    """Get or create global cross-camera tracker.
+
+    Retention is 7 days, not the class default 24h: familiar-vs-new
+    classification needs an entity's first sighting to be able to age past a
+    day — with 24h retention everything would read as "NEW to the scene"
+    forever. A week of sightings at this scale is still tiny."""
     global _tracker_instance
     if _tracker_instance is None:
-        _tracker_instance = CrossCameraTracker()
+        _tracker_instance = CrossCameraTracker(retention_hours=24 * 7)
     return _tracker_instance
