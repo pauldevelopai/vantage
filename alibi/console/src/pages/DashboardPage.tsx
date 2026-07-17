@@ -166,7 +166,10 @@ export function DashboardPage() {
               <Kpi label="Total Events" value={k!.events} tint="#818cf8" delay={0} />
               <Kpi label="Alerts" value={k!.alerts} tint={k!.alerts > 0 ? '#fbbf24' : '#64748b'} delay={60} alert={k!.alerts > 0} />
               <Kpi label="People Detected" value={k!.people} tint="#6366f1" delay={120} />
-              <Kpi label="Vehicles Detected" value={k!.vehicles} tint="#22d3ee" delay={180} />
+              <Kpi label={k!.vehicles_distinct !== null ? 'Distinct Vehicles' : 'Vehicles Detected'}
+                   value={k!.vehicles_distinct !== null ? k!.vehicles_distinct : k!.vehicles}
+                   sub={k!.vehicles_distinct !== null ? `${k!.vehicles.toLocaleString()} sightings` : undefined}
+                   tint="#22d3ee" delay={180} />
             </div>
 
             {isEmpty && <EmptyState />}
@@ -302,6 +305,28 @@ export function DashboardPage() {
                                  ? `busiest ${String(data.patterns.busiest_hour).padStart(2, '0')}:00–${String((data.patterns.busiest_hour + 1) % 24).padStart(2, '0')}:00 · ${data.patterns.busiest_camera || ''}`
                                  : 'no activity in this window'} />
                     <PatternsHeatmap p={data.patterns} />
+                    {data.recurring_vehicles?.length > 0 && (
+                      <div className="mt-4 pt-3 border-t border-slate-800/70">
+                        <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-2">
+                          Recurring vehicles <span className="text-slate-600 normal-case tracking-normal">— the same vehicle, linked by appearance</span>
+                        </h3>
+                        <ul className="space-y-1.5">
+                          {data.recurring_vehicles.map(v => (
+                            <li key={v.label} className="flex items-center gap-2 text-xs">
+                              <span className="w-2 h-2 rounded-full bg-cyan-400/80 flex-none" />
+                              <span className="text-slate-300 font-medium">{v.label}</span>
+                              <span className="text-slate-500">
+                                seen {v.count}× · {v.cameras.join(', ')}
+                                {v.busiest_hour_utc !== null && ` · mostly around ${String((v.busiest_hour_utc + 2) % 24).padStart(2, '0')}:00`}
+                              </span>
+                              <span className="text-slate-600 ml-auto font-mono text-[10px]">
+                                {timeAgo(v.last_seen)}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </Panel>
                 )}
 
@@ -358,8 +383,8 @@ function PanelHead({ title, right }: { title: string; right?: string }) {
   );
 }
 
-function Kpi({ label, value, tint, delay, alert }:
-             { label: string; value: number; tint: string; delay: number; alert?: boolean }) {
+function Kpi({ label, value, tint, delay, alert, sub }:
+             { label: string; value: number; tint: string; delay: number; alert?: boolean; sub?: string }) {
   const shown = useCountUp(value);
   return (
     <div className="vg-rise relative rounded-xl bg-slate-900/60 border border-slate-800/80 backdrop-blur p-4 overflow-hidden"
@@ -375,6 +400,7 @@ function Kpi({ label, value, tint, delay, alert }:
           </span>
           {alert && <span className="vg-live w-2 h-2 rounded-full bg-amber-400" />}
         </div>
+        {sub && <div className="text-[10px] text-slate-500 mt-0.5">{sub}</div>}
       </div>
       <div className="absolute bottom-0 left-0 h-[2px] w-full opacity-70"
            style={{ background: `linear-gradient(90deg, ${tint}, transparent)` }} />
@@ -519,18 +545,33 @@ function SituationsPanel({ situations, onChanged }: { situations: import('../lib
     }
   }
 
-  if (!situations.length) {
+  // Routine ("noted") incidents are real but not worth a card each — the
+  // parked-car era proved they clog the page. Cards are for confirmed/review;
+  // noted collapses to one line with a link.
+  const urgent = situations.filter(s => s.tier !== 'noted');
+  const noted = situations.filter(s => s.tier === 'noted');
+
+  if (!situations.length || !urgent.length) {
     return (
-      <p className="text-xs text-slate-600 py-6 text-center leading-relaxed">
-        Nothing needing your attention in this window.<br />
-        The system is watching — see <span className="text-slate-400">Watching for</span> below for exactly what.
-      </p>
+      <div className="py-5 text-center">
+        <p className="text-xs text-slate-600 leading-relaxed">
+          Nothing needing your attention in this window.
+          {noted.length > 0 && (
+            <> <Link to="/incidents" className="text-slate-400 hover:text-slate-200">
+              {noted.length} routine event{noted.length === 1 ? '' : 's'} noted →
+            </Link></>
+          )}
+        </p>
+        <p className="text-xs text-slate-700 mt-1">
+          The system is watching — see <span className="text-slate-500">Watching for</span> below for exactly what.
+        </p>
+      </div>
     );
   }
 
   return (
     <div className="space-y-3">
-      {situations.map((s, i) => {
+      {urgent.map((s, i) => {
         const m = TIER_META[s.tier] || TIER_META.noted;
         return (
           <div key={s.incident_id}
@@ -589,6 +630,13 @@ function SituationsPanel({ situations, onChanged }: { situations: import('../lib
           </div>
         );
       })}
+      {noted.length > 0 && (
+        <p className="text-[11px] text-slate-500">
+          <Link to="/incidents" className="text-slate-400 hover:text-slate-200 no-underline">
+            + {noted.length} routine event{noted.length === 1 ? '' : 's'} noted →
+          </Link>
+        </p>
+      )}
       <p className="text-[10px] text-slate-600">
         The system flags situations worth a look — it never declares a crime. A red “confirmed” is a person's
         own statement of what happened, with their name attached.

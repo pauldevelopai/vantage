@@ -83,6 +83,26 @@ def should_analyze(camera_id: str, now: float, min_gap: float = ANALYZE_MIN_GAP_
     return True
 
 
+# PAID-call throttle, separate from the analysis throttle above: the free local
+# detector runs on every analysed frame, but narration costs money — the owner
+# caps it per camera from the Costs page.
+_last_paid: Dict[str, float] = {}
+
+
+def should_pay(camera_id: str, now: float, min_gap: float, flagged: bool = False) -> bool:
+    """True at most once per `min_gap` seconds per camera — unless flagged
+    (hotlist/watchlist), which always earns the call. Records the spend time
+    only when returning True."""
+    if flagged:
+        _last_paid[camera_id] = now
+        return True
+    last = _last_paid.get(camera_id)
+    if last is not None and (now - last) < min_gap:
+        return False
+    _last_paid[camera_id] = now
+    return True
+
+
 def judge_newsworthiness(camera_id: str, intel: Optional[Dict[str, Any]]):
     """Run the scene-baseline check for a frame BEFORE any paid call: returns
     (is_news, reason). Judges against what we knew before this frame, then lets
