@@ -637,6 +637,13 @@ export const api = {
     return res.json();
   },
 
+  /** Vision stack + data-engine feed status for the Intel page. */
+  async getMlStatus(): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/intelligence/ml-status`);
+    if (!res.ok) throw new Error('Failed to load ML status');
+    return res.json();
+  },
+
   /** Name a recurring vehicle ("Paul's Fortuner"); empty label removes it. */
   async setVehicleLabel(entityId: string, label: string): Promise<any> {
     const res = await fetchWithAuth(`${API_BASE}/vehicles/entity-label`, {

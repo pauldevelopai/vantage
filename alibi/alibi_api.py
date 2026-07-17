@@ -3786,6 +3786,94 @@ class UserSourceRecords(BaseModel):
     records: List[dict]
 
 
+@app.get("/intelligence/ml-status", tags=["Intelligence"])
+async def ml_status(current_user: User = Depends(get_current_user)):
+    """The honest inventory: every module in the vision stack with its REAL
+    availability, and every data-engine feed with its real record count and
+    what (if anything) is blocking it. No aspirational entries marked live."""
+    import importlib.util as _ilu
+    from pathlib import Path as _P
+
+    def _has(mod: str) -> bool:
+        try:
+            return _ilu.find_spec(mod) is not None
+        except (ImportError, ValueError):
+            return False
+
+    from alibi.ai_config import get_ai_config
+    cfg = get_ai_config()
+
+    vision = [
+        {"name": "D-FINE object detection", "purpose": "people / vehicles / objects per frame",
+         "status": "active" if _has("onnxruntime") else "unavailable",
+         "detail": "Apache-2.0, ONNX", "kind": "open_source"},
+        {"name": "SCRFD face detection", "purpose": "find faces (gated on a detected person)",
+         "status": "active" if _has("insightface") else "unavailable",
+         "detail": "InsightFace, ONNX", "kind": "open_source"},
+        {"name": "ArcFace embeddings", "purpose": "512-d face vectors for Faces + person history",
+         "status": "active" if _has("insightface") else "unavailable",
+         "detail": "InsightFace buffalo_l", "kind": "open_source"},
+        {"name": "OSNet appearance ReID", "purpose": "link the SAME vehicle/person across sightings",
+         "status": "active" if _has("torchreid") else "unavailable",
+         "detail": "powers distinct-vehicle counts + familiar/new", "kind": "open_source"},
+        {"name": "FastALPR plates", "purpose": "plate detect + OCR",
+         "status": "active" if _has("fast_alpr") or _has("fast_plate_ocr") else "unavailable",
+         "detail": "ONNX; reads validated against reference.plate_formats", "kind": "open_source"},
+        {"name": f"Claude vision ({cfg['vision_model']})", "purpose": "scene narration + vehicle attributes",
+         "status": "active",
+         "detail": (f"paid; capped at 1 call/camera/{cfg['paid_min_gap_seconds']}s, "
+                    f"vehicles {'narrated' if cfg['narrate_vehicles'] else 'not narrated'}"),
+         "kind": "paid_api"},
+        {"name": "Scene baseline", "purpose": "learn each camera's normal so furniture stays quiet",
+         "status": "active", "detail": "own algorithm, per-camera medians", "kind": "built_in"},
+        {"name": "ByteTrack tracking", "purpose": "dwell / loitering durations (arms the dwell trigger)",
+         "status": "planned", "detail": "standalone port planned — clears the last AGPL dependency",
+         "kind": "open_source"},
+        {"name": "Make/model classifier", "purpose": "vehicle badge from the image, no VLM spend",
+         "status": "planned", "detail": "open model needed; VLM attributes cover this today",
+         "kind": "open_source"},
+    ]
+
+    feeds = []
+    try:
+        from alibi.dataengine.sources import SOURCES
+        from alibi.dataengine.store import DataEngineStore
+        stats = DataEngineStore().stats()
+        per_source = stats.get("by_source") or {}
+        areas = []
+        try:
+            from alibi.dataengine.refresh import areas_from_cameras
+            areas = areas_from_cameras()
+        except Exception:
+            pass
+        import os as _os
+        token = bool(_os.environ.get("APIFY_TOKEN"))
+        for sid, spec in SOURCES.items():
+            entry = per_source.get(sid)
+            records = entry.get("records", entry) if isinstance(entry, dict) else (entry or 0)
+            blocked = None
+            if spec.apify_actor and not token:
+                blocked = "APIFY_TOKEN not set"
+            elif sid.startswith("places.") and not areas:
+                blocked = "no camera/site has an area set — nothing to harvest for"
+            elif not spec.apify_actor and not records:
+                blocked = "no feed wired yet (actor or curated seed)"
+            feeds.append({
+                "source_id": sid,
+                "description": spec.description,
+                "records": records,
+                "actor": spec.apify_actor,
+                "lawful_basis": getattr(spec.lawful_basis, "value", str(spec.lawful_basis)),
+                "retention_days": spec.retention_days,
+                "blocked": blocked,
+            })
+    except Exception as e:
+        print(f"[intel] dataengine status unavailable: {e}")
+
+    return {"vision_stack": vision, "data_feeds": feeds,
+            "generated_at": datetime.utcnow().isoformat()}
+
+
 @app.get("/intelligence/sources", tags=["Intelligence"])
 async def list_user_sources(current_user: User = Depends(get_current_user)):
     """Sources the owner has declared, plus the vocabulary the console needs."""
