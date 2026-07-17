@@ -94,6 +94,10 @@ export interface DecisionRequest {
   operator_notes: string;
   was_true_positive: boolean;
   dismiss_reason?: string;
+  /** The human's own words for what happened when confirming ("attempted
+   *  break-in"). Shown on the Overview attributed to them — the system itself
+   *  never declares a crime. */
+  label?: string;
 }
 
 export interface Settings {
@@ -289,6 +293,25 @@ export interface DashboardOverview {
   recent_vehicles: DashboardVehicle[];
   watching_for: WatchingFor | null;
   patterns: DashboardPatterns | null;
+  situations: DashboardSituation[];
+}
+
+/** One incident on the Overview's Situations panel. The machine's ceiling is
+ *  tier "review" — "confirmed" (and any crime word in its label) only ever
+ *  comes from a person, whose name is attached. */
+export interface DashboardSituation {
+  incident_id: string;
+  tier: 'confirmed' | 'review' | 'noted';
+  status?: string;
+  severity: number;
+  ts: string;
+  camera_id: string | null;
+  camera_name: string | null;
+  title: string | null;
+  event_type: string | null;
+  description: string;
+  snapshot_url: string | null;
+  confirmed: { by: string; ts: string; label: string | null; notes?: string } | null;
 }
 
 /** Hour-of-day activity per camera (site-local time) — all from real events. */
@@ -320,6 +343,9 @@ export interface PriorSighting {
   ts: string;
   score: number;
   matched_person_id?: string | null;
+  sighting_id?: string | null;
+  frame_url?: string | null;
+  bbox?: number[] | null;
 }
 
 export interface PersonHistoryResult {
