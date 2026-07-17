@@ -20,7 +20,10 @@ pytest>=7.4.0
 # Video processing and AI vision dependencies
 opencv-python>=4.8.0
 opencv-contrib-python>=4.8.0  # Extra OpenCV modules (tracking, feature detection)
-ultralytics>=8.0.0            # YOLO v8 for object detection (vision gatekeeper)
+# ultralytics REMOVED — it is AGPL-3.0, which is unworkable for a commercial
+# deployment. Detection runs on D-FINE (Apache-2.0, via transformers) and track
+# IDs come from alibi/vision/simple_tracker.py. The YOLO code paths remain as an
+# optional fallback: install ultralytics yourself only if you accept AGPL.
 
 # PyTorch for deep learning (CPU version - use torch.org for GPU)
 torch>=2.1.0

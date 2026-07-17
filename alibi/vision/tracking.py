@@ -161,6 +161,13 @@ class TrackState:
         }
 
 
+def _is_detection_list(x) -> bool:
+    """True for a list of backend-agnostic Detection objects (as opposed to
+    ultralytics YOLO results)."""
+    from alibi.vision.simple_tracker import Detection
+    return isinstance(x, list) and (not x or isinstance(x[0], Detection))
+
+
 class MultiObjectTracker:
     """
     Manages tracking of multiple objects across frames.
@@ -191,6 +198,11 @@ class MultiObjectTracker:
         # Active tracks: track_id -> TrackState
         self.tracks: Dict[int, TrackState] = {}
         
+        # Assigns track IDs when we're given raw detections — this is what
+        # replaced ultralytics' internal ByteTrack (AGPL).
+        from alibi.vision.simple_tracker import SimpleTracker
+        self._assoc = SimpleTracker()
+
         # Tracks pending confirmation (need min_hits)
         self.pending_tracks: Dict[int, TrackState] = {}
         
@@ -222,11 +234,35 @@ class MultiObjectTracker:
         """
         if timestamp is None:
             timestamp = datetime.utcnow()
-        
+
         self.frame_count += 1
-        
-        # Extract detections with track IDs from YOLO
+
+        # Two ways in, one set of bookkeeping below.
+        #
+        # Preferred: a list of Detection (from any detector — D-FINE, Apache-2.0).
+        # We assign the track IDs ourselves via SimpleTracker, so no AGPL code is
+        # involved and detection isn't run twice.
+        #
+        # Legacy: ultralytics YOLO results, which arrive with IDs already attached
+        # because YOLO ran ByteTrack internally. Kept so existing callers and the
+        # simulator keep working, but nothing on a live path uses it.
         detections = []
+        if _is_detection_list(yolo_results):
+            for tr in self._assoc.update(list(yolo_results), timestamp).values():
+                x, y, w, h = tr.bbox
+                zones = tr.zones
+                if zones_config and not zones:
+                    zones = self._get_zones_for_point((x + w / 2, y + h / 2), zones_config)
+                detections.append({
+                    "track_id": tr.track_id,
+                    "class_id": tr.class_id,
+                    "class_name": tr.class_name,
+                    "bbox": tr.bbox,
+                    "confidence": tr.confidence,
+                    "zones": zones,
+                })
+            return self._apply_detections(detections, timestamp)
+
         for result in yolo_results:
             if hasattr(result.boxes, 'id') and result.boxes.id is not None:
                 boxes = result.boxes
@@ -258,6 +294,11 @@ class MultiObjectTracker:
                         "zones": zones
                     })
         
+        return self._apply_detections(detections, timestamp)
+
+    def _apply_detections(self, detections, timestamp):
+        """TrackState bookkeeping, shared by both input paths: pending vs
+        confirmed, min_hits, dwell, and retiring what is no longer seen."""
         # Update existing tracks or create new ones
         updated_track_ids = set()
         for det in detections:
@@ -317,6 +358,7 @@ class MultiObjectTracker:
         # In production, you'd remove tracks not seen for max_age frames
         
         return self.tracks
+
     
     def _get_zones_for_point(
         self,
