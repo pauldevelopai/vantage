@@ -637,6 +637,20 @@ export const api = {
     return res.json();
   },
 
+  /** Record the account's API credit balance (from console.anthropic.com). */
+  async setApiCredits(balanceUsd: number): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/costs/credits`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ balance_usd: balanceUsd }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to update credits');
+    }
+    return res.json();
+  },
+
   async getRecentPeople(hours: number = 168): Promise<{ people: PersonRow[]; count: number; window_hours: number }> {
     const res = await fetchWithAuth(`${API_BASE}/people/recent?hours=${hours}`);
     if (!res.ok) throw new Error('Failed to load people');

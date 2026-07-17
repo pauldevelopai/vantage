@@ -3113,7 +3113,7 @@ async def bridge_ingest_frame(camera_id: str, request: Request,
     def _analyze():
         frame = fa.decode(data)
         if frame is None:
-            return None, None
+            return None, None, None
         intel_ = None
         try:
             from alibi.vision import frame_intelligence as fi
@@ -3126,24 +3126,33 @@ async def bridge_ingest_frame(camera_id: str, request: Request,
         # shadows trip the motion trigger constantly and are worth $0 to narrate.
         # If the structured layer is unavailable we fall back to always calling,
         # so a CV failure degrades to the old behaviour rather than going blind.
+        #
+        # Judge newsworthiness BEFORE the paid call: the scene baseline already
+        # knows the parked SUV is furniture, and narrating furniture was the
+        # single biggest credit burner (~$0.01 per motion frame, all day). The
+        # judgment is passed into decide_event so the baseline isn't taught the
+        # same frame twice.
+        news = fa.judge_newsworthiness(camera_id, intel_) if intel_ else None
         wants_attrs = bool(intel_ and int(intel_.get("vehicle_count") or 0) > 0)
+        worth_paying = _worth_narrating(intel_) and (news is None or news[0])
         analysis_ = (fa.analyze_frame(frame, want_vehicle_attrs=wants_attrs) or {}
-                     if _worth_narrating(intel_) else {})
+                     if worth_paying else {})
         # Persist a vehicle sighting per detected vehicle (evidence frame + bbox
         # + VLM attributes when unambiguous) — feeds the Overview vehicles strip
         # and vehicle search.
-        if wants_attrs:
+        if wants_attrs and worth_paying:
             try:
                 fa.record_vehicle_sightings(intel_, analysis_.get("vehicles"),
                                             camera_id, now, frame_id)
             except Exception as e:
                 print(f"[frame-ai] vehicle sighting persist failed: {e}")
-        return intel_, analysis_
+        return intel_, analysis_, news
 
-    intel, analysis = await run_in_threadpool(_analyze)
+    intel, analysis, news = await run_in_threadpool(_analyze)
     if analysis is None:
         return {"analyzed": False, "reason": "decode_failed"}
-    event = fa.decide_event(analysis, camera_id, now, frame_id, intel=intel)
+    event = fa.decide_event(analysis, camera_id, now, frame_id, intel=intel,
+                            newsworthiness=news)
     if event is None:
         return {"analyzed": True, "incident": None,
                 "description": analysis.get("description", ""),
@@ -3542,6 +3551,33 @@ async def costs_summary(window_days: int = 30, current_user: User = Depends(get_
     from alibi.cost_tracker import summary
     window_days = max(1, min(int(window_days or 30), 365))
     return summary(window_days=window_days)
+
+
+class CreditsUpdate(BaseModel):
+    balance_usd: float
+
+
+@app.put("/costs/credits", tags=["Costs"])
+async def update_credits(
+    payload: CreditsUpdate,
+    current_user: User = Depends(require_role([Role.ADMIN])),
+):
+    """Record the API account's credit balance, as read by the owner from
+    console.anthropic.com. The Anthropic API has no balance endpoint, so this
+    entered figure — burned down against our tracked spend — is the honest
+    source for "how much is left and when does it run out".
+
+    Requires: Admin role
+    """
+    from alibi.cost_tracker import set_credits, credit_status
+    if payload.balance_usd < 0:
+        raise HTTPException(status_code=400, detail="balance_usd must be >= 0")
+    set_credits(payload.balance_usd, set_by=current_user.username)
+    get_store().append_audit("api_credits_set", {
+        "user": current_user.username,
+        "balance_usd": round(float(payload.balance_usd), 2),
+    })
+    return credit_status()
 
 
 # ── Intel: owner-declared data sources ──────────────────────────

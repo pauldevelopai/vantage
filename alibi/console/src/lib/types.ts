@@ -155,6 +155,20 @@ export interface TrailEntry {
   metadata: Record<string, any>;
 }
 
+/** API credit balance & runout — the balance is ENTERED by the owner (Anthropic
+ *  has no balance API); spend/burn/runout are measured from tracked usage.
+ *  All-null balance fields = not entered yet; the page prompts, never invents. */
+export interface CreditStatus {
+  balance_usd: number | null;
+  set_at: string | null;
+  set_by: string | null;
+  spent_since_usd: number | null;
+  remaining_usd: number | null;
+  daily_burn_usd: number | null;
+  days_left: number | null;
+  runout_date: string | null;
+}
+
 /** Service usage & estimated cost. */
 export interface CostSummary {
   currency: string;
@@ -162,6 +176,7 @@ export interface CostSummary {
   total_usd: number;
   by_service: Record<string, { calls: number; input_tokens: number; output_tokens: number; usd: number }>;
   by_day: Array<{ day: string; usd: number; calls: number }>;
+  credits: CreditStatus;
   note: string;
 }
 
