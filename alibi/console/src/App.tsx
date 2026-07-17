@@ -20,6 +20,35 @@ import PatternsPage from './pages/PatternsPage';
 import { IntelPage } from './pages/IntelPage';
 import { CostsPage } from './pages/CostsPage';
 import { isAuthenticated, getUser, logout, hasRole } from './lib/auth';
+import { getTheme, initTheme, setTheme, type Theme } from './lib/theme';
+
+initTheme();
+
+/** Icon-only light/dark flip — sun when dark (tap for light), moon when light. */
+function ThemeToggle() {
+  const [theme, setThemeState] = useState<Theme>(getTheme());
+  const flip = () => {
+    const next: Theme = theme === 'dark' ? 'light' : 'dark';
+    setTheme(next);
+    setThemeState(next);
+  };
+  return (
+    <button onClick={flip} aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+            className="text-white/40 hover:text-white p-1.5 rounded-md border border-white/10 hover:border-white/30 hover:bg-white/5 transition-all duration-150">
+      {theme === 'dark' ? (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4m11.4-11.4 1.4-1.4" />
+        </svg>
+      ) : (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
+        </svg>
+      )}
+    </button>
+  );
+}
 
 type LayoutMode = 'standard' | 'control-room';
 
@@ -73,7 +102,7 @@ function Layout({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen vg-app">
       {/* Top Navigation */}
       <nav className="fixed top-0 left-0 right-0 z-50 bg-gray-900/95 backdrop-blur-xl border-b border-white/[0.08]">
         <div className={isControlRoom ? 'w-full px-8' : 'max-w-7xl mx-auto px-4'}>
@@ -108,6 +137,7 @@ function Layout({ children }: { children: React.ReactNode }) {
               {hasRole('admin') && navLink('/settings', 'Settings')}
             </div>
             <div className="flex items-center gap-2.5 ml-auto flex-shrink-0">
+              <ThemeToggle />
               <button
                 onClick={toggleLayout}
                 className="text-white/40 hover:text-white text-xs px-2.5 py-1 rounded-md border border-white/10 hover:border-white/30 hover:bg-white/5 transition-all duration-150"
