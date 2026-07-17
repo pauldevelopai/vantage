@@ -4,7 +4,7 @@ import { api } from '../lib/api';
 import { hasRole } from '../lib/auth';
 import { AuthImg } from '../components/AuthImg';
 import { CropImg } from '../components/CropImg';
-import type { DashboardOverview, DashboardPerson, DashboardRow, DashboardVehicle, WatchingFor } from '../lib/types';
+import type { DashboardOverview, DashboardPatterns, DashboardPerson, DashboardRow, DashboardVehicle, WatchingFor } from '../lib/types';
 
 /**
  * The Overview dashboard — the tab shown to clients.
@@ -173,6 +173,17 @@ export function DashboardPage() {
 
             {!isEmpty && (
               <>
+                {/* What we're watching for — up top, because "what is this
+                    system looking for" is the first client question. Never
+                    framed as crimes: situations worth review, honestly stated. */}
+                {data.watching_for && data.watching_for.triggers.length > 0 && (
+                  <Panel className="mb-4" delay={200}>
+                    <PanelHead title="Watching for"
+                               right={`${data.watching_for.posture_label.toLowerCase()} · ${data.watching_for.site_name}`} />
+                    <WatchingForPanel wf={data.watching_for} />
+                  </Panel>
+                )}
+
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
                   <Panel className="lg:col-span-2" delay={220}>
                     <PanelHead title="Camera wall"
@@ -267,11 +278,13 @@ export function DashboardPage() {
                   </Panel>
                 )}
 
-                {data.watching_for && data.watching_for.triggers.length > 0 && (
+                {data.patterns && (
                   <Panel className="mb-4" delay={315}>
-                    <PanelHead title="Watching for"
-                               right={`${data.watching_for.posture_label.toLowerCase()} · ${data.watching_for.site_name}`} />
-                    <WatchingForPanel wf={data.watching_for} />
+                    <PanelHead title="Activity patterns"
+                               right={data.patterns.busiest_hour !== null
+                                 ? `busiest ${String(data.patterns.busiest_hour).padStart(2, '0')}:00–${String((data.patterns.busiest_hour + 1) % 24).padStart(2, '0')}:00 · ${data.patterns.busiest_camera || ''}`
+                                 : 'no activity in this window'} />
+                    <PatternsHeatmap p={data.patterns} />
                   </Panel>
                 )}
 
@@ -369,14 +382,16 @@ function sinceLabel(iso: string): string {
  */
 function PersonCard({ p, i, onEnrolled }: { p: DashboardPerson; i: number; onEnrolled: () => void }) {
   const enrolled = !!p.matched_label;
-  const canEnroll = hasRole('supervisor') || hasRole('admin');
+  const isFace = p.source !== 'detection' && !!p.sighting_id;
+  // Enrolment needs a face embedding — a body-only detection has none.
+  const canEnroll = isFace && (hasRole('supervisor') || hasRole('admin'));
   const [naming, setNaming] = useState(false);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   async function enrol() {
-    if (!name.trim()) return;
+    if (!name.trim() || !p.sighting_id) return;
     setBusy(true);
     setErr(null);
     try {
@@ -394,8 +409,8 @@ function PersonCard({ p, i, onEnrolled }: { p: DashboardPerson; i: number; onEnr
     <div className="vg-rise group rounded-lg overflow-hidden bg-black border border-slate-800 hover:border-indigo-500/70 transition-all duration-300"
          style={{ animationDelay: `${340 + i * 40}ms` }}>
       <div className="relative aspect-square bg-slate-900">
-        <CropImg src={p.frame_url} alt={enrolled ? p.matched_label! : 'Unknown person'}
-                 bbox={p.bbox as [number, number, number, number]} pad={0.45}
+        <CropImg src={p.frame_url} alt={enrolled ? p.matched_label! : 'Person'}
+                 bbox={p.bbox as [number, number, number, number]} pad={isFace ? 0.45 : 0.2}
                  className="w-full h-full" />
         <span className="absolute bottom-1 right-1.5 text-[8px] px-1 py-0.5 rounded bg-black/80 text-slate-400 font-mono">
           {timeAgo(p.ts)}
@@ -403,10 +418,12 @@ function PersonCard({ p, i, onEnrolled }: { p: DashboardPerson; i: number; onEnr
       </div>
       <div className="px-2 py-1.5 border-t border-slate-800/70">
         <div className={`text-[11px] font-medium truncate ${enrolled ? 'text-emerald-300' : 'text-slate-200'}`}>
-          {enrolled ? p.matched_label : 'Unknown person'}
+          {enrolled ? p.matched_label : isFace ? 'Unknown person' : 'Person'}
         </div>
         <div className="text-[9px] text-slate-500 truncate">
-          {p.times_seen > 1 ? `seen ${p.times_seen}× ${sinceLabel(p.first_seen)}` : 'first sighting'}
+          {isFace
+            ? (p.times_seen > 1 ? `seen ${p.times_seen}× ${sinceLabel(p.first_seen!)}` : 'first sighting')
+            : 'no face captured'}
         </div>
         <div className="text-[9px] text-slate-600 truncate">{p.camera_name}</div>
         {!enrolled && canEnroll && !naming && (
@@ -478,14 +495,61 @@ function WatchingForPanel({ wf }: { wf: WatchingFor }) {
   );
 }
 
+/**
+ * Hour-of-day activity heatmap (site-local time): one row per camera, plus
+ * people/vehicles rows. Cell intensity = events in that hour of day. All real
+ * events, zeros stay dark — an idle system reads as an honest quiet grid.
+ */
+function PatternsHeatmap({ p }: { p: DashboardPatterns }) {
+  const rows: Array<{ label: string; hours: number[]; tint: string }> = [
+    ...p.by_camera_hour.map(c => ({ label: c.camera_name, hours: c.hours, tint: '129,140,248' })),
+    { label: 'People', hours: p.people_by_hour, tint: '99,102,241' },
+    { label: 'Vehicles', hours: p.vehicles_by_hour, tint: '34,211,238' },
+  ];
+  const max = Math.max(1, ...rows.flatMap(r => r.hours));
+  return (
+    <div className="overflow-x-auto">
+      <div className="min-w-[560px]">
+        {rows.map(r => (
+          <div key={r.label} className="flex items-center gap-2 mb-1.5">
+            <span className="w-24 flex-none text-[10px] text-slate-500 truncate text-right pr-1">{r.label}</span>
+            <div className="flex-1 grid gap-[3px]" style={{ gridTemplateColumns: 'repeat(24, 1fr)' }}>
+              {r.hours.map((n, h) => (
+                <div key={h}
+                     title={`${String(h).padStart(2, '0')}:00 · ${n} event${n === 1 ? '' : 's'}`}
+                     className="h-5 rounded-[3px]"
+                     style={{ background: n > 0
+                       ? `rgba(${r.tint}, ${0.15 + 0.85 * (n / max)})`
+                       : 'rgba(30,41,59,.55)' }} />
+              ))}
+            </div>
+          </div>
+        ))}
+        <div className="flex items-center gap-2">
+          <span className="w-24 flex-none" />
+          <div className="flex-1 grid gap-[3px]" style={{ gridTemplateColumns: 'repeat(24, 1fr)' }}>
+            {Array.from({ length: 24 }, (_, h) => (
+              <span key={h} className="text-[8px] text-slate-600 text-center font-mono">
+                {h % 6 === 0 ? String(h).padStart(2, '0') : ''}
+              </span>
+            ))}
+          </div>
+        </div>
+        <p className="text-[9px] text-slate-600 mt-1.5 ml-[104px]">hour of day ({p.tz})</p>
+      </div>
+    </div>
+  );
+}
+
 /** Honest vehicle description: the badge (make/model) is shown ONLY at high VLM
- *  confidence — otherwise colour + body ("White SUV"). Never a guessed model. */
+ *  confidence — otherwise colour + body ("White SUV"). Colour may also come
+ *  from the crop's own pixels (HSV). Never a guessed model. */
 function vehicleTitle(v: DashboardVehicle): string {
   const colour = v.colour ? v.colour[0].toUpperCase() + v.colour.slice(1) : '';
   const badge = v.attr_confidence === 'high' && v.make
     ? [v.make, v.model].filter(Boolean).join(' ')
     : '';
-  const body = badge || v.body || '';
+  const body = badge || v.body || (colour ? 'vehicle' : '');
   const title = [colour, body].filter(Boolean).join(' ').trim();
   return title || 'Vehicle';
 }

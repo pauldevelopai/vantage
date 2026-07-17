@@ -223,15 +223,16 @@ export interface DashboardCamera {
  *  name; a stranger has matched_label null and continuity fields instead — the
  *  UI must never present a guessed identity. */
 export interface DashboardPerson {
-  sighting_id: string;
+  sighting_id: string | null;        // null for detection-only rows (no face)
+  source: 'face' | 'detection';
   frame_url: string;
   bbox: number[];                    // [x, y, w, h] in the stored frame's pixels
   camera_id: string;
   camera_name: string;
   ts: string;
   matched_label: string | null;
-  times_seen: number;
-  first_seen: string;
+  times_seen: number;                // 0 for detection-only rows (no embedding to link)
+  first_seen: string | null;
 }
 
 /** One tile on the Overview vehicles strip. Attributes are the VLM's opinion of
@@ -287,6 +288,17 @@ export interface DashboardOverview {
   recent_people: DashboardPerson[];
   recent_vehicles: DashboardVehicle[];
   watching_for: WatchingFor | null;
+  patterns: DashboardPatterns | null;
+}
+
+/** Hour-of-day activity per camera (site-local time) — all from real events. */
+export interface DashboardPatterns {
+  tz: string;
+  by_camera_hour: Array<{ camera_id: string; camera_name: string; hours: number[] }>;
+  people_by_hour: number[];
+  vehicles_by_hour: number[];
+  busiest_hour: number | null;
+  busiest_camera: string | null;
 }
 
 // --- People (own-camera sightings + history) -------------------------------- //
