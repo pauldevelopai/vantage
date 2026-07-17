@@ -231,3 +231,18 @@ class TestRegistryAndFailSafe:
     def test_unknown_source_is_reported(self, store):
         result = run_source("nope.not_a_source", store=store)
         assert result.error and "unknown source" in result.error
+
+
+def test_reingest_is_idempotent_on_read(tmp_path):
+    """The same items ingested twice read as ONE set of records."""
+    from alibi.dataengine.ingest import ingest_items
+    from alibi.dataengine.sources import get_source
+    from alibi.dataengine.store import DataEngineStore
+    store = DataEngineStore(storage_path=str(tmp_path / "de.jsonl"),
+                            audit_path=str(tmp_path / "audit.jsonl"))
+    spec = get_source("reference.plate_formats")
+    items = [{"region": "Gauteng", "country": "ZA", "pattern": "^X$", "example": "X"}]
+    ingest_items(spec, items, store)
+    ingest_items(spec, items, store)
+    assert len(store.query(source_id="reference.plate_formats")) == 1
+    assert store.stats()["by_source"]["reference.plate_formats"] == 1
