@@ -246,3 +246,40 @@ class TestGeoAnchoredQuery:
 
         assert needs_refresh("Somerset West", store, min_age_days=30) is False
         assert needs_refresh("Stellenbosch", store, min_age_days=30) is True
+
+
+# ── crime-stats harvester ──────────────────────────────────────────────────
+
+from alibi.dataengine.crime_stats import parse_station_stats, stat_page_urls
+
+
+def test_parser_extracts_known_categories_only():
+    text = """Somerset West precinct — crime statistics 2024/2025
+    Murder 12   Sexual offences 34   Common assault 156
+    Burglary at residential premises 271
+    Theft out of or from motor vehicle 189
+    Weather today 25 degrees. Random number 9999999.
+    """
+    rows = parse_station_stats(text)
+    cats = {r["crime_category"]: r["count"] for r in rows}
+    assert cats["murder"] == 12
+    assert cats["burglary at residential premises"] == 271
+    assert all(r["period"] == "2024/2025" for r in rows)
+    assert "weather" not in str(cats)
+
+
+def test_parser_refuses_pages_without_real_stats():
+    # a directory page mentioning one category with a stray number nearby
+    assert parse_station_stats("Contact the station about a murder case, room 4.") == []
+    assert parse_station_stats("") == []
+
+
+def test_parser_never_invents_a_period():
+    text = "Murder 5. Common assault 20. Rape 3. Burglary at residential premises 40."
+    rows = parse_station_stats(text)
+    assert rows and all(r["period"] == "unknown period" for r in rows)
+
+
+def test_stat_page_urls_slugged():
+    urls = stat_page_urls("Somerset West")
+    assert all("somerset-west" in u for u in urls)
