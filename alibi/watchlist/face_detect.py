@@ -101,27 +101,34 @@ class FaceDetector:
         Returns:
             List of bounding boxes [(x, y, w, h), ...].
         """
+        return [bbox for bbox, _score in self.detect_scored(image)]
+
+    def detect_scored(self, image: np.ndarray) -> List[Tuple[Tuple[int, int, int, int], float]]:
+        """Detect faces with their detector confidence: [((x, y, w, h), score)].
+        Only the SCRFD backend has a real score; the fallbacks report their own
+        threshold (they filtered on it internally)."""
         if image is None or getattr(image, "size", 0) == 0:
             return []
         if self.method == "scrfd":
             return self._detect_scrfd(image)
         if self.method == "dnn":
-            return self._detect_dnn(image)
+            return [(b, self.confidence_threshold) for b in self._detect_dnn(image)]
         if self.method == "haar":
-            return self._detect_haar(image)
+            return [(b, self.confidence_threshold) for b in self._detect_haar(image)]
         return []
 
-    def _detect_scrfd(self, image: np.ndarray) -> List[Tuple[int, int, int, int]]:
-        """Detect using InsightFace SCRFD; returns (x, y, w, h) boxes."""
+    def _detect_scrfd(self, image: np.ndarray) -> List[Tuple[Tuple[int, int, int, int], float]]:
+        """Detect using InsightFace SCRFD; returns ((x, y, w, h), score) pairs."""
         h, w = image.shape[:2]
         bboxes, _kpss = self._scrfd.detect(image, metric="default")
         faces = []
         for det in bboxes:
             x1, y1, x2, y2 = det[:4]
+            score = float(det[4]) if len(det) > 4 else self.confidence_threshold
             x = max(0, int(x1)); y = max(0, int(y1))
             bw = min(w - x, int(x2 - x1)); bh = min(h - y, int(y2 - y1))
             if bw > 0 and bh > 0:
-                faces.append((x, y, bw, bh))
+                faces.append(((x, y, bw, bh), score))
         return faces
     
     def _detect_dnn(self, image: np.ndarray) -> List[Tuple[int, int, int, int]]:

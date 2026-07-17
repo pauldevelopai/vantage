@@ -167,8 +167,18 @@ def recent_people(
     kept = [kept[i] for i in same_dim]
     embs = [embs[i] for i in same_dim]
 
+    def _usable(s) -> bool:
+        # A tile needs a real evidence frame and a face big enough to be one —
+        # a sub-16px "face" at 640px width is detector noise, not a person.
+        if not (s.ts >= cutoff_iso and s.image_path and s.bbox):
+            return False
+        try:
+            return int(s.bbox[2]) >= 16 and int(s.bbox[3]) >= 16
+        except (TypeError, ValueError, IndexError):
+            return False
+
     recent = sorted(
-        (i for i, s in enumerate(kept) if s.ts >= cutoff_iso and s.image_path and s.bbox),
+        (i for i, s in enumerate(kept) if _usable(s)),
         key=lambda i: kept[i].ts, reverse=True,
     )
 
