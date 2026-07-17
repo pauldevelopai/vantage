@@ -241,6 +241,10 @@ class DecisionRequest(BaseModel):
     operator_notes: str
     was_true_positive: bool
     dismiss_reason: Optional[str] = None
+    # The human's own words for WHAT happened ("attempted break-in") when
+    # confirming. The system never declares a crime — a person does, and their
+    # name goes on it. This label is what the Overview shows, attributed.
+    label: Optional[str] = None
 
 
 class IncidentSummary(BaseModel):
@@ -784,9 +788,10 @@ async def record_decision(
         action_taken=decision_request.action_taken,
         operator_notes=decision_request.operator_notes,
         was_true_positive=decision_request.was_true_positive,
-        metadata={
-            "dismiss_reason": decision_request.dismiss_reason
-        } if decision_request.dismiss_reason else {},
+        metadata={k: v for k, v in {
+            "dismiss_reason": decision_request.dismiss_reason,
+            "label": decision_request.label,
+        }.items() if v},
     )
     
     # Store decision
@@ -807,7 +812,18 @@ async def record_decision(
     # Get existing metadata to preserve plan/alert/validation
     existing_data = store.get_incident_with_metadata(incident_id)
     existing_metadata = existing_data.get("_metadata", {}) if existing_data else {}
-    
+
+    # A human confirming WHAT happened, in their own words, with their name on
+    # it. This — never a machine claim — is what lets the Overview show
+    # "CONFIRMED · attempted break-in — admin".
+    if decision_request.action_taken == "confirmed":
+        existing_metadata["confirmed"] = {
+            "by": current_user.username,
+            "ts": decision.decision_ts.isoformat(),
+            "label": (decision_request.label or "").strip() or None,
+            "notes": decision_request.operator_notes,
+        }
+
     # Re-store incident with preserved metadata (append-only)
     store.upsert_incident(incident, existing_metadata)
     
@@ -1357,6 +1373,64 @@ async def dashboard_overview(range: str = "24h",
     except Exception as e:
         print(f"[dashboard] patterns unavailable: {e}")
 
+    # Situations — the incidents in this window, tiered honestly:
+    #   confirmed : a HUMAN said what happened, in their words, name attached
+    #   review    : the system flagged it as worth a look NOW (high severity,
+    #               watchlist/hotlist, safety concern, escalated)
+    #   noted     : everything else that raised an incident
+    # The machine's ceiling is "review" — "confirmed" (and any crime word in
+    # its label) only ever comes from a person.
+    situations = []
+    try:
+        event_by_id = {e.event_id: e for e in events}
+        incidents_data = store.list_incidents_with_metadata(limit=300)
+        for inc in incidents_data:
+            try:
+                upd = datetime.fromisoformat(inc["updated_ts"])
+            except (ValueError, TypeError, KeyError):
+                continue
+            if upd < cutoff:
+                continue
+            md = inc.get("_metadata", {}) or {}
+            confirmed = md.get("confirmed")
+            plan = md.get("plan", {}) or {}
+            inc_events = [event_by_id[eid] for eid in inc.get("event_ids", [])
+                          if eid in event_by_id]
+            newest = max(inc_events, key=lambda e: e.ts) if inc_events else None
+            sev = max([int(plan.get("severity") or 0)] +
+                      [int(getattr(e, "severity", 0) or 0) for e in inc_events])
+            flagged = any(_is_alert(e) for e in inc_events)
+            if confirmed:
+                tier = "confirmed"
+            elif flagged or sev >= 4 or inc.get("status") == "escalated":
+                tier = "review"
+            else:
+                tier = "noted"
+            desc = ""
+            if newest is not None:
+                desc = str((getattr(newest, "metadata", None) or {}).get("description") or "")
+            situations.append({
+                "incident_id": inc["incident_id"],
+                "tier": tier,
+                "status": inc.get("status"),
+                "severity": sev,
+                "ts": inc["updated_ts"],
+                "camera_id": newest.camera_id if newest else None,
+                "camera_name": names.get(newest.camera_id, newest.camera_id) if newest else None,
+                "title": str(plan.get("summary_1line") or "").strip() or None,
+                "event_type": newest.event_type if newest else inc.get("event_type"),
+                "description": desc,
+                "snapshot_url": newest.snapshot_url if newest else None,
+                "confirmed": confirmed,
+            })
+        # newest first within each tier; confirmed > review > noted
+        tier_rank = {"confirmed": 0, "review": 1, "noted": 2}
+        situations.sort(key=lambda s: s["ts"], reverse=True)
+        situations.sort(key=lambda s: tier_rank.get(s["tier"], 3))
+        situations = situations[:8]
+    except Exception as e:
+        print(f"[dashboard] situations unavailable: {e}")
+
     return {
         "range": range,
         "generated_at": datetime.utcnow().isoformat(),
@@ -1375,6 +1449,7 @@ async def dashboard_overview(range: str = "24h",
         "recent_vehicles": recent_vehicles,
         "watching_for": watching_for,
         "patterns": patterns,
+        "situations": situations,
     }
 
 

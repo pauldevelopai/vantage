@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { AuthImg } from '../components/AuthImg';
+import { CropImg } from '../components/CropImg';
 import type { PersonRow, PersonHistoryResult } from '../lib/types';
 
 /**
@@ -161,15 +162,28 @@ function HistoryPanel({ person, onClose }: { person: PersonRow; onClose: () => v
                         <Stat label="Cameras" value={String(h.distinct_cameras.length)} />
                         <Stat label="First seen" value={h.first_seen ? when(h.first_seen) : '—'} />
                       </div>
-                      <ul className="mt-3 space-y-1.5 max-h-56 overflow-y-auto">
+                      {/* Every prior appearance WITH its evidence crop — history
+                          a human can check with their eyes, not text rows. */}
+                      <div className="mt-3 grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-72 overflow-y-auto pr-1">
                         {h.prior_sightings.map((s, i) => (
-                          <li key={i} className="flex items-center justify-between text-xs border-b border-gray-50 pb-1">
-                            <span className="text-gray-700">{s.camera_id}</span>
-                            <span className="text-gray-400">{when(s.ts)}</span>
-                            <span className="text-gray-400 tabular-nums">{Math.round(s.score * 100)}% alike</span>
-                          </li>
+                          <div key={s.sighting_id || i} className="rounded-md overflow-hidden border border-gray-200 bg-gray-50">
+                            <div className="aspect-square bg-gray-100">
+                              {s.frame_url && s.bbox
+                                ? <CropImg src={s.frame_url} alt={`Sighting at ${s.camera_id}`}
+                                           bbox={s.bbox as [number, number, number, number]} pad={0.45}
+                                           className="w-full h-full" />
+                                : <div className="w-full h-full flex items-center justify-center text-[9px] text-gray-400">no frame</div>}
+                            </div>
+                            <div className="px-1.5 py-1">
+                              <div className="text-[10px] text-gray-700 truncate">{s.camera_id}</div>
+                              <div className="text-[9px] text-gray-400 flex justify-between">
+                                <span>{when(s.ts)}</span>
+                                <span className="tabular-nums">{Math.round(s.score * 100)}%</span>
+                              </div>
+                            </div>
+                          </div>
                         ))}
-                      </ul>
+                      </div>
                     </>
                   )}
                   {h.watchlist_person_id && (

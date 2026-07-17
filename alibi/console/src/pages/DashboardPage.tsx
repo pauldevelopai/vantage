@@ -173,6 +173,16 @@ export function DashboardPage() {
 
             {!isEmpty && (
               <>
+                {/* Situations — did anything happen? The loudest surface on the
+                    page. The machine flags "needs review"; only a HUMAN turns
+                    that into "confirmed: attempted break-in", with their name
+                    on it. */}
+                <Panel className="mb-4" delay={190}>
+                  <PanelHead title="Situations"
+                             right="flagged by the system · confirmed only by a person" />
+                  <SituationsPanel situations={data.situations || []} onChanged={() => load(range)} />
+                </Panel>
+
                 {/* What we're watching for — up top, because "what is this
                     system looking for" is the first client question. Never
                     framed as crimes: situations worth review, honestly stated. */}
@@ -258,8 +268,15 @@ export function DashboardPage() {
 
                 {data.recent_people?.length > 0 && (
                   <Panel className="mb-4" delay={300}>
-                    <PanelHead title="People seen"
-                               right={`${data.recent_people.length} shown · enrolled people are named, strangers never are`} />
+                    <div className="flex items-center justify-between mb-3">
+                      <h2 className="text-[11px] font-semibold text-slate-300 uppercase tracking-[0.14em]">People seen</h2>
+                      <div className="flex items-center gap-3">
+                        <span className="text-[10px] text-slate-600 font-mono hidden sm:inline">enrolled people are named, strangers never are</span>
+                        <Link to="/people" className="text-[10px] text-indigo-400 hover:text-indigo-300 no-underline">
+                          full history →
+                        </Link>
+                      </div>
+                    </div>
                     <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-3">
                       {data.recent_people.map((p, i) => (
                         <PersonCard key={p.sighting_id} p={p} i={i} onEnrolled={() => load(range)} />
@@ -426,6 +443,11 @@ function PersonCard({ p, i, onEnrolled }: { p: DashboardPerson; i: number; onEnr
             : 'no face captured'}
         </div>
         <div className="text-[9px] text-slate-600 truncate">{p.camera_name}</div>
+        {isFace && (
+          <Link to="/people" className="text-[9px] text-indigo-400 hover:text-indigo-300 no-underline">
+            history →
+          </Link>
+        )}
         {!enrolled && canEnroll && !naming && (
           <button onClick={() => setNaming(true)}
                   className="mt-1 w-full text-[9px] font-medium text-indigo-400 hover:text-indigo-300 border border-indigo-500/30 hover:border-indigo-400/60 rounded px-1 py-0.5 transition-colors">
@@ -453,6 +475,124 @@ function PersonCard({ p, i, onEnrolled }: { p: DashboardPerson; i: number; onEnr
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+const TIER_META = {
+  confirmed: { label: 'CONFIRMED', badge: 'bg-red-500 text-white', border: 'border-red-500/60', glow: 'shadow-[0_0_24px_-6px_rgba(239,68,68,.8)]' },
+  review:    { label: 'NEEDS REVIEW', badge: 'bg-amber-400 text-black', border: 'border-amber-500/60', glow: 'shadow-[0_0_24px_-6px_rgba(251,191,36,.7)]' },
+  noted:     { label: 'NOTED', badge: 'bg-slate-700 text-slate-300', border: 'border-slate-800', glow: '' },
+} as const;
+
+/**
+ * Situations: every incident in the window, big and visual. Tier ceiling for
+ * the MACHINE is "needs review". "CONFIRMED · <their words>" appears only when
+ * an operator confirms — the label is a quoted human judgment with a name on
+ * it, which is what makes a red banner defensible.
+ */
+function SituationsPanel({ situations, onChanged }: { situations: import('../lib/types').DashboardSituation[]; onChanged: () => void }) {
+  const canConfirm = hasRole('operator') || hasRole('supervisor') || hasRole('admin');
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [label, setLabel] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function confirm(incidentId: string) {
+    if (!label.trim()) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.recordDecision(incidentId, {
+        action_taken: 'confirmed',
+        operator_notes: label.trim(),
+        was_true_positive: true,
+        label: label.trim(),
+      });
+      setConfirming(null);
+      setLabel('');
+      onChanged();
+    } catch (e: any) {
+      setErr(e?.message || 'Could not confirm');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!situations.length) {
+    return (
+      <p className="text-xs text-slate-600 py-6 text-center leading-relaxed">
+        Nothing needing your attention in this window.<br />
+        The system is watching — see <span className="text-slate-400">Watching for</span> below for exactly what.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {situations.map((s, i) => {
+        const m = TIER_META[s.tier] || TIER_META.noted;
+        return (
+          <div key={s.incident_id}
+               className={`vg-rise flex gap-3 rounded-lg overflow-hidden bg-black/40 border ${m.border} ${m.glow} transition-all duration-300`}
+               style={{ animationDelay: `${210 + i * 60}ms` }}>
+            <Link to={`/incidents/${s.incident_id}`} className="relative w-40 sm:w-52 flex-none bg-slate-900 no-underline">
+              {s.snapshot_url
+                ? <AuthImg src={s.snapshot_url} alt={s.event_type || 'evidence'} className="w-full h-full object-cover min-h-[96px]" />
+                : <div className="w-full h-full min-h-[96px] flex items-center justify-center text-[10px] text-slate-700">no frame</div>}
+            </Link>
+            <div className="flex-1 min-w-0 py-2.5 pr-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className={`text-[9px] font-bold tracking-wider px-1.5 py-0.5 rounded ${m.badge} ${s.tier === 'confirmed' ? 'vg-live' : ''}`}>
+                  {m.label}
+                </span>
+                <span className="text-[10px] text-slate-500">{s.camera_name || ''} · {timeAgo(s.ts)}</span>
+              </div>
+              <div className="mt-1 text-sm font-medium text-slate-100 truncate">
+                {s.confirmed?.label
+                  ? <>“{s.confirmed.label}” <span className="text-[10px] font-normal text-slate-500">— confirmed by {s.confirmed.by}</span></>
+                  : (s.title || typeMeta(s.event_type || '').label)}
+              </div>
+              {s.description && (
+                <p className="mt-0.5 text-xs text-slate-500 line-clamp-2">{s.description}</p>
+              )}
+              <div className="mt-1.5 flex items-center gap-3">
+                <Link to={`/incidents/${s.incident_id}`}
+                      className="text-[10px] text-indigo-400 hover:text-indigo-300 no-underline">
+                  evidence & why flagged →
+                </Link>
+                {canConfirm && !s.confirmed && confirming !== s.incident_id && (
+                  <button onClick={() => { setConfirming(s.incident_id); setLabel(''); setErr(null); }}
+                          className="text-[10px] text-slate-400 hover:text-white border border-slate-700 hover:border-slate-500 rounded px-1.5 py-0.5">
+                    Confirm what happened…
+                  </button>
+                )}
+              </div>
+              {confirming === s.incident_id && (
+                <div className="mt-2 flex items-center gap-1.5">
+                  <input autoFocus value={label}
+                         onChange={e => setLabel(e.target.value)}
+                         onKeyDown={e => { if (e.key === 'Enter') confirm(s.incident_id); if (e.key === 'Escape') setConfirming(null); }}
+                         placeholder="In your words — e.g. attempted break-in"
+                         className="flex-1 max-w-xs bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-slate-200 placeholder:text-slate-600 focus:border-red-500 outline-none" />
+                  <button onClick={() => confirm(s.incident_id)} disabled={busy || !label.trim()}
+                          className="text-[10px] font-semibold bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white rounded px-2 py-1">
+                    {busy ? '…' : 'Confirm'}
+                  </button>
+                  <button onClick={() => setConfirming(null)} className="text-[10px] text-slate-500 hover:text-slate-300 px-1">
+                    Cancel
+                  </button>
+                  {err && <span className="text-[9px] text-red-400">{err}</span>}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+      <p className="text-[10px] text-slate-600">
+        The system flags situations worth a look — it never declares a crime. A red “confirmed” is a person's
+        own statement of what happened, with their name attached.
+      </p>
     </div>
   );
 }

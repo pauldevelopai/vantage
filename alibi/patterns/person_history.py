@@ -25,6 +25,11 @@ class PriorSighting:
     ts: str                       # ISO timestamp
     score: float                  # cosine similarity to the query face
     matched_person_id: Optional[str] = None
+    # The evidence behind the row — so history renders as face crops a human
+    # can actually check, not anonymous text lines.
+    sighting_id: Optional[str] = None
+    frame_url: Optional[str] = None
+    bbox: Optional[List[int]] = None
 
 
 @dataclass
@@ -79,6 +84,9 @@ class PersonHistory:
                 ts=sighting.ts,
                 score=round(float(score), 4),
                 matched_person_id=sighting.matched_person_id,
+                sighting_id=sighting.sighting_id,
+                frame_url=sighting.image_path,
+                bbox=list(sighting.bbox) if sighting.bbox else None,
             ))
 
         if not priors:
