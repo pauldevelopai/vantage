@@ -1159,9 +1159,56 @@ async def dashboard_overview(range: str = "24h",
         recent_people = _recent_people(cutoff.isoformat(), max_rows=12, labels=wl_labels,
                                        watchlist_embeddings=wl_embeddings)
         for p in recent_people:
+            p["source"] = "face"
             p["camera_name"] = names.get(p["camera_id"], p["camera_id"])
     except Exception as e:
         print(f"[dashboard] recent_people unavailable: {e}")
+
+    # People seen without a captured face: at pavement distance the detector
+    # finds the PERSON but no face is readable — so fall back to real person
+    # crops from the events. Labelled "Person", no name, no continuity claim
+    # (there's no embedding to honestly link sightings with). This keeps the
+    # "People detected" KPI and the strip telling the same story.
+    if len(recent_people) < 12:
+        def _piou(a, b) -> float:
+            ax, ay, aw, ah = a
+            bx, by, bw, bh = b
+            ix = max(0, min(ax + aw, bx + bw) - max(ax, bx))
+            iy = max(0, min(ay + ah, by + bh) - max(ay, by))
+            inter = ix * iy
+            union = aw * ah + bw * bh - inter
+            return inter / union if union > 0 else 0.0
+
+        seen_person_boxes: list = []
+        for e in events:
+            if len(recent_people) >= 12:
+                break
+            i = _dash_intel(e)
+            if not e.snapshot_url:
+                continue
+            for d in (i.get("detections") or []):
+                if d.get("class") != "person" or len(recent_people) >= 12:
+                    continue
+                bbox = d.get("bbox") or []
+                if len(bbox) != 4:
+                    continue
+                # a person standing still across many frames is one tile
+                if any(cam == e.camera_id and _piou(bbox, prev) > 0.5
+                       for cam, prev in seen_person_boxes):
+                    continue
+                seen_person_boxes.append((e.camera_id, bbox))
+                recent_people.append({
+                    "sighting_id": None,
+                    "source": "detection",
+                    "frame_url": e.snapshot_url,
+                    "bbox": bbox,
+                    "camera_id": e.camera_id,
+                    "camera_name": names.get(e.camera_id, e.camera_id),
+                    "ts": e.ts.isoformat(),
+                    "matched_label": None,
+                    "times_seen": 0,
+                    "first_seen": None,
+                })
 
     # Vehicles strip — one row per detected vehicle in recent events, cropped
     # client-side from the evidence frame. Attributes are the VLM's structured
@@ -1202,11 +1249,23 @@ async def dashboard_overview(range: str = "24h",
                    for cam, prev in seen_boxes):
                 continue
             seen_boxes.append((e.camera_id, bbox))
+            # Colour: the VLM's word when the frame earned one, else read
+            # directly from the crop's pixels (HSV — deterministic, honest,
+            # cached). Events from before VLM attributes existed still get a
+            # real colour this way.
+            colour = attach.get("colour") if attach else None
+            if not colour and e.snapshot_url:
+                try:
+                    from alibi.cameras.frame_analyzer import vehicle_colour
+                    fid = e.snapshot_url.rsplit("/", 1)[-1].replace(".jpg", "")
+                    colour = vehicle_colour(fid, bbox)
+                except Exception:
+                    colour = None
             recent_vehicles.append({
                 "event_id": e.event_id,
                 "frame_url": e.snapshot_url,
                 "bbox": bbox,
-                "colour": attach.get("colour") if attach else None,
+                "colour": colour,
                 "make": attach.get("make") if attach else None,
                 "model": attach.get("model") if attach else None,
                 "body": attach.get("body") if attach else None,
@@ -1241,6 +1300,61 @@ async def dashboard_overview(range: str = "24h",
     except Exception as e:
         print(f"[dashboard] watching_for unavailable: {e}")
 
+    # Patterns at a glance — WHEN each camera sees activity (hour-of-day, in
+    # the site's local time), plus the busiest hour/camera. Derived entirely
+    # from the same real events already loaded; an idle system shows zeros.
+    patterns = None
+    try:
+        tz_name = "Africa/Johannesburg"
+        try:
+            from alibi.site_profile import get_site_profile_store
+            _sites = get_site_profile_store().list()
+            if _sites and _sites[0].timezone:
+                tz_name = _sites[0].timezone
+        except Exception:
+            pass
+        try:
+            from zoneinfo import ZoneInfo
+            from datetime import timezone as _tzmod
+            _tz = ZoneInfo(tz_name)
+        except Exception:
+            _tz, tz_name = None, "UTC"
+
+        by_cam_hour: dict = {}
+        hour_totals = [0] * 24
+        people_by_hour = [0] * 24
+        vehicles_by_hour = [0] * 24
+        for e in events:
+            ts = e.ts
+            if _tz is not None:
+                ts = ts.replace(tzinfo=_tzmod.utc).astimezone(_tz)
+            hr = ts.hour
+            hour_totals[hr] += 1
+            i = _dash_intel(e)
+            if int(i.get("person_count") or 0) > 0:
+                people_by_hour[hr] += 1
+            if int(i.get("vehicle_count") or 0) > 0:
+                vehicles_by_hour[hr] += 1
+            row = by_cam_hour.setdefault(e.camera_id, [0] * 24)
+            row[hr] += 1
+
+        busiest_hour = max(range(24), key=lambda h: hour_totals[h]) if any(hour_totals) else None
+        cam_totals = {cid: sum(hrs) for cid, hrs in by_cam_hour.items()}
+        busiest_cam = max(cam_totals, key=cam_totals.get) if cam_totals else None
+        patterns = {
+            "tz": tz_name,
+            "by_camera_hour": [
+                {"camera_id": cid, "camera_name": names.get(cid, cid), "hours": hrs}
+                for cid, hrs in by_cam_hour.items()
+            ],
+            "people_by_hour": people_by_hour,
+            "vehicles_by_hour": vehicles_by_hour,
+            "busiest_hour": busiest_hour,
+            "busiest_camera": names.get(busiest_cam, busiest_cam) if busiest_cam else None,
+        }
+    except Exception as e:
+        print(f"[dashboard] patterns unavailable: {e}")
+
     return {
         "range": range,
         "generated_at": datetime.utcnow().isoformat(),
@@ -1258,6 +1372,7 @@ async def dashboard_overview(range: str = "24h",
         "recent_people": recent_people,
         "recent_vehicles": recent_vehicles,
         "watching_for": watching_for,
+        "patterns": patterns,
     }
 
 

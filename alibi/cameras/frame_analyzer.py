@@ -273,6 +273,51 @@ def record_vehicle_sightings(intel, vehicles, camera_id: str, now: datetime,
     return written
 
 
+# The Overview asks for a vehicle's colour per tile; decoding the same evidence
+# frame on every 15s poll would be wasteful, so results (including "couldn't
+# tell") are cached per (frame, bbox).
+_colour_cache: Dict[tuple, Optional[str]] = {}
+_COLOUR_CACHE_MAX = 4096
+_colour_classifier = None
+
+# Below this fraction of body pixels we don't claim a colour at all — an unsure
+# colour in front of a client is worse than none.
+_COLOUR_MIN_CONFIDENCE = 0.3
+
+
+def vehicle_colour(frame_id: str, bbox) -> Optional[str]:
+    """HSV colour of a vehicle crop from a stored evidence frame — deterministic,
+    read from the actual pixels (never guessed), or None when it can't tell.
+    Used as the fallback when an event predates (or didn't earn) VLM attributes."""
+    global _colour_classifier
+    try:
+        key = (frame_id, tuple(int(v) for v in bbox))
+    except (TypeError, ValueError):
+        return None
+    if key in _colour_cache:
+        return _colour_cache[key]
+    colour = None
+    try:
+        data = get_frame(frame_id)
+        frame = _decode(data) if data else None
+        if frame is not None:
+            x, y, w, h = key[1]
+            crop = frame[max(0, y):y + h, max(0, x):x + w]
+            if crop.size:
+                if _colour_classifier is None:
+                    from alibi.vehicles.vehicle_attrs import VehicleAttributeClassifier
+                    _colour_classifier = VehicleAttributeClassifier()
+                c, conf = _colour_classifier._classify_color(crop)
+                if c and c != "unknown" and conf >= _COLOUR_MIN_CONFIDENCE:
+                    colour = c
+    except Exception as e:
+        print(f"[frame-ai] colour lookup failed: {e}")
+    if len(_colour_cache) >= _COLOUR_CACHE_MAX:
+        _colour_cache.clear()
+    _colour_cache[key] = colour
+    return colour
+
+
 # --- frame storage (evidence) --------------------------------------------- #
 
 def _safe_id(frame_id: str) -> str:
