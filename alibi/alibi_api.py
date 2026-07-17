@@ -1143,6 +1143,104 @@ async def dashboard_overview(range: str = "24h",
 
     alerts = [_row(e) for e in events if _is_alert(e)][:20]
 
+    # People strip — recent distinct faces, cropped client-side from evidence
+    # frames. Enrolled people get their name; strangers get continuity ("seen
+    # 4× since …"), NEVER a guessed identity. Degrades to an empty strip.
+    recent_people = []
+    try:
+        from alibi.patterns.person_history import recent_people as _recent_people
+        from alibi.watchlist.watchlist_store import WatchlistStore
+        try:
+            wl_entries = WatchlistStore().load_all()
+            wl_labels = {e.person_id: e.label for e in wl_entries}
+            wl_embeddings = {e.person_id: e.embedding for e in wl_entries if e.embedding}
+        except Exception:
+            wl_labels, wl_embeddings = {}, {}
+        recent_people = _recent_people(cutoff.isoformat(), max_rows=12, labels=wl_labels,
+                                       watchlist_embeddings=wl_embeddings)
+        for p in recent_people:
+            p["camera_name"] = names.get(p["camera_id"], p["camera_id"])
+    except Exception as e:
+        print(f"[dashboard] recent_people unavailable: {e}")
+
+    # Vehicles strip — one row per detected vehicle in recent events, cropped
+    # client-side from the evidence frame. Attributes are the VLM's structured
+    # answer, attached only when the frame had exactly one vehicle (attaching
+    # one car's description to another would be a quiet lie); otherwise — and
+    # whenever the VLM couldn't read a field — they are simply absent.
+    def _iou(a, b) -> float:
+        ax, ay, aw, ah = a
+        bx, by, bw, bh = b
+        ix = max(0, min(ax + aw, bx + bw) - max(ax, bx))
+        iy = max(0, min(ay + ah, by + bh) - max(ay, by))
+        inter = ix * iy
+        union = aw * ah + bw * bh - inter
+        return inter / union if union > 0 else 0.0
+
+    recent_vehicles = []
+    seen_boxes: list = []                     # (camera_id, bbox) of picked rows
+    for e in events:
+        if len(recent_vehicles) >= 12:
+            break
+        i = _dash_intel(e)
+        dets = [d for d in (i.get("detections") or [])
+                if d.get("class") in ("car", "truck", "bus", "motorcycle")]
+        if not dets or not e.snapshot_url:
+            continue
+        attrs_list = i.get("vehicle_attrs") or []
+        attach = attrs_list[0] if (len(dets) == 1 and len(attrs_list) == 1) else None
+        plates = [p.get("display") or p.get("text") for p in (i.get("plates") or [])]
+        for d in dets:
+            if len(recent_vehicles) >= 12:
+                break
+            bbox = d.get("bbox") or []
+            if len(bbox) != 4:
+                continue
+            # A parked car re-detected in every event is ONE vehicle, not a
+            # strip full of the same car: skip near-identical boxes per camera.
+            if any(cam == e.camera_id and _iou(bbox, prev) > 0.6
+                   for cam, prev in seen_boxes):
+                continue
+            seen_boxes.append((e.camera_id, bbox))
+            recent_vehicles.append({
+                "event_id": e.event_id,
+                "frame_url": e.snapshot_url,
+                "bbox": bbox,
+                "colour": attach.get("colour") if attach else None,
+                "make": attach.get("make") if attach else None,
+                "model": attach.get("model") if attach else None,
+                "body": attach.get("body") if attach else None,
+                "attr_confidence": attach.get("confidence") if attach else None,
+                "plate": plates[0] if plates else None,
+                "camera_id": e.camera_id,
+                "camera_name": names.get(e.camera_id, e.camera_id),
+                "ts": e.ts.isoformat(),
+            })
+
+    # Watching-for panel — the first site's posture triggers, each honestly
+    # evaluated (or shown armed-but-not-evaluated). Reads as capability even
+    # when nothing has fired, which is most of the time and is the point.
+    watching_for = None
+    try:
+        from alibi.site_profile import get_site_profile_store
+        from alibi.patterns.watching_for import evaluate_watching_for
+        sites = get_site_profile_store().list()
+        if sites:
+            site = sites[0]
+            face_sightings = []
+            try:
+                from alibi.watchlist.face_sighting_store import get_face_sighting_store
+                face_sightings = [s for s in get_face_sighting_store().load_all()
+                                  if s.ts >= cutoff.isoformat()]
+            except Exception:
+                pass
+            watching_for = evaluate_watching_for(site, events, face_sightings)
+            for t in watching_for["triggers"]:
+                if t.get("camera_id"):
+                    t["camera_name"] = names.get(t["camera_id"], t["camera_id"])
+    except Exception as e:
+        print(f"[dashboard] watching_for unavailable: {e}")
+
     return {
         "range": range,
         "generated_at": datetime.utcnow().isoformat(),
@@ -1157,6 +1255,9 @@ async def dashboard_overview(range: str = "24h",
         "recent": [_row(e) for e in events[:24]],
         "cameras": cameras,
         "alerts": alerts,
+        "recent_people": recent_people,
+        "recent_vehicles": recent_vehicles,
+        "watching_for": watching_for,
     }
 
 
@@ -1392,10 +1493,41 @@ async def get_watchlist(
     Requires: Supervisor or Admin role
     """
     from alibi.watchlist.watchlist_store import WatchlistStore
-    
+
     store = WatchlistStore()
     entries = store.get_all_metadata()
-    
+
+    # Join each enrolled person to the camera archive: their face shot (a crop of
+    # a REAL evidence frame), when last seen, and how often. Same conservative
+    # cosine threshold as live matching; degrades to enrolment metadata (or
+    # honest nulls) if the sighting archive is empty.
+    try:
+        import numpy as _np
+        from alibi.watchlist.face_sighting_store import get_face_sighting_store
+        embeddings = store.get_all_embeddings()
+        sighting_store = get_face_sighting_store()
+        for entry in entries:
+            entry["times_seen"] = 0
+            entry["last_seen"] = None
+            md = entry.get("metadata") or {}
+            fb = md.get("face_bbox") or {}
+            entry["face"] = ({"frame_url": md["frame_url"],
+                              "bbox": [fb.get("x", 0), fb.get("y", 0), fb.get("w", 0), fb.get("h", 0)]}
+                             if md.get("frame_url") else None)
+            emb = embeddings.get(entry["person_id"]) if hasattr(embeddings, "get") else None
+            if emb is None or not len(emb):
+                continue
+            matches = sighting_store.find_similar(_np.asarray(emb, dtype=_np.float32),
+                                                  threshold=0.6, limit=500)
+            if matches:
+                newest = max(matches, key=lambda m: m[0].ts)[0]
+                entry["times_seen"] = len(matches)
+                entry["last_seen"] = newest.ts
+                if newest.image_path:
+                    entry["face"] = {"frame_url": newest.image_path, "bbox": list(newest.bbox)}
+    except Exception as e:
+        print(f"[watchlist] sighting join unavailable: {e}")
+
     # Audit log
     audit_store = get_store()
     audit_store.append_audit("watchlist_accessed", {
@@ -1403,11 +1535,72 @@ async def get_watchlist(
         "role": current_user.role.value,
         "entry_count": len(entries)
     })
-    
+
     return {
         "entries": entries,
         "total": len(entries)
     }
+
+
+@app.post("/watchlist/enroll-sighting")
+async def enroll_face_from_sighting(
+    payload: dict,
+    current_user: User = Depends(require_role([Role.SUPERVISOR, Role.ADMIN]))
+):
+    """One-click enrol from an unknown face the cameras already saw.
+
+    The sighting carries the face embedding we generated at detection time, so
+    enrolling is just a name and a button — no photo upload. Every enrolment
+    makes the next sighting (and, via the read-time match, the current strip)
+    say a name instead of "Unknown person".
+
+    Requires: Supervisor or Admin role
+    """
+    import re
+    import uuid as _uuid
+    from alibi.watchlist.watchlist_store import WatchlistStore, WatchlistEntry
+    from alibi.watchlist.face_sighting_store import get_face_sighting_store
+
+    sighting_id = str(payload.get("sighting_id") or "").strip()
+    label = str(payload.get("label") or "").strip()
+    if not sighting_id or not label:
+        raise HTTPException(status_code=400, detail="sighting_id and label are required")
+
+    sighting = next((s for s in get_face_sighting_store().load_all()
+                     if s.sighting_id == sighting_id), None)
+    if sighting is None:
+        raise HTTPException(status_code=404, detail="Sighting not found")
+    if not sighting.embedding:
+        raise HTTPException(status_code=400, detail="Sighting has no face embedding")
+
+    slug = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-") or "person"
+    person_id = f"{slug}-{_uuid.uuid4().hex[:6]}"
+
+    store = WatchlistStore()
+    store.add_entry(WatchlistEntry(
+        person_id=person_id,
+        label=label,
+        embedding=list(sighting.embedding),
+        added_ts=datetime.utcnow().isoformat(),
+        source_ref=f"sighting:{sighting_id}",
+        metadata={
+            "enrolled_by": current_user.username,
+            "enrolled_from": "camera_sighting",
+            "camera_id": sighting.camera_id,
+            "sighting_ts": sighting.ts,
+            "face_bbox": {"x": int(sighting.bbox[0]), "y": int(sighting.bbox[1]),
+                          "w": int(sighting.bbox[2]), "h": int(sighting.bbox[3])},
+            "frame_url": sighting.image_path,
+        },
+    ))
+
+    get_store().append_audit("watchlist_enrolled", {
+        "user": current_user.username,
+        "person_id": person_id,
+        "label": label,
+        "source": f"sighting:{sighting_id}",
+    })
+    return {"status": "enrolled", "person_id": person_id, "label": label}
 
 
 @app.post("/watchlist/enroll")
@@ -2741,7 +2934,18 @@ async def bridge_ingest_frame(camera_id: str, request: Request,
         # shadows trip the motion trigger constantly and are worth $0 to narrate.
         # If the structured layer is unavailable we fall back to always calling,
         # so a CV failure degrades to the old behaviour rather than going blind.
-        analysis_ = fa.analyze_frame(frame) or {} if _worth_narrating(intel_) else {}
+        wants_attrs = bool(intel_ and int(intel_.get("vehicle_count") or 0) > 0)
+        analysis_ = (fa.analyze_frame(frame, want_vehicle_attrs=wants_attrs) or {}
+                     if _worth_narrating(intel_) else {})
+        # Persist a vehicle sighting per detected vehicle (evidence frame + bbox
+        # + VLM attributes when unambiguous) — feeds the Overview vehicles strip
+        # and vehicle search.
+        if wants_attrs:
+            try:
+                fa.record_vehicle_sightings(intel_, analysis_.get("vehicles"),
+                                            camera_id, now, frame_id)
+            except Exception as e:
+                print(f"[frame-ai] vehicle sighting persist failed: {e}")
         return intel_, analysis_
 
     intel, analysis = await run_in_threadpool(_analyze)

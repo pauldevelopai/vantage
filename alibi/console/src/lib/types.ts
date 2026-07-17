@@ -219,6 +219,62 @@ export interface DashboardCamera {
   latest?: DashboardRow | null;
 }
 
+/** One tile on the Overview people strip. Enrolled → matched_label is the real
+ *  name; a stranger has matched_label null and continuity fields instead — the
+ *  UI must never present a guessed identity. */
+export interface DashboardPerson {
+  sighting_id: string;
+  frame_url: string;
+  bbox: number[];                    // [x, y, w, h] in the stored frame's pixels
+  camera_id: string;
+  camera_name: string;
+  ts: string;
+  matched_label: string | null;
+  times_seen: number;
+  first_seen: string;
+}
+
+/** One tile on the Overview vehicles strip. Attributes are the VLM's opinion of
+ *  the image (or absent) — make/model must only be shown at high confidence;
+ *  a wrong badge in front of a client is worse than no badge. */
+export interface DashboardVehicle {
+  event_id: string;
+  frame_url: string;
+  bbox: number[];                    // [x, y, w, h] in the stored frame's pixels
+  colour: string | null;
+  make: string | null;
+  model: string | null;
+  body: string | null;
+  attr_confidence: 'high' | 'medium' | 'low' | null;
+  plate: string | null;
+  camera_id: string;
+  camera_name: string;
+  ts: string;
+}
+
+/** One posture trigger on the watching-for panel. evaluated=false means armed
+ *  but not yet checked — the UI must say so, never "not seen". */
+export interface WatchingForTrigger {
+  trigger: string;
+  kind: string | null;
+  evaluated: boolean;
+  fired: boolean;
+  ts?: string;
+  camera_id?: string;
+  camera_name?: string;
+  event_id?: string;
+  sighting_id?: string;
+  note?: string;
+}
+
+export interface WatchingFor {
+  site_id: string;
+  site_name: string;
+  subject_type: string;
+  posture_label: string;
+  triggers: WatchingForTrigger[];
+}
+
 export interface DashboardOverview {
   range: string;
   generated_at: string;
@@ -228,6 +284,9 @@ export interface DashboardOverview {
   recent: DashboardRow[];
   cameras: DashboardCamera[];
   alerts: DashboardRow[];
+  recent_people: DashboardPerson[];
+  recent_vehicles: DashboardVehicle[];
+  watching_for: WatchingFor | null;
 }
 
 // --- People (own-camera sightings + history) -------------------------------- //

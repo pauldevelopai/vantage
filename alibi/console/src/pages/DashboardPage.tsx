@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
+import { hasRole } from '../lib/auth';
 import { AuthImg } from '../components/AuthImg';
-import type { DashboardOverview, DashboardRow } from '../lib/types';
+import { CropImg } from '../components/CropImg';
+import type { DashboardOverview, DashboardPerson, DashboardRow, DashboardVehicle, WatchingFor } from '../lib/types';
 
 /**
  * The Overview dashboard — the tab shown to clients.
@@ -243,6 +245,36 @@ export function DashboardPage() {
                   </Panel>
                 </div>
 
+                {data.recent_people?.length > 0 && (
+                  <Panel className="mb-4" delay={300}>
+                    <PanelHead title="People seen"
+                               right={`${data.recent_people.length} shown · enrolled people are named, strangers never are`} />
+                    <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-3">
+                      {data.recent_people.map((p, i) => (
+                        <PersonCard key={p.sighting_id} p={p} i={i} onEnrolled={() => load(range)} />
+                      ))}
+                    </div>
+                  </Panel>
+                )}
+
+                {data.recent_vehicles?.length > 0 && (
+                  <Panel className="mb-4" delay={310}>
+                    <PanelHead title="Vehicles seen"
+                               right={`${data.recent_vehicles.length} shown · details only when read from the image`} />
+                    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
+                      {data.recent_vehicles.map((v, i) => <VehicleCard key={`${v.event_id}-${i}`} v={v} i={i} />)}
+                    </div>
+                  </Panel>
+                )}
+
+                {data.watching_for && data.watching_for.triggers.length > 0 && (
+                  <Panel className="mb-4" delay={315}>
+                    <PanelHead title="Watching for"
+                               right={`${data.watching_for.posture_label.toLowerCase()} · ${data.watching_for.site_name}`} />
+                    <WatchingForPanel wf={data.watching_for} />
+                  </Panel>
+                )}
+
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
                   <Panel className="lg:col-span-2" delay={320}>
                     <PanelHead title="Events over time" />
@@ -316,6 +348,165 @@ function Kpi({ label, value, tint, delay, alert }:
       </div>
       <div className="absolute bottom-0 left-0 h-[2px] w-full opacity-70"
            style={{ background: `linear-gradient(90deg, ${tint}, transparent)` }} />
+    </div>
+  );
+}
+
+/** "since Tue" for a recent first sighting, "since 9 Jul" for an older one. */
+function sinceLabel(iso: string): string {
+  const d = new Date(iso.endsWith('Z') ? iso : iso + 'Z');
+  const days = (Date.now() - d.getTime()) / 86400000;
+  if (days < 1) return 'today';
+  if (days < 7) return `since ${d.toLocaleDateString(undefined, { weekday: 'short' })}`;
+  return `since ${d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`;
+}
+
+/**
+ * One person on the strip. The boundary this card must hold: an enrolled person
+ * shows their real name; a stranger shows CONTINUITY ("seen 4× since Tue") and
+ * is labelled "Unknown person" — we never guess who a stranger is. The only way
+ * a stranger becomes named is the owner enrolling them ("Add to Faces").
+ */
+function PersonCard({ p, i, onEnrolled }: { p: DashboardPerson; i: number; onEnrolled: () => void }) {
+  const enrolled = !!p.matched_label;
+  const canEnroll = hasRole('supervisor') || hasRole('admin');
+  const [naming, setNaming] = useState(false);
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function enrol() {
+    if (!name.trim()) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.enrollFaceFromSighting(p.sighting_id, name.trim());
+      setNaming(false);
+      onEnrolled();
+    } catch (e: any) {
+      setErr(e?.message || 'Enrolment failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="vg-rise group rounded-lg overflow-hidden bg-black border border-slate-800 hover:border-indigo-500/70 transition-all duration-300"
+         style={{ animationDelay: `${340 + i * 40}ms` }}>
+      <div className="relative aspect-square bg-slate-900">
+        <CropImg src={p.frame_url} alt={enrolled ? p.matched_label! : 'Unknown person'}
+                 bbox={p.bbox as [number, number, number, number]} pad={0.45}
+                 className="w-full h-full" />
+        <span className="absolute bottom-1 right-1.5 text-[8px] px-1 py-0.5 rounded bg-black/80 text-slate-400 font-mono">
+          {timeAgo(p.ts)}
+        </span>
+      </div>
+      <div className="px-2 py-1.5 border-t border-slate-800/70">
+        <div className={`text-[11px] font-medium truncate ${enrolled ? 'text-emerald-300' : 'text-slate-200'}`}>
+          {enrolled ? p.matched_label : 'Unknown person'}
+        </div>
+        <div className="text-[9px] text-slate-500 truncate">
+          {p.times_seen > 1 ? `seen ${p.times_seen}× ${sinceLabel(p.first_seen)}` : 'first sighting'}
+        </div>
+        <div className="text-[9px] text-slate-600 truncate">{p.camera_name}</div>
+        {!enrolled && canEnroll && !naming && (
+          <button onClick={() => setNaming(true)}
+                  className="mt-1 w-full text-[9px] font-medium text-indigo-400 hover:text-indigo-300 border border-indigo-500/30 hover:border-indigo-400/60 rounded px-1 py-0.5 transition-colors">
+            Add to Faces
+          </button>
+        )}
+        {naming && (
+          <div className="mt-1 space-y-1">
+            <input autoFocus value={name}
+                   onChange={e => setName(e.target.value)}
+                   onKeyDown={e => { if (e.key === 'Enter') enrol(); if (e.key === 'Escape') setNaming(false); }}
+                   placeholder="Their name"
+                   className="w-full bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-[10px] text-slate-200 placeholder:text-slate-600 focus:border-indigo-500 outline-none" />
+            <div className="flex gap-1">
+              <button onClick={enrol} disabled={busy || !name.trim()}
+                      className="flex-1 text-[9px] font-medium bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded px-1 py-0.5">
+                {busy ? '…' : 'Enrol'}
+              </button>
+              <button onClick={() => { setNaming(false); setErr(null); }}
+                      className="text-[9px] text-slate-500 hover:text-slate-300 px-1">
+                Cancel
+              </button>
+            </div>
+            {err && <div className="text-[8px] text-red-400 truncate" title={err}>{err}</div>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The armed panel. Three honest states per trigger:
+ *   fired            → when + where, linked to the incidents view
+ *   evaluated, quiet → "not seen"
+ *   not evaluated    → "armed · not yet evaluated" — we never imply we checked
+ *                      and found nothing when we didn't check.
+ * Language stays situational (the trigger texts come from the posture).
+ */
+function WatchingForPanel({ wf }: { wf: WatchingFor }) {
+  return (
+    <ul className="space-y-2">
+      {wf.triggers.map((t, i) => (
+        <li key={t.trigger} className="vg-rise flex items-center gap-2.5"
+            style={{ animationDelay: `${340 + i * 50}ms` }}>
+          <span className={`w-1.5 h-1.5 rounded-full flex-none ${
+            t.fired ? 'vg-live bg-amber-400 shadow-[0_0_6px_1px_rgba(251,191,36,.8)]'
+              : t.evaluated ? 'bg-emerald-500/80'
+              : 'bg-slate-600'
+          }`} />
+          <span className="text-xs text-slate-300 flex-1 min-w-0 truncate first-letter:uppercase">{t.trigger}</span>
+          {t.fired ? (
+            <Link to="/incidents" className="text-[11px] font-mono text-amber-300 hover:text-amber-200 flex-none no-underline">
+              ✓ {t.ts ? timeAgo(t.ts) : ''}{t.camera_name ? ` · ${t.camera_name}` : ''} →
+            </Link>
+          ) : t.evaluated ? (
+            <span className="text-[11px] text-slate-600 flex-none">not seen</span>
+          ) : (
+            <span className="text-[11px] text-slate-600 flex-none italic"
+                  title={t.note || 'not yet evaluated'}>
+              armed · {t.note || 'not yet evaluated'}
+            </span>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Honest vehicle description: the badge (make/model) is shown ONLY at high VLM
+ *  confidence — otherwise colour + body ("White SUV"). Never a guessed model. */
+function vehicleTitle(v: DashboardVehicle): string {
+  const colour = v.colour ? v.colour[0].toUpperCase() + v.colour.slice(1) : '';
+  const badge = v.attr_confidence === 'high' && v.make
+    ? [v.make, v.model].filter(Boolean).join(' ')
+    : '';
+  const body = badge || v.body || '';
+  const title = [colour, body].filter(Boolean).join(' ').trim();
+  return title || 'Vehicle';
+}
+
+function VehicleCard({ v, i }: { v: DashboardVehicle; i: number }) {
+  return (
+    <div className="vg-rise rounded-lg overflow-hidden bg-black border border-slate-800 hover:border-cyan-500/60 transition-all duration-300"
+         style={{ animationDelay: `${340 + i * 40}ms` }}>
+      <div className="relative aspect-video bg-slate-900">
+        <CropImg src={v.frame_url} alt={vehicleTitle(v)}
+                 bbox={v.bbox as [number, number, number, number]} pad={0.25}
+                 className="w-full h-full" />
+        <span className="absolute bottom-1 right-1.5 text-[8px] px-1 py-0.5 rounded bg-black/80 text-slate-400 font-mono">
+          {timeAgo(v.ts)}
+        </span>
+      </div>
+      <div className="px-2 py-1.5 border-t border-slate-800/70">
+        <div className="text-[11px] font-medium text-slate-200 truncate">{vehicleTitle(v)}</div>
+        {v.plate && <div className="text-[10px] font-mono text-cyan-400 truncate">{v.plate}</div>}
+        <div className="text-[9px] text-slate-600 truncate">{v.camera_name}</div>
+      </div>
     </div>
   );
 }

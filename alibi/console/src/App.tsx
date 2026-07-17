@@ -14,7 +14,7 @@ import { PeoplePage } from './pages/PeoplePage';
 import { HotlistPage } from './pages/HotlistPage';
 import { AdvisorPage } from './pages/AdvisorPage';
 import { SitesPage } from './pages/SitesPage';
-import { WatchlistPage } from './pages/WatchlistPage';
+import { FacesPage } from './pages/FacesPage';
 import { SearchPage } from './pages/SearchPage';
 import PatternsPage from './pages/PatternsPage';
 import { IntelPage } from './pages/IntelPage';
@@ -100,7 +100,7 @@ function Layout({ children }: { children: React.ReactNode }) {
               {navLink('/metrics', 'Metrics')}
               {navLink('/vehicle-search', 'Vehicles')}
               {(hasRole('supervisor') || hasRole('admin')) && navLink('/hotlist', 'Hotlist')}
-              {(hasRole('supervisor') || hasRole('admin')) && navLink('/watchlist', 'Watchlist')}
+              {(hasRole('supervisor') || hasRole('admin')) && navLink('/faces', 'Faces')}
               <div className="w-px h-5 bg-white/10 mx-1.5 flex-shrink-0" />
               {/* Data & configuration */}
               {navLink('/intel', 'Intel')}
@@ -170,7 +170,9 @@ function App() {
                   <Route path="/sites" element={<SitesPage />} />
                   <Route path="/intel" element={<IntelPage />} />
                   <Route path="/costs" element={<CostsPage />} />
-                  <Route path="/watchlist" element={<WatchlistPage />} />
+                  <Route path="/faces" element={<FacesPage />} />
+                  {/* old bookmarks keep working */}
+                  <Route path="/watchlist" element={<Navigate to="/faces" replace />} />
                   <Route path="/settings" element={<SettingsPage />} />
                 </Routes>
               </Layout>

@@ -1,13 +1,28 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../lib/api';
 import { hasRole } from '../lib/auth';
+import { CropImg } from '../components/CropImg';
 
-interface WatchlistEntry {
+/**
+ * Faces — the people who belong here (renamed from "Watchlist": that read as
+ * law-enforcement; this is the owner's own enrolled people).
+ *
+ * Every face shot is a crop of a REAL evidence frame from the owner's cameras;
+ * last-seen / times-seen come from the camera sighting archive. The page gets
+ * strong by USE: each enrolment (here by upload, or one click on an unknown
+ * face on the Overview) makes the next sighting say a name instead of
+ * "Unknown person".
+ */
+
+interface FaceEntry {
   person_id: string;
   label: string;
   added_ts: string;
   source_ref: string;
   metadata?: Record<string, any>;
+  times_seen?: number;
+  last_seen?: string | null;
+  face?: { frame_url: string; bbox: number[] } | null;
 }
 
 interface SearchCandidate {
@@ -16,11 +31,19 @@ interface SearchCandidate {
   score: number;
 }
 
-export function WatchlistPage() {
-  const [entries, setEntries] = useState<WatchlistEntry[]>([]);
+function timeAgo(iso: string): string {
+  const s = Math.max(0, (Date.now() - new Date(iso.endsWith('Z') ? iso : iso + 'Z').getTime()) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+export function FacesPage() {
+  const [entries, setEntries] = useState<FaceEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Enroll form
+  // Enroll form (by upload — for people not yet caught on camera)
   const [personId, setPersonId] = useState('');
   const [label, setLabel] = useState('');
   const [sourceRef, setSourceRef] = useState('');
@@ -41,15 +64,15 @@ export function WatchlistPage() {
   const isSupervisor = hasRole('supervisor') || isAdmin;
 
   useEffect(() => {
-    loadWatchlist();
+    loadFaces();
   }, []);
 
-  async function loadWatchlist() {
+  async function loadFaces() {
     try {
       const data = await api.getWatchlist();
       setEntries(data.entries || []);
     } catch (error) {
-      console.error('Failed to load watchlist:', error);
+      console.error('Failed to load faces:', error);
     } finally {
       setLoading(false);
     }
@@ -57,7 +80,7 @@ export function WatchlistPage() {
 
   async function handleEnroll() {
     if (!enrollFile || !personId || !label) {
-      setEnrollMessage('Person ID, label, and image are required.');
+      setEnrollMessage('Person ID, name, and photo are required.');
       return;
     }
     setEnrolling(true);
@@ -76,7 +99,7 @@ export function WatchlistPage() {
       setSourceRef('');
       setEnrollFile(null);
       if (enrollFileRef.current) enrollFileRef.current.value = '';
-      loadWatchlist();
+      loadFaces();
     } catch (error: any) {
       setEnrollMessage(`Enrollment failed: ${error.message}`);
     } finally {
@@ -85,10 +108,10 @@ export function WatchlistPage() {
   }
 
   async function handleRemove(pid: string) {
-    if (!confirm(`Remove ${pid} from watchlist?`)) return;
+    if (!confirm(`Remove ${pid} from Faces?`)) return;
     try {
       await api.removeWatchlistEntry(pid);
-      loadWatchlist();
+      loadFaces();
     } catch (error: any) {
       alert(`Remove failed: ${error.message}`);
     }
@@ -117,18 +140,80 @@ export function WatchlistPage() {
     <div className="px-4 sm:px-6 lg:px-8">
       <div className="sm:flex sm:items-center">
         <div className="sm:flex-auto">
-          <h1 className="text-2xl font-semibold text-gray-900">Watchlist</h1>
+          <h1 className="text-2xl font-semibold text-gray-900">Faces</h1>
           <p className="mt-2 text-sm text-gray-700">
-            Manage the face recognition watchlist. Enroll persons of interest, search by photo, and view enrolled entries.
+            The people who belong here. Enrolled people are named when your cameras see them;
+            everyone else stays "Unknown person". Enrol from a photo below, or with one click
+            on an unknown face on the Overview.
           </p>
         </div>
       </div>
 
+      {/* Enrolled people — face cards from real camera sightings */}
+      <div className="mt-8">
+        <h2 className="text-lg font-medium text-gray-900 mb-4">
+          Enrolled People ({entries.length})
+        </h2>
+
+        {loading ? (
+          <div className="text-center py-12 bg-white shadow sm:rounded-lg">
+            <p className="text-gray-500">Loading faces…</p>
+          </div>
+        ) : entries.length === 0 ? (
+          <div className="text-center py-12 bg-white shadow sm:rounded-lg">
+            <p className="text-gray-500">No one is enrolled yet.</p>
+            <p className="text-sm text-gray-400 mt-1">
+              Enrol someone below, or click "Add to Faces" on an unknown face on the Overview.
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+            {entries.map((entry) => (
+              <div key={entry.person_id} className="bg-white shadow sm:rounded-lg overflow-hidden">
+                <div className="aspect-square bg-gray-100">
+                  {entry.face?.frame_url ? (
+                    <CropImg src={entry.face.frame_url}
+                             alt={entry.label}
+                             bbox={entry.face.bbox as [number, number, number, number]}
+                             pad={0.45}
+                             className="w-full h-full" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-xs text-gray-400 px-3 text-center">
+                      not seen on camera yet
+                    </div>
+                  )}
+                </div>
+                <div className="p-3">
+                  <div className="text-sm font-medium text-gray-900 truncate">{entry.label}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">
+                    {entry.times_seen
+                      ? <>seen {entry.times_seen}× · last {entry.last_seen ? timeAgo(entry.last_seen) : '—'}</>
+                      : 'not seen on camera yet'}
+                  </div>
+                  <div className="text-[10px] text-gray-400 font-mono mt-1 truncate">{entry.person_id}</div>
+                  {isAdmin && (
+                    <button
+                      onClick={() => handleRemove(entry.person_id)}
+                      className="mt-2 text-xs text-red-600 hover:text-red-900 font-medium"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Enroll Form */}
+        {/* Enroll by upload — for people not yet caught on camera */}
         {isSupervisor && (
           <div className="bg-white shadow sm:rounded-lg p-6">
-            <h2 className="text-lg font-medium text-gray-900 mb-4">Enroll Face</h2>
+            <h2 className="text-lg font-medium text-gray-900 mb-1">Enrol from a photo</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              For someone your cameras haven't seen yet. Once enrolled, sightings of them are named.
+            </p>
 
             <div className="space-y-4">
               <div>
@@ -138,27 +223,27 @@ export function WatchlistPage() {
                   value={personId}
                   onChange={(e) => setPersonId(e.target.value)}
                   className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm font-mono"
-                  placeholder="e.g., SUSPECT_001"
+                  placeholder="e.g., paul-home"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700">Name / Label</label>
+                <label className="block text-sm font-medium text-gray-700">Name</label>
                 <input
                   type="text"
                   value={label}
                   onChange={(e) => setLabel(e.target.value)}
                   className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
-                  placeholder="e.g., John Doe"
+                  placeholder="e.g., Paul McNally"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700">Source Reference</label>
+                <label className="block text-sm font-medium text-gray-700">Source Reference (optional)</label>
                 <input
                   type="text"
                   value={sourceRef}
                   onChange={(e) => setSourceRef(e.target.value)}
                   className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
-                  placeholder="e.g., Case #2024-1234"
+                  placeholder="e.g., household member"
                 />
               </div>
               <div>
@@ -176,7 +261,7 @@ export function WatchlistPage() {
                 disabled={enrolling || !enrollFile || !personId || !label}
                 className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
               >
-                {enrolling ? 'Enrolling...' : 'Enroll'}
+                {enrolling ? 'Enrolling…' : 'Enrol'}
               </button>
               {enrollMessage && (
                 <p className={`text-sm ${enrollMessage.includes('failed') ? 'text-red-600' : 'text-green-600'}`}>
@@ -192,7 +277,7 @@ export function WatchlistPage() {
           <div className="bg-white shadow sm:rounded-lg p-6">
             <h2 className="text-lg font-medium text-gray-900 mb-4">Search by Photo</h2>
             <p className="text-sm text-gray-500 mb-4">
-              Upload a photo to check if the face appears to match anyone on the watchlist.
+              Upload a photo to check if the face appears to match anyone enrolled.
             </p>
 
             <div className="space-y-4">
@@ -214,7 +299,7 @@ export function WatchlistPage() {
                 disabled={searching || !searchFile}
                 className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
               >
-                {searching ? 'Searching...' : 'Search Watchlist'}
+                {searching ? 'Searching…' : 'Search Faces'}
               </button>
             </div>
 
@@ -231,7 +316,7 @@ export function WatchlistPage() {
                   </div>
                 ) : (
                   <div className="rounded-md bg-green-50 p-4">
-                    <p className="text-sm text-green-700">No watchlist match found.</p>
+                    <p className="text-sm text-green-700">No match found.</p>
                   </div>
                 )}
 
@@ -260,61 +345,6 @@ export function WatchlistPage() {
                 )}
               </div>
             )}
-          </div>
-        )}
-      </div>
-
-      {/* Enrolled Entries Table */}
-      <div className="mt-8">
-        <h2 className="text-lg font-medium text-gray-900 mb-4">
-          Enrolled Entries ({entries.length})
-        </h2>
-
-        {loading ? (
-          <div className="text-center py-12 bg-white shadow sm:rounded-lg">
-            <p className="text-gray-500">Loading watchlist...</p>
-          </div>
-        ) : entries.length === 0 ? (
-          <div className="text-center py-12 bg-white shadow sm:rounded-lg">
-            <p className="text-gray-500">No entries in the watchlist.</p>
-          </div>
-        ) : (
-          <div className="bg-white shadow overflow-hidden sm:rounded-md">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Person ID</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Label</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Source</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Added</th>
-                  {isAdmin && (
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                  )}
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {entries.map((entry) => (
-                  <tr key={entry.person_id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-900">{entry.person_id}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{entry.label}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{entry.source_ref || '-'}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {new Date(entry.added_ts).toLocaleString()}
-                    </td>
-                    {isAdmin && (
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
-                        <button
-                          onClick={() => handleRemove(entry.person_id)}
-                          className="text-red-600 hover:text-red-900 font-medium"
-                        >
-                          Remove
-                        </button>
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
           </div>
         )}
       </div>
