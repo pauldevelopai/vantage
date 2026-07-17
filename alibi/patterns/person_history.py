@@ -114,3 +114,114 @@ class PersonHistory:
         if watchlist_id:
             base += f" A prior sighting matched watchlist person '{watchlist_id}' — operator review required."
         return base
+
+
+def recent_people(
+    cutoff_iso: str,
+    max_rows: int = 12,
+    match_threshold: float = 0.5,
+    store=None,
+    labels: Optional[dict] = None,
+    watchlist_embeddings: Optional[dict] = None,
+    watchlist_threshold: float = 0.6,
+) -> List[dict]:
+    """The Overview's people strip: recent distinct faces, each with its evidence
+    frame + bbox (for a client-side crop), who it is — honestly — and continuity.
+
+    The boundary, enforced here: an ENROLLED person (matched_person_id set by the
+    conservative watchlist match, or a read-time match against the owner's own
+    enrolled embeddings, same conservative threshold) gets their real label. A
+    stranger gets continuity only — times seen / first seen from a cosine search
+    over OUR OWN sighting archive. We never guess who an unknown person is.
+
+    The read-time watchlist match is what makes enrolment compound immediately:
+    enrol a face and the strip's existing tiles of that person say the name on
+    the next load, not just future sightings.
+
+    Cost is bounded: the archive is loaded ONCE and embedded into one matrix; each
+    of the ≤max_rows picked faces is one vector·matrix product (no per-row store
+    reload, no N×N work). Rows without a stored evidence frame are skipped — a
+    tile we can't show a real face shot for is not shown at all.
+    """
+    store = store if store is not None else get_face_sighting_store()
+    labels = labels or {}
+
+    all_sightings = store.load_all()
+    if not all_sightings:
+        return []
+
+    # One pass: normalised embedding matrix over the whole archive.
+    embs, kept = [], []
+    for s in all_sightings:
+        e = np.asarray(s.embedding, dtype=np.float32).ravel()
+        n = float(np.linalg.norm(e))
+        if e.size == 0 or n == 0:
+            continue
+        embs.append(e / n)
+        kept.append(s)
+    if not kept:
+        return []
+    dim = embs[0].shape[0]
+    same_dim = [i for i, e in enumerate(embs) if e.shape[0] == dim]
+    matrix = np.stack([embs[i] for i in same_dim])
+    kept = [kept[i] for i in same_dim]
+    embs = [embs[i] for i in same_dim]
+
+    def _usable(s) -> bool:
+        # A tile needs a real evidence frame and a face big enough to be one —
+        # a sub-16px "face" at 640px width is detector noise, not a person.
+        if not (s.ts >= cutoff_iso and s.image_path and s.bbox):
+            return False
+        try:
+            return int(s.bbox[2]) >= 16 and int(s.bbox[3]) >= 16
+        except (TypeError, ValueError, IndexError):
+            return False
+
+    recent = sorted(
+        (i for i, s in enumerate(kept) if _usable(s)),
+        key=lambda i: kept[i].ts, reverse=True,
+    )
+
+    rows: List[dict] = []
+    chosen: List[np.ndarray] = []
+    for i in recent:
+        if len(rows) >= max_rows:
+            break
+        s, e = kept[i], embs[i]
+        # The same person shouldn't fill the strip — skip faces similar to one
+        # already shown (a burst of frames of one visitor is one tile).
+        if any(float(np.dot(e, c)) >= match_threshold for c in chosen):
+            continue
+        sims = matrix @ e
+        alike = sims >= match_threshold          # includes this sighting itself
+        times_seen = int(np.count_nonzero(alike))
+        first_seen = min(kept[j].ts for j in np.flatnonzero(alike))
+        # Enrolled -> the real label (stamped at detection time, or matched now
+        # against the owner's enrolled embeddings at the same conservative
+        # threshold). Stranger -> null; the row carries continuity instead.
+        # Never an identity guess.
+        matched_label = labels.get(s.matched_person_id) if s.matched_person_id else None
+        if matched_label is None and watchlist_embeddings:
+            best_pid, best = None, watchlist_threshold
+            for pid, wemb in watchlist_embeddings.items():
+                w = np.asarray(wemb, dtype=np.float32).ravel()
+                n = float(np.linalg.norm(w))
+                if n == 0 or w.shape[0] != e.shape[0]:
+                    continue
+                score = float(np.dot(e, w / n))
+                if score >= best:
+                    best_pid, best = pid, score
+            if best_pid is not None:
+                matched_label = labels.get(best_pid)
+        rows.append({
+            "sighting_id": s.sighting_id,
+            "frame_url": s.image_path,
+            "bbox": list(s.bbox),
+            "camera_id": s.camera_id,
+            "ts": s.ts,
+            "matched_label": matched_label,
+            "times_seen": times_seen,
+            "first_seen": first_seen,
+        })
+        chosen.append(e)
+    return rows

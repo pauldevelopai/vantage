@@ -193,6 +193,11 @@ def decide_event(
             "cross_camera_alerts": intel.get("cross_camera_alerts") or [],
             "detections": intel.get("detections") or [],
         }
+        # The VLM's structured vehicle attributes (colour/make/model/body, each
+        # honestly absent when unreadable) — a VLM opinion about an image, kept
+        # as evidence, never a registry fact.
+        if analysis.get("vehicles"):
+            metadata["intel"]["vehicle_attrs"] = analysis["vehicles"]
         # Why this frame was worth raising when the camera's normal scene isn't —
         # the explainer and the brief can quote it verbatim.
         if baseline_reason:
@@ -209,6 +214,63 @@ def decide_event(
         snapshot_url=f"/api/cameras/frames/{frame_id}.jpg",
         metadata=metadata,
     )
+
+
+_VEHICLE_DET_CLASSES = {"car", "truck", "bus", "motorcycle"}
+
+
+def record_vehicle_sightings(intel, vehicles, camera_id: str, now: datetime,
+                             frame_id: str, sightings_store=None) -> int:
+    """Persist a VehicleSighting per DETECTED vehicle in an analysed frame, so
+    the vehicles surface (Overview strip, vehicle search) has real rows with the
+    evidence frame + the vehicle's own bbox.
+
+    Attributes come from the VLM's structured answer and are attached ONLY when
+    the pairing is unambiguous — exactly one vehicle detected and one described.
+    With several vehicles in frame we cannot know which description belongs to
+    which bbox, and guessing would stamp one car's attributes on another — so
+    those rows stay "unknown" (honest) with the raw VLM list kept on the event.
+    Returns how many sightings were written; never raises.
+    """
+    import uuid as _uuid
+    dets = [d for d in ((intel or {}).get("detections") or [])
+            if d.get("class") in _VEHICLE_DET_CLASSES]
+    if not dets:
+        return 0
+    vehicles = vehicles or []
+    attach = vehicles[0] if (len(dets) == 1 and len(vehicles) == 1) else None
+    try:
+        from alibi.vehicles.sightings_store import VehicleSighting, VehicleSightingsStore
+        if sightings_store is None:
+            sightings_store = VehicleSightingsStore()
+    except Exception as e:  # pragma: no cover
+        print(f"[frame-ai] vehicle sightings store unavailable: {e}")
+        return 0
+
+    written = 0
+    for d in dets:
+        try:
+            md = {"frame_id": frame_id, "source": "frame_ai", "class": d.get("class")}
+            if attach:
+                md["body"] = attach.get("body")
+                md["attr_confidence"] = attach.get("confidence")
+                md["attr_source"] = "vlm"
+            sightings_store.add_sighting(VehicleSighting(
+                sighting_id=str(_uuid.uuid4()),
+                camera_id=camera_id,
+                ts=now.isoformat(),
+                bbox=tuple(int(v) for v in d.get("bbox") or (0, 0, 0, 0)),
+                color=(attach.get("colour") if attach else None) or "unknown",
+                make=(attach.get("make") if attach else None) or "unknown",
+                model=(attach.get("model") if attach else None) or "unknown",
+                confidence=float(d.get("confidence") or 0.0),
+                snapshot_url=f"/api/cameras/frames/{frame_id}.jpg",
+                metadata=md,
+            ))
+            written += 1
+        except Exception as e:  # pragma: no cover
+            print(f"[frame-ai] vehicle-sighting write failed: {e}")
+    return written
 
 
 # --- frame storage (evidence) --------------------------------------------- #
@@ -246,16 +308,21 @@ def decode(data: bytes):
     return _decode(data)
 
 
-def analyze_frame(frame, analyzer=None) -> Optional[Dict[str, Any]]:
+def analyze_frame(frame, analyzer=None, want_vehicle_attrs: bool = False) -> Optional[Dict[str, Any]]:
     """Run the VLM on an already-decoded BGR frame -> SceneAnalyzer result dict
-    (or None on failure). `analyzer` is injectable for tests."""
+    (or None on failure). `analyzer` is injectable for tests.
+
+    `want_vehicle_attrs` (set when the detector already found a vehicle) asks the
+    SAME call for structured vehicle attributes — colour/make/model/body, each
+    honestly absent when the model can't read it from the image."""
     if frame is None:
         return None
     if analyzer is None:
         from alibi.vision.scene_analyzer import SceneAnalyzer
         analyzer = SceneAnalyzer(mode="auto")
     try:
-        return analyzer.analyze_frame(frame, "describe_scene")
+        prompt = "describe_scene_vehicles" if want_vehicle_attrs else "describe_scene"
+        return analyzer.analyze_frame(frame, prompt)
     except Exception as e:
         print(f"[frame-ai] analysis failed: {e}")
         return None

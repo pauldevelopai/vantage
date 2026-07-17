@@ -9,10 +9,65 @@ import cv2
 import numpy as np
 import base64
 import json
+import re
 import requests
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 import os
+
+
+_VEHICLE_ATTR_INSTRUCTION = """
+
+If one or more vehicles are visible, ALSO output — as the very last line, after
+the description — exactly one JSON object of what you can actually see:
+{"vehicles": [{"colour": "white", "make": "Toyota", "model": "Fortuner", "body": "SUV", "confidence": "high"}]}
+Rules: "confidence" is high/medium/low for the make/model specifically. Use null
+for any field you cannot honestly read from the image — never guess a make or
+model from context; a wrong badge is worse than none. "body" is one of
+sedan/hatchback/SUV/bakkie/van/minibus/truck/bus/motorcycle or null.
+If no vehicle is visible, output no JSON at all."""
+
+
+def parse_vehicle_attrs(text: str):
+    """Split a VLM reply into (description, vehicles). Pure, so the honesty
+    rules are testable: a field the model nulled — or filled with a placeholder
+    like "unknown" — comes out as None (absent), never a default. Anything
+    unparseable is simply no vehicles; the description always survives."""
+    if not text:
+        return "", []
+    # Find the {"vehicles": ...} object wherever the model put it (it may be
+    # followed by whitespace or wrapped in a code fence).
+    decoder = json.JSONDecoder()
+    raw, head = None, text
+    for m in re.finditer(r"\{", text):
+        try:
+            data, end = decoder.raw_decode(text, m.start())
+        except ValueError:
+            continue
+        if isinstance(data, dict) and isinstance(data.get("vehicles"), list):
+            raw = data["vehicles"]
+            head = (text[:m.start()] + text[end:]).replace("```json", "").replace("```", "")
+            break
+    if raw is None:
+        return text.strip(), []
+
+    def _s(v):
+        v = str(v).strip() if v is not None else ""
+        return v if v and v.lower() not in ("unknown", "n/a", "none", "null") else None
+
+    vehicles = []
+    for item in raw[:8]:
+        if not isinstance(item, dict):
+            continue
+        conf = str(item.get("confidence") or "").lower()
+        vehicles.append({
+            "colour": _s(item.get("colour") or item.get("color")),
+            "make": _s(item.get("make")),
+            "model": _s(item.get("model")),
+            "body": _s(item.get("body")),
+            "confidence": conf if conf in ("high", "medium", "low") else "low",
+        })
+    return head.strip(), vehicles
 
 
 class SceneAnalyzer:
@@ -139,8 +194,9 @@ class SceneAnalyzer:
             _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
             base64_image = base64.b64encode(buffer).decode('utf-8')
 
-            # Build prompt
-            if prompt == "describe_scene":
+            # Build prompt (the vehicles variant gets the same scene prompt here —
+            # structured attrs are only extracted on the Claude path)
+            if prompt in ("describe_scene", "describe_scene_vehicles"):
                 system_prompt = (
                     "You are a security camera analyst. Describe this frame in 2-3 clear sentences. "
                     "For people: count, clothing, activities, position. For objects/scene: notable items, setting, safety concerns."
@@ -217,7 +273,7 @@ class SceneAnalyzer:
             return "Describe any human activity you see. If no humans, say 'No human activity detected'."
         if prompt == "count_people":
             return "Count the number of people visible. Format: 'X people visible' or 'No people visible'."
-        if prompt != "describe_scene":
+        if prompt not in ("describe_scene", "describe_scene_vehicles"):
             return "Describe what you see in this security camera frame."
 
         system_prompt = """You are a security camera analyst operating in South Africa and Namibia.
@@ -276,6 +332,11 @@ Be descriptive, factual, and include visual details about people."""
         except Exception:
             pass  # Fall back to base prompt if selector fails
 
+        # Structured vehicle attributes ride the SAME call (the frame already
+        # earned it) — the parse enforces "from the image or absent".
+        if prompt == "describe_scene_vehicles":
+            system_prompt += _VEHICLE_ATTR_INSTRUCTION
+
         return system_prompt
 
     def _analyze_with_claude(self, frame: np.ndarray, prompt: str) -> Dict[str, Any]:
@@ -294,7 +355,7 @@ Be descriptive, factual, and include visual details about people."""
 
             response = self.anthropic_client.messages.create(
                 model=self.anthropic_vision_model,
-                max_tokens=150,
+                max_tokens=320 if prompt == "describe_scene_vehicles" else 150,
                 system=system_prompt,
                 messages=[
                     {
@@ -329,13 +390,19 @@ Be descriptive, factual, and include visual details about people."""
             if not description:
                 return self._analyze_with_basic_cv(frame, prompt)
 
+            # Structured vehicle attributes (when asked for): split the trailing
+            # JSON off the prose. Fields the model couldn't read are absent.
+            vehicles = []
+            if prompt == "describe_scene_vehicles":
+                description, vehicles = parse_vehicle_attrs(description)
+
             safety_keywords = ["fight", "weapon", "attack", "theft", "break", "suspicious", "danger", "emergency"]
             safety_concern = any(keyword in description.lower() for keyword in safety_keywords)
 
             common_objects = ["person", "car", "cat", "dog", "bike", "motorcycle", "truck", "door", "window"]
             detected_objects = [obj for obj in common_objects if obj in description.lower()]
 
-            return {
+            result = {
                 "description": description,
                 "confidence": 0.85,  # Claude doesn't provide a numeric confidence
                 "detected_objects": detected_objects,
@@ -344,6 +411,9 @@ Be descriptive, factual, and include visual details about people."""
                 "method": "claude_vision",
                 "timestamp": datetime.utcnow().isoformat(),
             }
+            if vehicles:
+                result["vehicles"] = vehicles
+            return result
 
         except Exception as e:
             print(f"[SceneAnalyzer] Claude error: {e}")
@@ -384,16 +454,21 @@ Be descriptive, factual, and include visual details about people."""
             )
 
             description = response.choices[0].message.content.strip()
-            
+
+            # Same structured-vehicles contract as the Claude path.
+            vehicles = []
+            if prompt == "describe_scene_vehicles":
+                description, vehicles = parse_vehicle_attrs(description)
+
             # Extract safety concerns
             safety_keywords = ["fight", "weapon", "attack", "theft", "break", "suspicious", "danger", "emergency"]
             safety_concern = any(keyword in description.lower() for keyword in safety_keywords)
-            
+
             # Extract objects (basic)
             common_objects = ["person", "car", "cat", "dog", "bike", "motorcycle", "truck", "door", "window"]
             detected_objects = [obj for obj in common_objects if obj in description.lower()]
-            
-            return {
+
+            result = {
                 "description": description,
                 "confidence": 0.85,  # OpenAI doesn't provide confidence
                 "detected_objects": detected_objects,
@@ -402,6 +477,9 @@ Be descriptive, factual, and include visual details about people."""
                 "method": "openai_vision",
                 "timestamp": datetime.utcnow().isoformat()
             }
+            if vehicles:
+                result["vehicles"] = vehicles
+            return result
         
         except Exception as e:
             print(f"[SceneAnalyzer] OpenAI error: {e}")

@@ -156,17 +156,44 @@ def _run_plates(mce, frame, camera_id: str, ts: datetime, out: Dict[str, Any]) -
             pass
 
 
+def face_within_person(face_bbox, person_boxes, pad: float = 0.35) -> bool:
+    """A REAL face lies inside (or at the head of) a detected person. The face
+    detector alone fires on texture — verified live: a tree and stone paving
+    were both recorded as faces in frames where the person detector (correctly)
+    found nobody. So a face candidate only counts when its centre falls inside
+    a person bbox (padded, since SCRFD can slightly overshoot a head). Pure,
+    so the gate is testable."""
+    if not person_boxes:
+        return False
+    fx, fy, fw, fh = face_bbox
+    cx, cy = fx + fw / 2.0, fy + fh / 2.0
+    for (px, py, pw, ph) in person_boxes:
+        dx, dy = pw * pad, ph * pad
+        if (px - dx) <= cx <= (px + pw + dx) and (py - dy) <= cy <= (py + ph + dy):
+            return True
+    return False
+
+
 def _run_faces(mce, frame, camera_id: str, ts: datetime, out: Dict[str, Any],
-               frame_id: Optional[str] = None) -> None:
+               frame_id: Optional[str] = None, person_boxes=None) -> None:
     """Detect faces; match against the watchlist; write a FaceSighting and a
     cross-camera appearance link. Degrades to nothing if the face backend is
-    unavailable. Mirrors the phone endpoint."""
+    unavailable. Mirrors the phone endpoint.
+
+    Gated on the person detector: no person in the frame -> no faces recorded,
+    and a face candidate must sit inside a person bbox (see face_within_person).
+    """
     from alibi.watchlist.face_sighting_store import FaceSighting, get_face_sighting_store
+    if not person_boxes:
+        return
     try:
-        faces = mce._face_detector.detect(frame)
+        scored = mce._face_detector.detect_scored(frame)
+    except AttributeError:                      # older detector: no scores
+        scored = [(b, 0.0) for b in mce._face_detector.detect(frame)]
     except Exception as e:  # pragma: no cover
         print(f"[frame-intel] face detect failed: {e}")
         return
+    faces = [(b, s) for b, s in scored if face_within_person(b, person_boxes)]
     if not faces:
         return
     try:
@@ -175,7 +202,7 @@ def _run_faces(mce, frame, camera_id: str, ts: datetime, out: Dict[str, Any],
     except Exception:
         watchlist_embeddings, watchlist_labels = [], {}
 
-    for bbox in faces:
+    for bbox, det_score in faces:
         try:
             face_crop = mce._face_detector.extract_face(frame, bbox)
             embedding = mce._face_embedder.generate_embedding(face_crop)
@@ -214,7 +241,8 @@ def _run_faces(mce, frame, camera_id: str, ts: datetime, out: Dict[str, Any],
                 matched_person_id=top[0].person_id if (is_match and top) else None,
                 match_score=best_score if is_match else None,
                 image_path=(f"/api/cameras/frames/{frame_id}.jpg" if frame_id else None),
-                metadata={"frame_id": frame_id} if frame_id else {},
+                metadata={**({"frame_id": frame_id} if frame_id else {}),
+                          "det_score": round(float(det_score), 3)},
             ))
             if not is_match and embedding is not None:
                 mce._cross_camera_tracker.record_appearance_sighting(
@@ -292,6 +320,7 @@ def analyze_and_record(frame, camera_id: str, ts: datetime,
     out["vehicle_count"] = sum(1 for d in detections if d.class_name in _VEHICLE_CLASSES)
 
     _run_plates(mce, frame, camera_id, ts, out)
-    _run_faces(mce, frame, camera_id, ts, out, frame_id=frame_id)
+    person_boxes = [tuple(d.bbox) for d in detections if d.class_name == "person"]
+    _run_faces(mce, frame, camera_id, ts, out, frame_id=frame_id, person_boxes=person_boxes)
     _run_vehicle_reid(mce, frame, detections, camera_id, ts, out)
     return out

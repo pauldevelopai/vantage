@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react';
 import { getToken } from '../lib/auth';
 
 /**
- * An <img> for an authenticated endpoint. Evidence frames sit behind auth, and a
- * plain <img src> can't send an Authorization header — so fetch the bytes with the
- * token and render them from an object URL (revoked on unmount).
+ * Fetch an authenticated image endpoint into an object URL. Evidence frames sit
+ * behind auth, and a plain <img src> can't send an Authorization header — so
+ * fetch the bytes with the token and render them from an object URL (revoked on
+ * unmount). Shared by AuthImg (whole frame) and CropImg (bbox crop).
  */
-export function AuthImg({ src, alt, className }: { src: string; alt: string; className?: string }) {
+export function useAuthObjectUrl(src: string): { url: string | null; failed: boolean } {
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -14,6 +15,8 @@ export function AuthImg({ src, alt, className }: { src: string; alt: string; cla
     let revoked = false;
     let objectUrl: string | null = null;
     const token = getToken();
+    setUrl(null);
+    setFailed(false);
     fetch(src, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
       .then(r => (r.ok ? r.blob() : Promise.reject(new Error(String(r.status)))))
       .then(b => {
@@ -27,6 +30,13 @@ export function AuthImg({ src, alt, className }: { src: string; alt: string; cla
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [src]);
+
+  return { url, failed };
+}
+
+/** An <img> for an authenticated endpoint. */
+export function AuthImg({ src, alt, className }: { src: string; alt: string; className?: string }) {
+  const { url, failed } = useAuthObjectUrl(src);
 
   if (failed) {
     return (

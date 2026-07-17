@@ -1,6 +1,21 @@
 # Overview at a glance — people, cars, and what we watch for (design)
 
-> Status: **design only, nothing built.** Agreed with Paul 2026-07-17.
+> Status: **built + verified live 2026-07-17** (all five steps, in order).
+> Verified against real frames from both cameras at every stage. Reality
+> check findings while building:
+> * bbox↔frame coordinate space CONFIRMED — bboxes are in the stored frame's
+>   pixel space (640-wide motion stills), proven on real person + vehicle
+>   frames before anything was built on it.
+> * The face detector fires on texture: a tree and stone paving were recorded
+>   as faces in frames where the person detector found nobody, and would have
+>   been client-facing "Unknown person" tiles. Fix: a face only counts inside
+>   a detected person (`face_within_person`), det score now stored.
+> * No real face has been captured yet — people appear at pavement distance in
+>   640px stills; the people strip stays honestly empty until someone
+>   approaches a camera.
+> * The after-hours trigger needs the site's `normal_hours` set (Sites page)
+>   before it arms; dwell + stationary-vehicle need track-level duration the
+>   still pipeline doesn't produce, so they show armed-not-evaluated.
 > The Overview tab is what gets shown to clients, so this is what it must answer
 > in one look: **which cars have been here (shot + make/model + plate + time),
 > which people (shot + who, honestly), and what we're watching for (and whether

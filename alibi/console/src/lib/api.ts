@@ -576,6 +576,20 @@ export const api = {
     return res.json();
   },
 
+  /** One-click enrol from a face the cameras already saw — a name and a button. */
+  async enrollFaceFromSighting(sightingId: string, label: string): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/watchlist/enroll-sighting`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sighting_id: sightingId, label }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Enrolment failed');
+    }
+    return res.json();
+  },
+
   async removeWatchlistEntry(personId: string): Promise<any> {
     const res = await fetchWithAuth(`${API_BASE}/watchlist/${encodeURIComponent(personId)}`, {
       method: 'DELETE',
