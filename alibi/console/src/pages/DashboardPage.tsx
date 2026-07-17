@@ -1,23 +1,27 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { AuthImg } from '../components/AuthImg';
 import type { DashboardOverview, DashboardRow } from '../lib/types';
 
 /**
- * The Overview dashboard. Everything here is REAL: KPI counts, the hourly series,
- * the type split, and every still image come from stored camera events. Nothing is
- * mocked — an idle system honestly shows zeros and says why.
+ * The Overview dashboard — the tab shown to clients.
+ *
+ * Everything here is REAL: KPI counts, the hourly series, the type split, and
+ * every still come from stored camera events. The motion is presentation only —
+ * numbers roll to their true value, charts draw themselves in, live things pulse.
+ * An idle system animates its way to an honest zero. We never invent a figure to
+ * make the page look busier.
  */
 
-const RANGES: Array<{ key: string; label: string }> = [
-  { key: '24h', label: 'Last 24 hours' },
-  { key: '7d', label: 'Last 7 days' },
-  { key: '30d', label: 'Last 30 days' },
+const RANGES = [
+  { key: '24h', label: '24H' },
+  { key: '7d', label: '7D' },
+  { key: '30d', label: '30D' },
 ];
 
 const TYPE_META: Record<string, { label: string; color: string }> = {
-  person_detected: { label: 'Person', color: '#6366f1' },
+  person_detected: { label: 'Person', color: '#818cf8' },
   vehicle_detected: { label: 'Vehicle', color: '#22d3ee' },
   activity_detected: { label: 'Activity', color: '#a78bfa' },
 };
@@ -27,24 +31,76 @@ function typeMeta(t: string) {
 }
 
 function timeAgo(iso: string): string {
-  const s = Math.max(0, (Date.now() - new Date(iso + 'Z').getTime()) / 1000);
+  const s = Math.max(0, (Date.now() - new Date(iso.endsWith('Z') ? iso : iso + 'Z').getTime()) / 1000);
   if (s < 60) return 'just now';
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
   return `${Math.floor(s / 86400)}d ago`;
 }
 
+/** Roll a number to its real value. The destination is always the true figure. */
+function useCountUp(target: number, ms = 900): number {
+  const [n, setN] = useState(target);
+  const from = useRef(target);
+  useEffect(() => {
+    const start = performance.now();
+    const a = from.current;
+    const b = target;
+    if (a === b) return;
+    let raf = 0;
+    const tick = (now: number) => {
+      const p = Math.min(1, (now - start) / ms);
+      const eased = 1 - Math.pow(1 - p, 3);       // easeOutCubic
+      setN(Math.round(a + (b - a) * eased));
+      if (p < 1) raf = requestAnimationFrame(tick);
+      else from.current = b;
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, ms]);
+  return n;
+}
+
+const CSS = `
+@keyframes vg-pulse { 0%,100% { opacity:1; transform:scale(1) } 50% { opacity:.35; transform:scale(.82) } }
+@keyframes vg-sweep { 0% { transform:translateX(-100%) } 100% { transform:translateX(300%) } }
+@keyframes vg-rise  { from { opacity:0; transform:translateY(10px) } to { opacity:1; transform:translateY(0) } }
+@keyframes vg-draw  { from { stroke-dashoffset: 2000 } to { stroke-dashoffset: 0 } }
+@keyframes vg-glow  { 0%,100% { opacity:.35 } 50% { opacity:.75 } }
+.vg-live   { animation: vg-pulse 1.8s ease-in-out infinite }
+.vg-rise   { animation: vg-rise .5s cubic-bezier(.2,.7,.3,1) both }
+.vg-draw   { stroke-dasharray: 2000; animation: vg-draw 1.6s cubic-bezier(.2,.7,.3,1) forwards }
+.vg-glow   { animation: vg-glow 3.2s ease-in-out infinite }
+.vg-scan::after {
+  content:''; position:absolute; inset:0; pointer-events:none;
+  background:linear-gradient(90deg,transparent,rgba(129,140,248,.10),transparent);
+  animation: vg-sweep 3.5s ease-in-out infinite;
+}
+.vg-grid {
+  background-image:
+    linear-gradient(rgba(99,102,241,.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(99,102,241,.055) 1px, transparent 1px);
+  background-size: 46px 46px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .vg-live,.vg-rise,.vg-draw,.vg-glow,.vg-scan::after { animation: none }
+  .vg-draw { stroke-dasharray: none }
+}
+`;
+
 export function DashboardPage() {
   const [range, setRange] = useState('24h');
   const [data, setData] = useState<DashboardOverview | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [beat, setBeat] = useState(0);
 
   async function load(r: string) {
     try {
       const d = await api.getDashboardOverview(r);
       setData(d);
       setErr(null);
+      setBeat(b => b + 1);
     } catch (e: any) {
       setErr(e?.message || 'Failed to load the dashboard');
     } finally {
@@ -55,34 +111,41 @@ export function DashboardPage() {
   useEffect(() => {
     setLoading(true);
     load(range);
-    const t = setInterval(() => load(range), 15000);   // live-ish, cheap
+    const t = setInterval(() => load(range), 15000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [range]);
 
   const k = data?.kpis;
-  const isEmpty = !!data && (data.kpis.events === 0 && data.cameras.length === 0);
+  const isEmpty = !!data && data.kpis.events === 0 && data.cameras.length === 0;
 
   return (
-    <div className="min-h-screen bg-slate-950 -mx-4 -my-6 px-4 py-6 sm:px-6">
+    <div className="min-h-screen bg-[#070912] vg-grid -mx-4 -my-6 px-4 py-6 sm:px-6">
+      <style>{CSS}</style>
       <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-5 vg-rise">
           <div>
-            <h1 className="text-2xl font-semibold text-white tracking-tight">Overview</h1>
-            <p className="text-sm text-slate-400">
-              Live intelligence from your cameras — real detections, real evidence.
+            <div className="flex items-center gap-2.5">
+              <h1 className="text-2xl font-semibold text-white tracking-tight">Overview</h1>
+              <span className="flex items-center gap-1.5 text-[10px] font-medium tracking-widest text-emerald-400 uppercase">
+                <span className="vg-live w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_2px_rgba(52,211,153,.7)]" />
+                Live
+              </span>
+            </div>
+            <p className="text-sm text-slate-500">
+              Real detections from your cameras · updated {data ? timeAgo(data.generated_at) : '…'}
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 p-1 rounded-lg bg-slate-900/70 border border-slate-800">
             {RANGES.map(r => (
               <button
                 key={r.key}
                 onClick={() => setRange(r.key)}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md border transition ${
+                className={`px-3 py-1 text-xs font-semibold tracking-wide rounded-md transition-all duration-200 ${
                   range === r.key
-                    ? 'bg-indigo-600 border-indigo-500 text-white'
-                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                    ? 'bg-indigo-500 text-white shadow-[0_0_16px_-2px_rgba(99,102,241,.8)]'
+                    : 'text-slate-500 hover:text-slate-200'
                 }`}
               >
                 {r.label}
@@ -91,17 +154,17 @@ export function DashboardPage() {
           </div>
         </div>
 
-        {err && <div className="mb-4 rounded-lg bg-red-950 border border-red-900 text-red-300 text-sm p-3">{err}</div>}
-        {loading && !data && <p className="text-slate-500 py-10">Loading…</p>}
+        {err && <div className="mb-4 rounded-lg bg-red-950/60 border border-red-900 text-red-300 text-sm p-3">{err}</div>}
+        {loading && !data && <SkeletonRow />}
 
         {data && (
           <>
             {/* KPIs */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-              <Kpi label="Total Events" value={k!.events} accent="text-white" />
-              <Kpi label="Alerts" value={k!.alerts} accent={k!.alerts > 0 ? 'text-amber-400' : 'text-white'} />
-              <Kpi label="People Detected" value={k!.people} accent="text-indigo-400" />
-              <Kpi label="Vehicles Detected" value={k!.vehicles} accent="text-cyan-400" />
+              <Kpi label="Total Events" value={k!.events} tint="#818cf8" delay={0} />
+              <Kpi label="Alerts" value={k!.alerts} tint={k!.alerts > 0 ? '#fbbf24' : '#64748b'} delay={60} alert={k!.alerts > 0} />
+              <Kpi label="People Detected" value={k!.people} tint="#6366f1" delay={120} />
+              <Kpi label="Vehicles Detected" value={k!.vehicles} tint="#22d3ee" delay={180} />
             </div>
 
             {isEmpty && <EmptyState />}
@@ -109,108 +172,103 @@ export function DashboardPage() {
             {!isEmpty && (
               <>
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
-                  {/* Camera wall — latest REAL evidence still per camera */}
-                  <div className="lg:col-span-2 rounded-xl bg-slate-900 border border-slate-800 p-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <h2 className="text-sm font-medium text-white">Camera wall</h2>
-                      <span className="text-xs text-slate-500">
-                        {data.cameras.length} camera{data.cameras.length === 1 ? '' : 's'} · latest evidence frame
-                      </span>
-                    </div>
+                  <Panel className="lg:col-span-2" delay={220}>
+                    <PanelHead title="Camera wall"
+                               right={`${data.cameras.length} camera${data.cameras.length === 1 ? '' : 's'} · latest evidence`} />
                     {data.cameras.length === 0 ? (
-                      <p className="text-xs text-slate-500 py-6 text-center">No cameras registered yet.</p>
+                      <p className="text-xs text-slate-600 py-8 text-center">No cameras registered yet.</p>
                     ) : (
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                        {data.cameras.map(c => (
-                          <div key={c.camera_id} className="rounded-lg overflow-hidden bg-slate-950 border border-slate-800">
-                            <div className="relative aspect-video bg-slate-900">
+                        {data.cameras.map((c, i) => (
+                          <div key={c.camera_id}
+                               className="vg-rise group relative rounded-lg overflow-hidden bg-black border border-slate-800 hover:border-indigo-500/70 transition-all duration-300"
+                               style={{ animationDelay: `${260 + i * 60}ms` }}>
+                            <div className="relative aspect-video bg-slate-900 vg-scan">
                               {c.latest?.snapshot_url ? (
-                                <AuthImg src={c.latest.snapshot_url} alt={c.name} className="w-full h-full object-cover" />
+                                <AuthImg src={c.latest.snapshot_url} alt={c.name}
+                                         className="w-full h-full object-cover opacity-90 group-hover:opacity-100 group-hover:scale-[1.04] transition-all duration-500" />
                               ) : (
-                                <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-600 text-center px-2">
-                                  No detection yet
+                                <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-700">
+                                  awaiting detection
                                 </div>
                               )}
+                              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-transparent to-transparent" />
                               {c.latest && (
-                                <span className="absolute top-1.5 right-1.5 text-[9px] px-1.5 py-0.5 rounded-full bg-black/70 text-slate-300">
+                                <span className="absolute top-1.5 right-1.5 text-[9px] px-1.5 py-0.5 rounded bg-black/80 text-slate-300 font-mono">
                                   {timeAgo(c.latest.ts)}
                                 </span>
                               )}
-                            </div>
-                            <div className="px-2 py-1.5">
-                              <div className="text-[11px] font-medium text-slate-200 truncate">{c.name}</div>
-                              {c.latest && (
-                                <div className="text-[10px] text-slate-500 truncate">
-                                  {c.latest.people > 0 && `${c.latest.people} person${c.latest.people === 1 ? '' : 's'}`}
-                                  {c.latest.people > 0 && c.latest.vehicles > 0 && ' · '}
-                                  {c.latest.vehicles > 0 && `${c.latest.vehicles} vehicle${c.latest.vehicles === 1 ? '' : 's'}`}
-                                  {!c.latest.people && !c.latest.vehicles && typeMeta(c.latest.event_type).label}
-                                </div>
-                              )}
+                              <div className="absolute bottom-0 left-0 right-0 px-2 py-1.5">
+                                <div className="text-[11px] font-medium text-white truncate">{c.name}</div>
+                                {c.latest && (
+                                  <div className="text-[9px] text-slate-400 truncate">
+                                    {c.latest.people > 0 && `${c.latest.people} person${c.latest.people === 1 ? '' : 's'}`}
+                                    {c.latest.people > 0 && c.latest.vehicles > 0 && ' · '}
+                                    {c.latest.vehicles > 0 && `${c.latest.vehicles} vehicle${c.latest.vehicles === 1 ? '' : 's'}`}
+                                    {!c.latest.people && !c.latest.vehicles && typeMeta(c.latest.event_type).label}
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           </div>
                         ))}
                       </div>
                     )}
-                  </div>
+                  </Panel>
 
-                  {/* Recent alerts */}
-                  <div className="rounded-xl bg-slate-900 border border-slate-800 p-4">
-                    <h2 className="text-sm font-medium text-white mb-3">Recent alerts</h2>
+                  <Panel delay={280}>
+                    <PanelHead title="Recent alerts" />
                     {data.alerts.length === 0 ? (
-                      <p className="text-xs text-slate-500 py-6 text-center">
-                        No alerts in this window. Alerts are watchlist/hotlist hits and high-severity events.
+                      <p className="text-xs text-slate-600 py-8 text-center leading-relaxed">
+                        No alerts in this window.<br />Watchlist and hotlist hits appear here.
                       </p>
                     ) : (
                       <ul className="space-y-2">
-                        {data.alerts.slice(0, 8).map(a => (
-                          <li key={a.event_id} className="flex items-start gap-2">
-                            <span className="mt-1 w-1.5 h-1.5 rounded-full bg-amber-400 flex-none" />
+                        {data.alerts.slice(0, 8).map((a, i) => (
+                          <li key={a.event_id} className="vg-rise flex items-start gap-2"
+                              style={{ animationDelay: `${320 + i * 50}ms` }}>
+                            <span className="vg-live mt-1 w-1.5 h-1.5 rounded-full bg-amber-400 flex-none shadow-[0_0_6px_1px_rgba(251,191,36,.8)]" />
                             <div className="min-w-0 flex-1">
                               <div className="text-xs text-slate-200 truncate">
                                 {a.watchlist_hit ? `Watchlist match${a.watchlist_label ? `: ${a.watchlist_label}` : ''}`
                                   : a.hotlist_hit ? `Hotlist plate${a.plates[0] ? `: ${a.plates[0]}` : ''}`
                                   : typeMeta(a.event_type).label}
                               </div>
-                              <div className="text-[10px] text-slate-500 truncate">
-                                {a.camera_name} · {timeAgo(a.ts)}
-                              </div>
+                              <div className="text-[10px] text-slate-500 truncate">{a.camera_name} · {timeAgo(a.ts)}</div>
                             </div>
                           </li>
                         ))}
                       </ul>
                     )}
-                  </div>
+                  </Panel>
                 </div>
 
-                {/* Charts */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
-                  <div className="lg:col-span-2 rounded-xl bg-slate-900 border border-slate-800 p-4">
-                    <h2 className="text-sm font-medium text-white mb-3">Events over time</h2>
-                    <AreaChart series={data.over_time} />
-                  </div>
-                  <div className="rounded-xl bg-slate-900 border border-slate-800 p-4">
-                    <h2 className="text-sm font-medium text-white mb-3">Events by type</h2>
+                  <Panel className="lg:col-span-2" delay={320}>
+                    <PanelHead title="Events over time" />
+                    <AreaChart key={`${range}-${beat}`} series={data.over_time} />
+                  </Panel>
+                  <Panel delay={360}>
+                    <PanelHead title="Events by type" />
                     <Donut items={data.by_type} total={data.kpis.events} />
-                  </div>
+                  </Panel>
                 </div>
 
-                {/* Recent detections — real stills */}
-                <div className="rounded-xl bg-slate-900 border border-slate-800 p-4">
-                  <h2 className="text-sm font-medium text-white mb-3">Recent detections</h2>
+                <Panel delay={400}>
+                  <PanelHead title="Recent detections" right={`${data.recent.length} shown`} />
                   {data.recent.length === 0 ? (
-                    <p className="text-xs text-slate-500 py-6 text-center">Nothing detected in this window.</p>
+                    <p className="text-xs text-slate-600 py-8 text-center">Nothing detected in this window.</p>
                   ) : (
                     <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
-                      {data.recent.map(r => <DetectionCard key={r.event_id} row={r} />)}
+                      {data.recent.map((r, i) => <DetectionCard key={r.event_id} row={r} i={i} />)}
                     </div>
                   )}
-                </div>
+                </Panel>
               </>
             )}
 
-            <p className="text-[11px] text-slate-600 mt-4">
-              Every figure and image above is real data from your cameras · updated {timeAgo(data.generated_at)}
+            <p className="text-[11px] text-slate-700 mt-4 text-center tracking-wide">
+              Every figure and image above is real data from your cameras
             </p>
           </>
         )}
@@ -219,35 +277,73 @@ export function DashboardPage() {
   );
 }
 
-function Kpi({ label, value, accent }: { label: string; value: number; accent: string }) {
+function Panel({ children, className = '', delay = 0 }:
+               { children: React.ReactNode; className?: string; delay?: number }) {
   return (
-    <div className="rounded-xl bg-slate-900 border border-slate-800 p-4">
-      <div className="text-xs text-slate-400">{label}</div>
-      <div className={`text-3xl font-semibold mt-1 tabular-nums ${accent}`}>{value.toLocaleString()}</div>
+    <div className={`vg-rise relative rounded-xl bg-slate-900/60 border border-slate-800/80 backdrop-blur p-4 ${className}`}
+         style={{ animationDelay: `${delay}ms` }}>
+      {children}
     </div>
   );
 }
 
-function DetectionCard({ row }: { row: DashboardRow }) {
+function PanelHead({ title, right }: { title: string; right?: string }) {
+  return (
+    <div className="flex items-center justify-between mb-3">
+      <h2 className="text-[11px] font-semibold text-slate-300 uppercase tracking-[0.14em]">{title}</h2>
+      {right && <span className="text-[10px] text-slate-600 font-mono">{right}</span>}
+    </div>
+  );
+}
+
+function Kpi({ label, value, tint, delay, alert }:
+             { label: string; value: number; tint: string; delay: number; alert?: boolean }) {
+  const shown = useCountUp(value);
+  return (
+    <div className="vg-rise relative rounded-xl bg-slate-900/60 border border-slate-800/80 backdrop-blur p-4 overflow-hidden"
+         style={{ animationDelay: `${delay}ms` }}>
+      <div className="vg-glow absolute -top-16 -right-10 w-32 h-32 rounded-full blur-3xl"
+           style={{ background: tint, opacity: 0.35 }} />
+      <div className="relative">
+        <div className="text-[10px] text-slate-500 uppercase tracking-[0.14em]">{label}</div>
+        <div className="flex items-baseline gap-2 mt-1">
+          <span className="text-4xl font-semibold tabular-nums tracking-tight"
+                style={{ color: tint, textShadow: `0 0 22px ${tint}55` }}>
+            {shown.toLocaleString()}
+          </span>
+          {alert && <span className="vg-live w-2 h-2 rounded-full bg-amber-400" />}
+        </div>
+      </div>
+      <div className="absolute bottom-0 left-0 h-[2px] w-full opacity-70"
+           style={{ background: `linear-gradient(90deg, ${tint}, transparent)` }} />
+    </div>
+  );
+}
+
+function DetectionCard({ row, i }: { row: DashboardRow; i: number }) {
   const flagged = row.watchlist_hit || row.hotlist_hit;
   return (
-    <Link to="/incidents" className="group rounded-lg overflow-hidden bg-slate-950 border border-slate-800 hover:border-indigo-600 transition no-underline">
+    <Link to="/incidents"
+          className="vg-rise group rounded-lg overflow-hidden bg-black border border-slate-800 hover:border-indigo-500 hover:shadow-[0_0_22px_-4px_rgba(99,102,241,.85)] transition-all duration-300 no-underline"
+          style={{ animationDelay: `${420 + i * 40}ms` }}>
       <div className="relative aspect-video bg-slate-900">
         {row.snapshot_url
-          ? <AuthImg src={row.snapshot_url} alt={row.event_type} className="w-full h-full object-cover" />
-          : <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-600">no frame</div>}
+          ? <AuthImg src={row.snapshot_url} alt={row.event_type}
+                     className="w-full h-full object-cover opacity-90 group-hover:opacity-100 group-hover:scale-[1.05] transition-all duration-500" />
+          : <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-700">no frame</div>}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent" />
         {flagged && (
-          <span className="absolute top-1.5 left-1.5 text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500 text-black font-medium">
+          <span className="absolute top-1.5 left-1.5 text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded bg-amber-400 text-black">
             {row.watchlist_hit ? 'WATCHLIST' : 'HOTLIST'}
           </span>
         )}
-        <span className="absolute bottom-1.5 right-1.5 text-[9px] px-1.5 py-0.5 rounded-full bg-black/70 text-slate-300">
+        <span className="absolute bottom-1 right-1.5 text-[8px] px-1 py-0.5 rounded bg-black/80 text-slate-400 font-mono">
           {timeAgo(row.ts)}
         </span>
       </div>
-      <div className="px-2 py-1.5">
-        <div className="text-[11px] font-medium text-slate-200 truncate">{typeMeta(row.event_type).label}</div>
-        <div className="text-[10px] text-slate-500 truncate">{row.camera_name}</div>
+      <div className="px-2 py-1.5 border-t border-slate-800/70">
+        <div className="text-[10px] font-medium text-slate-200 truncate">{typeMeta(row.event_type).label}</div>
+        <div className="text-[9px] text-slate-500 truncate">{row.camera_name}</div>
         {row.plates.length > 0 && (
           <div className="mt-0.5 text-[9px] font-mono text-cyan-400 truncate">{row.plates.join(', ')}</div>
         )}
@@ -256,34 +352,42 @@ function DetectionCard({ row }: { row: DashboardRow }) {
   );
 }
 
-/** Dependency-free area chart over the real hourly series. */
+/** Dependency-free area chart that draws itself in. Real hourly series. */
 function AreaChart({ series }: { series: Array<{ hour: string; events: number; alerts: number }> }) {
-  if (!series.length) return <p className="text-xs text-slate-500 py-10 text-center">No events in this window.</p>;
-  const W = 720, H = 180, P = 24;
+  if (!series.length) return <p className="text-xs text-slate-600 py-12 text-center">No events in this window.</p>;
+  const W = 720, H = 190, P = 26;
   const max = Math.max(1, ...series.map(s => s.events));
   const x = (i: number) => P + (i * (W - P * 2)) / Math.max(1, series.length - 1);
   const y = (v: number) => H - P - (v / max) * (H - P * 2);
   const line = series.map((s, i) => `${i ? 'L' : 'M'}${x(i)},${y(s.events)}`).join(' ');
   const area = `${line} L${x(series.length - 1)},${H - P} L${x(0)},${H - P} Z`;
   const alertLine = series.map((s, i) => `${i ? 'L' : 'M'}${x(i)},${y(s.alerts)}`).join(' ');
+  const last = series[series.length - 1];
+
   return (
     <div className="overflow-x-auto">
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full min-w-[420px]" role="img" aria-label="Events over time">
         <defs>
-          <linearGradient id="ev" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#6366f1" stopOpacity="0.5" />
-            <stop offset="100%" stopColor="#6366f1" stopOpacity="0" />
+          <linearGradient id="vgEv" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#818cf8" stopOpacity="0.45" />
+            <stop offset="100%" stopColor="#818cf8" stopOpacity="0" />
           </linearGradient>
+          <filter id="vgBlur"><feGaussianBlur stdDeviation="3.5" /></filter>
         </defs>
         {[0, 0.5, 1].map(f => (
           <line key={f} x1={P} x2={W - P} y1={y(max * f)} y2={y(max * f)} stroke="#1e293b" strokeWidth="1" />
         ))}
-        <path d={area} fill="url(#ev)" />
-        <path d={line} fill="none" stroke="#818cf8" strokeWidth="2" />
-        <path d={alertLine} fill="none" stroke="#fbbf24" strokeWidth="1.5" strokeDasharray="3 3" />
-        <text x={P} y={14} fill="#64748b" fontSize="10">peak {max}/h</text>
+        <path d={area} fill="url(#vgEv)" />
+        <path d={line} fill="none" stroke="#818cf8" strokeWidth="4" opacity="0.5" filter="url(#vgBlur)" />
+        <path className="vg-draw" d={line} fill="none" stroke="#a5b4fc" strokeWidth="2" strokeLinecap="round" />
+        <path className="vg-draw" d={alertLine} fill="none" stroke="#fbbf24" strokeWidth="1.5" strokeDasharray="3 3" />
+        <circle cx={x(series.length - 1)} cy={y(last.events)} r="3.5" fill="#a5b4fc">
+          <animate attributeName="r" values="3.5;6;3.5" dur="1.9s" repeatCount="indefinite" />
+          <animate attributeName="opacity" values="1;.4;1" dur="1.9s" repeatCount="indefinite" />
+        </circle>
+        <text x={P} y={16} fill="#475569" fontSize="9" fontFamily="monospace">PEAK {max}/H</text>
       </svg>
-      <div className="flex gap-4 mt-1 text-[10px] text-slate-500">
+      <div className="flex gap-4 mt-1 text-[10px] text-slate-600">
         <span><span className="inline-block w-2 h-2 rounded-full bg-indigo-400 mr-1" />Events</span>
         <span><span className="inline-block w-2 h-2 rounded-full bg-amber-400 mr-1" />Alerts</span>
       </div>
@@ -291,36 +395,40 @@ function AreaChart({ series }: { series: Array<{ hour: string; events: number; a
   );
 }
 
-/** Dependency-free donut over the real type split. */
+/** Dependency-free donut, real type split, arcs sweeping in. */
 function Donut({ items, total }: { items: Array<{ type: string; count: number }>; total: number }) {
-  if (!items.length || total === 0) return <p className="text-xs text-slate-500 py-10 text-center">No events in this window.</p>;
+  if (!items.length || total === 0) return <p className="text-xs text-slate-600 py-12 text-center">No events in this window.</p>;
   const R = 52, C = 2 * Math.PI * R;
+  const shown = useCountUp(total);
   let offset = 0;
   return (
     <div className="flex items-center gap-4">
       <svg viewBox="0 0 140 140" className="w-32 h-32 flex-none" role="img" aria-label="Events by type">
         <g transform="translate(70,70) rotate(-90)">
-          <circle r={R} fill="none" stroke="#1e293b" strokeWidth="16" />
+          <circle r={R} fill="none" stroke="#0f172a" strokeWidth="14" />
           {items.map(it => {
             const frac = it.count / total;
-            const dash = `${frac * C} ${C - frac * C}`;
             const el = (
               <circle key={it.type} r={R} fill="none" stroke={typeMeta(it.type).color}
-                      strokeWidth="16" strokeDasharray={dash} strokeDashoffset={-offset} />
+                      strokeWidth="14" strokeLinecap="round"
+                      strokeDasharray={`${frac * C} ${C - frac * C}`} strokeDashoffset={-offset}
+                      style={{ filter: `drop-shadow(0 0 5px ${typeMeta(it.type).color}90)`,
+                               transition: 'stroke-dasharray .9s cubic-bezier(.2,.7,.3,1)' }} />
             );
             offset += frac * C;
             return el;
           })}
         </g>
-        <text x="70" y="68" textAnchor="middle" fill="#fff" fontSize="20" fontWeight="600">{total}</text>
-        <text x="70" y="83" textAnchor="middle" fill="#64748b" fontSize="9">events</text>
+        <text x="70" y="68" textAnchor="middle" fill="#fff" fontSize="21" fontWeight="600">{shown}</text>
+        <text x="70" y="84" textAnchor="middle" fill="#475569" fontSize="8" letterSpacing="1.5">EVENTS</text>
       </svg>
-      <ul className="space-y-1.5 min-w-0">
+      <ul className="space-y-1.5 min-w-0 flex-1">
         {items.map(it => (
           <li key={it.type} className="flex items-center gap-2 text-xs">
-            <span className="w-2 h-2 rounded-full flex-none" style={{ background: typeMeta(it.type).color }} />
-            <span className="text-slate-300 truncate">{typeMeta(it.type).label}</span>
-            <span className="text-slate-500 tabular-nums ml-auto">{Math.round((it.count / total) * 100)}%</span>
+            <span className="w-2 h-2 rounded-full flex-none"
+                  style={{ background: typeMeta(it.type).color, boxShadow: `0 0 6px ${typeMeta(it.type).color}` }} />
+            <span className="text-slate-400 truncate">{typeMeta(it.type).label}</span>
+            <span className="text-slate-600 tabular-nums ml-auto font-mono">{Math.round((it.count / total) * 100)}%</span>
           </li>
         ))}
       </ul>
@@ -328,18 +436,34 @@ function Donut({ items, total }: { items: Array<{ type: string; count: number }>
   );
 }
 
-/** Honest empty state — says exactly why there's nothing, and what to do. */
+function SkeletonRow() {
+  return (
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      {[0, 1, 2, 3].map(i => (
+        <div key={i} className="h-24 rounded-xl bg-slate-900/60 border border-slate-800/80 relative overflow-hidden vg-scan" />
+      ))}
+    </div>
+  );
+}
+
+/** Honest empty state — animated, but it never pretends there's data. */
 function EmptyState() {
   return (
-    <div className="rounded-xl bg-slate-900 border border-slate-800 p-8 text-center">
-      <p className="text-white font-medium">No camera intelligence yet</p>
-      <p className="text-sm text-slate-400 mt-2 max-w-xl mx-auto">
-        This dashboard only ever shows real detections from your cameras — so it stays empty until
-        the recorder sends its first motion frame. Nothing here is simulated.
-      </p>
-      <div className="mt-4 text-xs text-slate-500">
-        Check that a recorder is online on the <Link to="/recorders" className="text-indigo-400 underline">Recorders</Link> page,
-        and that your cameras are linked to a site on <Link to="/sites" className="text-indigo-400 underline">Sites</Link>.
+    <div className="vg-rise relative rounded-xl bg-slate-900/60 border border-slate-800/80 p-10 text-center overflow-hidden">
+      <div className="vg-glow absolute inset-x-0 -top-24 h-48 bg-indigo-600/20 blur-3xl" />
+      <div className="relative">
+        <div className="inline-flex items-center gap-2 text-[10px] font-medium tracking-widest text-slate-500 uppercase mb-3">
+          <span className="vg-live w-1.5 h-1.5 rounded-full bg-slate-500" /> Standing by
+        </div>
+        <p className="text-white font-medium">No camera intelligence yet</p>
+        <p className="text-sm text-slate-500 mt-2 max-w-xl mx-auto leading-relaxed">
+          This dashboard only ever shows real detections from your cameras, so it stays
+          empty until the recorder sends its first motion frame. Nothing here is simulated.
+        </p>
+        <div className="mt-4 text-xs text-slate-600">
+          Check a recorder is online on <Link to="/recorders" className="text-indigo-400 hover:text-indigo-300">Recorders</Link>,
+          and your cameras are linked on <Link to="/sites" className="text-indigo-400 hover:text-indigo-300">Sites</Link>.
+        </div>
       </div>
     </div>
   );
