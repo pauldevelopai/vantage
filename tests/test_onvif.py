@@ -165,3 +165,21 @@ def test_single_profile_camera_uses_it_for_both():
 def test_profiles_without_a_url_are_not_offered():
     main, sub = pick_streams([StreamProfile(token="a", width=1920, height=1080)])
     assert main is None and sub is None
+
+
+# --- the recorder bundle ---------------------------------------------------- #
+
+def test_onvif_ships_inside_the_recorder_zipapp():
+    """The recorder is a dependency-free zipapp: a module that isn't bundled
+    simply isn't there on the user's machine, and the failure is silent."""
+    import io, zipfile
+    from alibi.alibi_api import _build_recorder_zipapp
+    z = zipfile.ZipFile(io.BytesIO(_build_recorder_zipapp("https://x", "CODE")))
+    assert "onvif.py" in z.namelist()
+    assert "bridge_agent.py" in z.namelist()
+
+
+def test_scan_survives_a_camera_that_cannot_be_reached():
+    # The flat-layout import plus a dead camera must not break the whole scan.
+    from alibi.cameras.bridge_agent import onvif_stream_urls
+    assert onvif_stream_urls("http://192.0.2.1/onvif/device_service", "u", "p") == ("", "", "")
