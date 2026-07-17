@@ -139,3 +139,34 @@ def test_store_and_get_frame(tmp_path, monkeypatch):
     assert get_frame(fid) == b"\xff\xd8\xff\xe0jpegbytes"
     assert get_frame("nope") is None
     assert get_frame("../escape") is None       # sanitized
+
+
+# --- the detector is the answer; prose is not evidence ---------------------- #
+
+def test_a_denial_is_not_a_sighting():
+    """Claude's real words on Paul's empty garden. Substring-matching them read
+    "No people are visible" as a person sighting and stamped person_detected on an
+    empty scene, every frame."""
+    denial = _r(desc="No people are visible in this nighttime frame. The scene shows a "
+                     "residential front garden with potted plants and a palisade fence.")
+    assert decide_event(denial, "cam1", NOW, "fx", intel={"person_count": 0, "vehicle_count": 0}) is None
+
+
+def test_detector_counts_decide_the_event_type_not_the_prose():
+    # Prose mentions people (in a denial) but the detector saw only a vehicle.
+    e = decide_event(_r(desc="No people are visible; a car is parked."), "cam-a", NOW, "f1",
+                     intel={"person_count": 0, "vehicle_count": 1})
+    assert e is not None and e.event_type == "vehicle_detected"
+
+
+def test_detector_beats_prose_that_missed_a_person():
+    # Prose says nothing; the detector is confident. Trust the detector.
+    e = decide_event(_r(desc="A quiet driveway."), "cam-b", NOW, "f2",
+                     intel={"person_count": 2, "vehicle_count": 0})
+    assert e is not None and e.event_type == "person_detected"
+
+
+def test_prose_fallback_still_works_without_a_detector():
+    # No intel at all -> the text match is all we have, so it must still fire.
+    e = decide_event(_r(objects=["person"], desc="a person at the gate"), "cam-c", NOW, "f3")
+    assert e is not None and e.event_type == "person_detected"
