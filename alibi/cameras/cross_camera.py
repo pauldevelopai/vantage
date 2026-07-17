@@ -332,6 +332,42 @@ class CrossCameraTracker:
             )
         return None
 
+    def entity_summary(self, entity_type: str, hours: int = 24) -> List[Dict[str, Any]]:
+        """Per-entity sighting counts within the window — the honest answer to
+        "how many of those detections are the SAME vehicle?". Entities are
+        appearance-ReID clusters from our own cameras (continuity, no identity
+        claim). Sorted most-seen first.
+
+        Returns [{entity_id, count, first_seen, last_seen, cameras, hours: [24]}]
+        (hours = sighting count per local hour-of-day bucket, UTC)."""
+        cutoff = datetime.now() - timedelta(hours=hours)
+        prefix = f"{entity_type}:"
+        out = []
+        for key, entries in self._sightings.items():
+            if not key.startswith(prefix):
+                continue
+            recent = []
+            for e in entries:
+                ts = self._parse_ts(e["timestamp"])
+                if ts is not None and ts >= cutoff:
+                    recent.append((ts, e))
+            if not recent:
+                continue
+            recent.sort(key=lambda r: r[0])
+            hour_buckets = [0] * 24
+            for ts, _e in recent:
+                hour_buckets[ts.hour] += 1
+            out.append({
+                "entity_id": key[len(prefix):],
+                "count": len(recent),
+                "first_seen": recent[0][0].isoformat(),
+                "last_seen": recent[-1][0].isoformat(),
+                "cameras": sorted({e["camera_id"] for _ts, e in recent}),
+                "hours": hour_buckets,
+            })
+        out.sort(key=lambda r: r["count"], reverse=True)
+        return out
+
     def get_entity_trail(self, entity_type: str, entity_id: str, hours: int = 24) -> List[Dict[str, Any]]:
         """
         Get chronological trail of where an entity has been seen.

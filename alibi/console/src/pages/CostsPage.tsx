@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { hasRole } from '../lib/auth';
-import type { CostSummary } from '../lib/types';
+import type { AiConfigResponse, CostSummary } from '../lib/types';
 
 const SERVICE_LABEL: Record<string, string> = {
   vision: 'Scene analysis (vision)',
@@ -130,6 +130,91 @@ function CreditsPanel({ data, onSaved }: { data: CostSummary; onSaved: () => voi
   );
 }
 
+/**
+ * AI spend controls — the three dials that decide what the vision bill is:
+ * which model narrates, how often a camera may spend, and whether plain
+ * vehicle frames earn a paid call at all. Admin-only, audited, applies
+ * without a restart.
+ */
+function AiControlsPanel() {
+  const isAdmin = hasRole('admin');
+  const [data, setData] = useState<AiConfigResponse | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.getAiConfig().then(setData).catch(() => {});
+  }, []);
+
+  async function update(change: Partial<import('../lib/types').AiConfig>) {
+    setBusy(true);
+    setErr(null);
+    try {
+      setData(await api.setAiConfig(change));
+    } catch (e: any) {
+      setErr(e?.message || 'Failed to save');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!data) return null;
+  const c = data.config;
+  const gaps = [8, 30, 60, 120, 300];
+
+  return (
+    <div className="bg-white shadow rounded-lg p-6 mb-6">
+      <h2 className="text-lg font-medium text-gray-900">AI spend controls</h2>
+      <p className="text-sm text-gray-500 mb-4">
+        These dials directly set the vision bill. Changes apply immediately{isAdmin ? '' : ' (admin only)'}.
+      </p>
+
+      <div className="space-y-5">
+        <div>
+          <p className="text-sm font-medium text-gray-700 mb-2">Vision model</p>
+          <div className="space-y-2">
+            {Object.entries(data.vision_models).map(([id, m]) => (
+              <label key={id} className={`flex items-center gap-3 p-2 rounded-md border ${
+                c.vision_model === id ? 'border-blue-500 bg-blue-50' : 'border-gray-200'
+              } ${isAdmin ? 'cursor-pointer' : 'opacity-70'}`}>
+                <input type="radio" name="vision_model" checked={c.vision_model === id}
+                       disabled={!isAdmin || busy}
+                       onChange={() => update({ vision_model: id })} />
+                <span className="text-sm text-gray-900 flex-1">{m.label}</span>
+                <span className="text-xs text-gray-500 font-mono">${m.in_usd}/${m.out_usd} per MTok</span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-6">
+          <label className="text-sm text-gray-700">
+            Paid vision calls per camera at most every{' '}
+            <select value={c.paid_min_gap_seconds} disabled={!isAdmin || busy}
+                    onChange={e => update({ paid_min_gap_seconds: parseInt(e.target.value) })}
+                    className="rounded-md border-gray-300 text-sm">
+              {gaps.map(g => <option key={g} value={g}>{g >= 60 ? `${g / 60} min` : `${g}s`}</option>)}
+            </select>
+          </label>
+
+          <label className={`flex items-center gap-2 text-sm text-gray-700 ${isAdmin ? 'cursor-pointer' : 'opacity-70'}`}>
+            <input type="checkbox" checked={c.narrate_vehicles} disabled={!isAdmin || busy}
+                   onChange={e => update({ narrate_vehicles: e.target.checked })} />
+            Narrate vehicle-only frames
+            <span className="text-xs text-gray-400">(people & hotlist/watchlist always narrated)</span>
+          </label>
+        </div>
+
+        {err && <p className="text-sm text-red-600">{err}</p>}
+        <p className="text-xs text-gray-400">
+          The free local detector still runs on every motion frame regardless — these dials only cap the
+          paid narration on top of it.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export function CostsPage() {
   const [data, setData] = useState<CostSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -156,6 +241,8 @@ export function CostsPage() {
       <p className="text-sm text-gray-500 mb-4">Estimated AI spend over the last {data.window_days} days.</p>
 
       <CreditsPanel data={data} onSaved={load} />
+
+      <AiControlsPanel />
 
       <div className="bg-white shadow rounded-lg p-6 mb-6">
         <p className="text-sm text-gray-500">Estimated total</p>

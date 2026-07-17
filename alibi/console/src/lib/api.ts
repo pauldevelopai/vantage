@@ -637,6 +637,26 @@ export const api = {
     return res.json();
   },
 
+  /** AI spend controls: vision model, paid-call cap, vehicle narration. */
+  async getAiConfig(): Promise<import('./types').AiConfigResponse> {
+    const res = await fetchWithAuth(`${API_BASE}/costs/ai-config`);
+    if (!res.ok) throw new Error('Failed to load AI config');
+    return res.json();
+  },
+
+  async setAiConfig(update: Partial<import('./types').AiConfig>): Promise<import('./types').AiConfigResponse> {
+    const res = await fetchWithAuth(`${API_BASE}/costs/ai-config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(update),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to update AI config');
+    }
+    return res.json();
+  },
+
   /** Record the account's API credit balance (from console.anthropic.com). */
   async setApiCredits(balanceUsd: number): Promise<any> {
     const res = await fetchWithAuth(`${API_BASE}/costs/credits`, {

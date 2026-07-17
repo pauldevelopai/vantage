@@ -53,7 +53,9 @@ export function PeoplePage() {
       <div className="mb-4">
         <h1 className="text-2xl font-semibold text-gray-900">People</h1>
         <p className="text-sm text-gray-500">
-          Faces your cameras have seen in the last 7 days. Click anyone to see where else they've been.
+          People your cameras have seen in the last 7 days. Face sightings are clickable —
+          the history engine links appearances by face, so it activates the first time
+          someone comes close enough for one. Until then you'll see person shots with no history.
         </p>
       </div>
 
@@ -72,30 +74,46 @@ export function PeoplePage() {
 
       {rows.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
-          {rows.map(p => (
-            <button
-              key={p.sighting_id}
-              onClick={() => setSelected(p)}
-              className="text-left rounded-lg overflow-hidden bg-white border border-gray-200 hover:border-indigo-500 hover:shadow transition"
-            >
-              <div className="relative aspect-square bg-gray-100">
-                {p.image_url
-                  ? <AuthImg src={p.image_url} alt="Face sighting" className="w-full h-full object-cover" />
-                  : <div className="w-full h-full flex items-center justify-center text-[10px] text-gray-400">no image</div>}
-                {p.matched_label && (
-                  <span className="absolute top-1 left-1 text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500 text-black font-medium">
-                    {p.matched_label}
-                  </span>
-                )}
-              </div>
-              <div className="px-2 py-1.5">
-                <div className="text-[11px] font-medium text-gray-800 truncate">
-                  {p.matched_label || 'Unknown person'}
+          {rows.map((p, idx) => {
+            const isFace = p.source !== 'detection' && !!p.sighting_id;
+            const inner = (
+              <>
+                <div className="relative aspect-square bg-gray-100">
+                  {p.image_url && p.bbox
+                    ? <CropImg src={p.image_url} alt={isFace ? 'Face sighting' : 'Person'}
+                               bbox={p.bbox as [number, number, number, number]}
+                               pad={isFace ? 0.45 : 0.2} className="w-full h-full" />
+                    : p.image_url
+                      ? <AuthImg src={p.image_url} alt="Sighting" className="w-full h-full object-cover" />
+                      : <div className="w-full h-full flex items-center justify-center text-[10px] text-gray-400">no image</div>}
+                  {p.matched_label && (
+                    <span className="absolute top-1 left-1 text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500 text-black font-medium">
+                      {p.matched_label}
+                    </span>
+                  )}
                 </div>
-                <div className="text-[10px] text-gray-500 truncate">{p.camera_name} · {when(p.ts)}</div>
+                <div className="px-2 py-1.5">
+                  <div className="text-[11px] font-medium text-gray-800 truncate">
+                    {p.matched_label || (isFace ? 'Unknown person' : 'Person')}
+                  </div>
+                  <div className="text-[10px] text-gray-500 truncate">
+                    {isFace ? '' : 'no face captured · '}{p.camera_name} · {when(p.ts)}
+                  </div>
+                </div>
+              </>
+            );
+            return isFace ? (
+              <button key={p.sighting_id || idx} onClick={() => setSelected(p)}
+                      className="text-left rounded-lg overflow-hidden bg-white border border-gray-200 hover:border-indigo-500 hover:shadow transition">
+                {inner}
+              </button>
+            ) : (
+              <div key={idx} className="rounded-lg overflow-hidden bg-white border border-gray-200"
+                   title="History links by face — appears once someone comes close enough for one">
+                {inner}
               </div>
-            </button>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -114,6 +132,7 @@ function HistoryPanel({ person, onClose }: { person: PersonRow; onClose: () => v
     setLoading(true);
     setH(null);
     setErr(null);
+    if (!person.sighting_id) { setLoading(false); return; }
     api.getPersonHistory(person.sighting_id)
       .then(r => setH(r))
       .catch(e => setErr(e?.message || 'Could not look this person up'))

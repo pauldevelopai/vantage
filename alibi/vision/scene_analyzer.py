@@ -353,8 +353,16 @@ Be descriptive, factual, and include visual details about people."""
 
             system_prompt = self._scene_system_prompt(prompt)
 
+            # The owner can downgrade the vision model from the Costs page —
+            # read per call so the change applies without a restart.
+            try:
+                from alibi.ai_config import get_ai_config
+                vision_model = get_ai_config()["vision_model"]
+            except Exception:
+                vision_model = self.anthropic_vision_model
+
             response = self.anthropic_client.messages.create(
-                model=self.anthropic_vision_model,
+                model=vision_model,
                 max_tokens=320 if prompt == "describe_scene_vehicles" else 150,
                 system=system_prompt,
                 messages=[
@@ -383,7 +391,7 @@ Be descriptive, factual, and include visual details about people."""
 
             try:
                 from alibi.cost_tracker import record_from_response
-                record_from_response("vision", self.anthropic_vision_model, response)
+                record_from_response("vision", vision_model, response)
             except Exception:
                 pass
 

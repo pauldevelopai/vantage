@@ -298,7 +298,7 @@ export interface WatchingFor {
 export interface DashboardOverview {
   range: string;
   generated_at: string;
-  kpis: { events: number; alerts: number; people: number; vehicles: number };
+  kpis: { events: number; alerts: number; people: number; vehicles: number; vehicles_distinct: number | null };
   by_type: Array<{ type: string; count: number }>;
   over_time: Array<{ hour: string; events: number; alerts: number }>;
   recent: DashboardRow[];
@@ -309,6 +309,18 @@ export interface DashboardOverview {
   watching_for: WatchingFor | null;
   patterns: DashboardPatterns | null;
   situations: DashboardSituation[];
+  recurring_vehicles: RecurringVehicle[];
+}
+
+/** An appearance-ReID cluster: the SAME vehicle seen repeatedly, linked by our
+ *  own cameras' embeddings. Anonymous ("Vehicle A") — continuity, no identity. */
+export interface RecurringVehicle {
+  label: string;
+  count: number;
+  first_seen: string;
+  last_seen: string;
+  cameras: string[];
+  busiest_hour_utc: number | null;
 }
 
 /** One incident on the Overview's Situations panel. The machine's ceiling is
@@ -342,7 +354,8 @@ export interface DashboardPatterns {
 // --- People (own-camera sightings + history) -------------------------------- //
 
 export interface PersonRow {
-  sighting_id: string;
+  sighting_id: string | null;        // null for detection-only rows (no face)
+  source?: 'face' | 'detection';
   camera_id: string;
   camera_name: string;
   ts: string;
@@ -466,4 +479,16 @@ export interface AdvisorResult {
   generated_ts: string;
   observed: Record<string, any>;
   note: string;
+}
+
+/** Owner-tunable AI spend controls (Costs page). */
+export interface AiConfig {
+  vision_model: string;
+  paid_min_gap_seconds: number;
+  narrate_vehicles: boolean;
+}
+
+export interface AiConfigResponse {
+  config: AiConfig;
+  vision_models: Record<string, { label: string; in_usd: number; out_usd: number }>;
 }

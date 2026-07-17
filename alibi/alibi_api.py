@@ -1431,6 +1431,31 @@ async def dashboard_overview(range: str = "24h",
     except Exception as e:
         print(f"[dashboard] situations unavailable: {e}")
 
+    # "268 vehicles detected" is sightings, not vehicles — the parked SUV is
+    # most of them. Appearance ReID clusters our own sightings into entities
+    # (continuity, no identity claim), so we can honestly say how many DISTINCT
+    # vehicles that number represents, and which ones keep coming back.
+    vehicles_distinct = None
+    recurring_vehicles = []
+    try:
+        from alibi.cameras.cross_camera import get_cross_camera_tracker
+        ent = get_cross_camera_tracker().entity_summary("vehicle", hours=hours)
+        if ent:
+            vehicles_distinct = len(ent)
+            for i, r in enumerate(ent[:5]):
+                # NB: `range` is the shadowing query param here — no range() calls
+                busiest = r["hours"].index(max(r["hours"])) if any(r["hours"]) else None
+                recurring_vehicles.append({
+                    "label": f"Vehicle {chr(65 + i)}",       # anonymous cluster, honest
+                    "count": r["count"],
+                    "first_seen": r["first_seen"],
+                    "last_seen": r["last_seen"],
+                    "cameras": [names.get(c, c) for c in r["cameras"]],
+                    "busiest_hour_utc": busiest,
+                })
+    except Exception as e:
+        print(f"[dashboard] vehicle entity summary unavailable: {e}")
+
     return {
         "range": range,
         "generated_at": datetime.utcnow().isoformat(),
@@ -1439,6 +1464,7 @@ async def dashboard_overview(range: str = "24h",
             "alerts": sum(1 for e in events if _is_alert(e)),
             "people": people,
             "vehicles": vehicles,
+            "vehicles_distinct": vehicles_distinct,
         },
         "by_type": [{"type": t, "count": c} for t, c in by_type.most_common()],
         "over_time": [buckets[k] for k in sorted(buckets)],
@@ -1450,6 +1476,7 @@ async def dashboard_overview(range: str = "24h",
         "watching_for": watching_for,
         "patterns": patterns,
         "situations": situations,
+        "recurring_vehicles": recurring_vehicles,
     }
 
 
@@ -3135,6 +3162,23 @@ async def bridge_ingest_frame(camera_id: str, request: Request,
         news = fa.judge_newsworthiness(camera_id, intel_) if intel_ else None
         wants_attrs = bool(intel_ and int(intel_.get("vehicle_count") or 0) > 0)
         worth_paying = _worth_narrating(intel_) and (news is None or news[0])
+        # Owner's spend controls (Costs page): vehicle-only frames may be set to
+        # never earn narration, and paid calls are rate-capped per camera.
+        # People and hotlist/watchlist hits always qualify.
+        if worth_paying and intel_ is not None:
+            try:
+                from alibi.ai_config import get_ai_config
+                cfg = get_ai_config()
+                flagged_ = bool(intel_.get("hotlist_hit") or intel_.get("watchlist_hit"))
+                has_person_ = int(intel_.get("person_count") or 0) > 0
+                if not cfg["narrate_vehicles"] and not has_person_ and not flagged_:
+                    worth_paying = False
+                if worth_paying and not fa.should_pay(camera_id, _time.time(),
+                                                      cfg["paid_min_gap_seconds"],
+                                                      flagged=flagged_):
+                    worth_paying = False
+            except Exception as e:
+                print(f"[frame-ai] ai_config unavailable: {e}")
         analysis_ = (fa.analyze_frame(frame, want_vehicle_attrs=wants_attrs) or {}
                      if worth_paying else {})
         # Persist a vehicle sighting per detected vehicle (evidence frame + bbox
@@ -3553,6 +3597,36 @@ async def costs_summary(window_days: int = 30, current_user: User = Depends(get_
     return summary(window_days=window_days)
 
 
+class AiConfigUpdate(BaseModel):
+    vision_model: Optional[str] = None
+    paid_min_gap_seconds: Optional[int] = None
+    narrate_vehicles: Optional[bool] = None
+
+
+@app.get("/costs/ai-config", tags=["Costs"])
+async def get_ai_config_endpoint(current_user: User = Depends(get_current_user)):
+    """The owner's AI spend controls + the model menu with prices."""
+    from alibi.ai_config import get_ai_config, VISION_MODELS
+    return {"config": get_ai_config(), "vision_models": VISION_MODELS}
+
+
+@app.put("/costs/ai-config", tags=["Costs"])
+async def update_ai_config_endpoint(
+    payload: AiConfigUpdate,
+    current_user: User = Depends(require_role([Role.ADMIN])),
+):
+    """Change the vision model / paid-call cap / vehicle narration. Admin only,
+    audited — these are direct spend dials."""
+    from alibi.ai_config import set_ai_config, VISION_MODELS
+    try:
+        cfg = set_ai_config(payload.vision_model, payload.paid_min_gap_seconds,
+                            payload.narrate_vehicles)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    get_store().append_audit("ai_config_set", {"user": current_user.username, **cfg})
+    return {"config": cfg, "vision_models": VISION_MODELS}
+
+
 class CreditsUpdate(BaseModel):
     balance_usd: float
 
@@ -3850,6 +3924,7 @@ async def people_recent(limit: int = 60, hours: int = 168,
             continue
         rows.append({
             "sighting_id": s.sighting_id,
+            "source": "face",
             "camera_id": s.camera_id,
             "camera_name": names.get(s.camera_id, s.camera_id),
             "ts": s.ts,
@@ -3860,6 +3935,58 @@ async def people_recent(limit: int = 60, hours: int = 168,
             "match_score": s.match_score,
         })
     rows.sort(key=lambda r: r["ts"], reverse=True)
+
+    # No (or few) captured faces yet — at pavement distance the detector finds
+    # the PERSON but not a readable face. Fall back to real person-detection
+    # crops from events so the page isn't dormant while the archive builds.
+    # These rows carry no embedding: no history lookup, no identity, honest.
+    if len(rows) < limit:
+        try:
+            def _piou(a, b) -> float:
+                ax, ay, aw, ah = a
+                bx, by, bw, bh = b
+                ix = max(0, min(ax + aw, bx + bw) - max(ax, bx))
+                iy = max(0, min(ay + ah, by + bh) - max(ay, by))
+                inter = ix * iy
+                union = aw * ah + bw * bh - inter
+                return inter / union if union > 0 else 0.0
+
+            cutoff_dt = datetime.fromisoformat(cutoff)
+            events = [e for e in get_store().list_events(limit=5000)
+                      if getattr(e, "ts", None) and e.ts >= cutoff_dt]
+            events.sort(key=lambda e: e.ts, reverse=True)
+            seen_boxes: list = []
+            for e in events:
+                if len(rows) >= limit:
+                    break
+                if not e.snapshot_url:
+                    continue
+                intel_ = ((getattr(e, "metadata", None) or {}).get("intel") or {})
+                for d in (intel_.get("detections") or []):
+                    if d.get("class") != "person" or len(rows) >= limit:
+                        continue
+                    bbox = d.get("bbox") or []
+                    if len(bbox) != 4:
+                        continue
+                    if any(cam == e.camera_id and _piou(bbox, prev) > 0.5
+                           for cam, prev in seen_boxes):
+                        continue
+                    seen_boxes.append((e.camera_id, bbox))
+                    rows.append({
+                        "sighting_id": None,
+                        "source": "detection",
+                        "camera_id": e.camera_id,
+                        "camera_name": names.get(e.camera_id, e.camera_id),
+                        "ts": e.ts.isoformat(),
+                        "bbox": bbox,
+                        "image_url": e.snapshot_url,
+                        "matched_person_id": None,
+                        "matched_label": None,
+                        "match_score": None,
+                    })
+        except Exception as e:
+            print(f"[people] detection fallback unavailable: {e}")
+
     return {"people": rows, "count": len(rows), "window_hours": hours}
 
 
