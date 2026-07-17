@@ -112,3 +112,19 @@ def test_vlm_only_path_is_unaffected():
     e1 = decide_event({"detected_objects": ["person"], "description": "a person"}, "cam1", NOW, "f1")
     e2 = decide_event({"detected_objects": ["person"], "description": "a person"}, "cam1", NOW, "f2")
     assert e1 is not None and e2 is not None
+
+
+def test_baseline_learns_from_empty_frames_too():
+    """The baseline must see EVERY analysed frame, not just ones with a detection.
+    Learning only from frames that already had something is a biased sample — a
+    mostly-empty camera would learn its normal from its own false positives."""
+    empty = {"person_count": 0, "vehicle_count": 0}
+    for i in range(LEARN):
+        assert decide_event(_r("an empty garden"), "cam-q", NOW, f"f{i}", intel=empty) is None
+    assert sb.get_scene_baseline().frames_seen("cam-q") == LEARN     # it watched them all
+    assert sb.get_scene_baseline().normal("cam-q") == {"person": 0, "vehicle": 0}
+
+    # Having learned it is normally empty, a car IS news here.
+    ev = decide_event(_r("a car"), "cam-q", NOW, "fz", intel={"person_count": 0, "vehicle_count": 1})
+    assert ev is not None
+    assert "normally shows none" in ev.metadata["intel"]["why_raised"]
