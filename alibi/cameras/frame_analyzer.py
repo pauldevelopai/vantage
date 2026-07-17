@@ -305,8 +305,8 @@ def vehicle_colour(frame_id: str, bbox) -> Optional[str]:
             crop = frame[max(0, y):y + h, max(0, x):x + w]
             if crop.size:
                 if _colour_classifier is None:
-                    from alibi.vehicles.vehicle_attrs import VehicleAttributeClassifier
-                    _colour_classifier = VehicleAttributeClassifier()
+                    from alibi.vehicles.vehicle_attrs import VehicleAttributeExtractor
+                    _colour_classifier = VehicleAttributeExtractor()
                 c, conf = _colour_classifier._classify_color(crop)
                 if c and c != "unknown" and conf >= _COLOUR_MIN_CONFIDENCE:
                     colour = c

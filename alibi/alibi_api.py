@@ -1338,7 +1338,9 @@ async def dashboard_overview(range: str = "24h",
             row = by_cam_hour.setdefault(e.camera_id, [0] * 24)
             row[hr] += 1
 
-        busiest_hour = max(range(24), key=lambda h: hour_totals[h]) if any(hour_totals) else None
+        # NB: `range` here is the endpoint's query param (a string) — the
+        # builtin is shadowed, so no range() calls in this function.
+        busiest_hour = hour_totals.index(max(hour_totals)) if any(hour_totals) else None
         cam_totals = {cid: sum(hrs) for cid, hrs in by_cam_hour.items()}
         busiest_cam = max(cam_totals, key=cam_totals.get) if cam_totals else None
         patterns = {
