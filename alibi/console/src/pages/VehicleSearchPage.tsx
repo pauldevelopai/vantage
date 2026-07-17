@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import type { TrailEntry } from '../lib/types';
 
@@ -33,6 +33,12 @@ export function VehicleSearchPage() {
   const [trail, setTrail] = useState<TrailEntry[]>([]);
   const [trailPlate, setTrailPlate] = useState('');
   const [trailLoading, setTrailLoading] = useState(false);
+
+  // Surface data immediately: recent sightings load on open, no search needed.
+  useEffect(() => {
+    handleSearch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function handleSearch() {
     setSearching(true);

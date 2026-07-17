@@ -163,13 +163,21 @@ export function DashboardPage() {
           <>
             {/* KPIs */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-              <Kpi label="Total Events" value={k!.events} tint="#818cf8" delay={0} />
-              <Kpi label="Alerts" value={k!.alerts} tint={k!.alerts > 0 ? '#fbbf24' : '#64748b'} delay={60} alert={k!.alerts > 0} />
-              <Kpi label="People Detected" value={k!.people} tint="#6366f1" delay={120} />
-              <Kpi label={k!.vehicles_distinct !== null ? 'Distinct Vehicles' : 'Vehicles Detected'}
-                   value={k!.vehicles_distinct !== null ? k!.vehicles_distinct : k!.vehicles}
-                   sub={k!.vehicles_distinct !== null ? `${k!.vehicles.toLocaleString()} sightings` : undefined}
-                   tint="#22d3ee" delay={180} />
+              <Link to="/patterns" className="no-underline">
+                <Kpi label="Total Events" value={k!.events} tint="#818cf8" delay={0} sub="patterns →" />
+              </Link>
+              <Link to="/incidents" className="no-underline">
+                <Kpi label="Alerts" value={k!.alerts} tint={k!.alerts > 0 ? '#fbbf24' : '#64748b'} delay={60} alert={k!.alerts > 0} sub="incidents →" />
+              </Link>
+              <Link to="/people" className="no-underline">
+                <Kpi label="People Detected" value={k!.people} tint="#6366f1" delay={120} sub="people →" />
+              </Link>
+              <Link to="/vehicle-search" className="no-underline">
+                <Kpi label={k!.vehicles_distinct !== null ? 'Distinct Vehicles' : 'Vehicles Detected'}
+                     value={k!.vehicles_distinct !== null ? k!.vehicles_distinct : k!.vehicles}
+                     sub={k!.vehicles_distinct !== null ? `${k!.vehicles.toLocaleString()} sightings · vehicles →` : 'vehicles →'}
+                     tint="#22d3ee" delay={180} />
+              </Link>
             </div>
 
             {isEmpty && <EmptyState />}
@@ -181,8 +189,13 @@ export function DashboardPage() {
                     that into "confirmed: attempted break-in", with their name
                     on it. */}
                 <Panel className="mb-4" delay={190}>
-                  <PanelHead title="Situations"
-                             right="flagged by the system · confirmed only by a person" />
+                  <div className="flex items-center justify-between mb-3">
+                    <h2 className="text-[11px] font-semibold text-slate-300 uppercase tracking-[0.14em]">Situations</h2>
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] text-slate-600 font-mono hidden sm:inline">flagged by the system · confirmed only by a person</span>
+                      <Link to="/incidents" className="text-[10px] text-indigo-400 hover:text-indigo-300 no-underline">all incidents →</Link>
+                    </div>
+                  </div>
                   <SituationsPanel situations={data.situations || []} onChanged={() => load(range)} />
                 </Panel>
 
@@ -199,8 +212,13 @@ export function DashboardPage() {
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
                   <Panel className="lg:col-span-2" delay={220}>
-                    <PanelHead title="Camera wall"
-                               right={`${data.cameras.length} camera${data.cameras.length === 1 ? '' : 's'} · latest evidence`} />
+                    <div className="flex items-center justify-between mb-3">
+                      <h2 className="text-[11px] font-semibold text-slate-300 uppercase tracking-[0.14em]">Camera wall</h2>
+                      <div className="flex items-center gap-3">
+                        <span className="text-[10px] text-slate-600 font-mono">{data.cameras.length} camera{data.cameras.length === 1 ? '' : 's'} · latest evidence</span>
+                        <Link to="/cameras" className="text-[10px] text-indigo-400 hover:text-indigo-300 no-underline">manage →</Link>
+                      </div>
+                    </div>
                     {data.cameras.length === 0 ? (
                       <p className="text-xs text-slate-600 py-8 text-center">No cameras registered yet.</p>
                     ) : (
@@ -290,8 +308,13 @@ export function DashboardPage() {
 
                 {data.recent_vehicles?.length > 0 && (
                   <Panel className="mb-4" delay={310}>
-                    <PanelHead title="Vehicles seen"
-                               right={`${data.recent_vehicles.length} shown · details only when read from the image`} />
+                    <div className="flex items-center justify-between mb-3">
+                      <h2 className="text-[11px] font-semibold text-slate-300 uppercase tracking-[0.14em]">Vehicles seen</h2>
+                      <div className="flex items-center gap-3">
+                        <span className="text-[10px] text-slate-600 font-mono hidden sm:inline">details only when read from the image</span>
+                        <Link to="/vehicle-search" className="text-[10px] text-indigo-400 hover:text-indigo-300 no-underline">all vehicles →</Link>
+                      </div>
+                    </div>
                     <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
                       {data.recent_vehicles.map((v, i) => <VehicleCard key={`${v.event_id}-${i}`} v={v} i={i} />)}
                     </div>
@@ -300,7 +323,7 @@ export function DashboardPage() {
 
                 {data.patterns && (
                   <Panel className="mb-4" delay={315}>
-                    <PanelHead title="Activity patterns"
+                    <PanelHeadLinked title="Activity patterns" linkTo="/patterns" linkLabel="full patterns →"
                                right={data.patterns.busiest_hour !== null
                                  ? `busiest ${String(data.patterns.busiest_hour).padStart(2, '0')}:00–${String((data.patterns.busiest_hour + 1) % 24).padStart(2, '0')}:00 · ${data.patterns.busiest_camera || ''}`
                                  : 'no activity in this window'} />
@@ -379,6 +402,19 @@ function PanelHead({ title, right }: { title: string; right?: string }) {
     <div className="flex items-center justify-between mb-3">
       <h2 className="text-[11px] font-semibold text-slate-300 uppercase tracking-[0.14em]">{title}</h2>
       {right && <span className="text-[10px] text-slate-600 font-mono">{right}</span>}
+    </div>
+  );
+}
+
+function PanelHeadLinked({ title, right, linkTo, linkLabel }:
+                         { title: string; right?: string; linkTo: string; linkLabel: string }) {
+  return (
+    <div className="flex items-center justify-between mb-3">
+      <h2 className="text-[11px] font-semibold text-slate-300 uppercase tracking-[0.14em]">{title}</h2>
+      <div className="flex items-center gap-3">
+        {right && <span className="text-[10px] text-slate-600 font-mono hidden sm:inline">{right}</span>}
+        <Link to={linkTo} className="text-[10px] text-indigo-400 hover:text-indigo-300 no-underline">{linkLabel}</Link>
+      </div>
     </div>
   );
 }
@@ -671,6 +707,10 @@ function WatchingForPanel({ wf }: { wf: WatchingFor }) {
             </Link>
           ) : t.evaluated ? (
             <span className="text-[11px] text-slate-600 flex-none">not seen</span>
+          ) : t.note && t.note.includes('normal hours') ? (
+            <Link to="/sites" className="text-[11px] text-indigo-400 hover:text-indigo-300 flex-none italic no-underline">
+              armed · set normal hours →
+            </Link>
           ) : (
             <span className="text-[11px] text-slate-600 flex-none italic"
                   title={t.note || 'not yet evaluated'}>
