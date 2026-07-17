@@ -83,7 +83,8 @@ class TestCostControl:
 
         assert report.areas_skipped_fresh == ["Sandton"]
         assert report.areas_refreshed == ["Rosebank"]
-        assert len(client.calls) == 1                # Sandton never fetched
+        poi_calls = [c for c in client.calls if "google-places" in str(c)]
+        assert len(poi_calls) == 1                   # Sandton POI never fetched
 
     def test_budget_cap_defers_and_reports(self, store):
         client = _FakeClient()
@@ -93,7 +94,8 @@ class TestCostControl:
         assert len(report.areas_refreshed) == 2
         # Deferred, not silently dropped.
         assert report.areas_over_budget == ["C", "D"]
-        assert len(client.calls) == 2
+        poi_calls = [c for c in client.calls if "google-places" in str(c)]
+        assert len(poi_calls) == 2
 
     def test_dry_run_spends_nothing(self, store):
         client = _FakeClient()

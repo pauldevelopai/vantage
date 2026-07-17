@@ -3864,6 +3864,9 @@ async def ml_status(current_user: User = Depends(get_current_user)):
                 blocked = "APIFY_TOKEN not set"
             elif sid.startswith("places.") and not areas:
                 blocked = "no camera/site has an area set — nothing to harvest for"
+            elif sid == "places.area_crime_stats" and not records:
+                blocked = ("harvester agent live (weekly timer) — candidate "
+                           "pages not parseable yet, stored nothing")
             elif not spec.apify_actor and not records:
                 blocked = "no feed wired yet (actor or curated seed)"
             feeds.append({

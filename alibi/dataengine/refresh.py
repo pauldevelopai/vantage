@@ -226,7 +226,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     for err in report.errors:
         print(f"  ERROR: {err}")
 
-    return 1 if report.errors else 0
+    # Soft per-source errors (a page that didn't parse, one area's fetch
+    # failing) are REPORTED but don't fail the unit — the timer must keep
+    # firing weekly. Only a run that stored nothing AND refreshed nothing AND
+    # hit errors counts as a failure worth alerting on.
+    hard_failure = bool(report.errors) and not report.areas_refreshed and report.stored == 0 \
+        and not report.areas_skipped_fresh
+    return 1 if hard_failure else 0
 
 
 if __name__ == "__main__":
