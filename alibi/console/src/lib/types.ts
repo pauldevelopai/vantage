@@ -492,6 +492,9 @@ export interface AiConfig {
   vision_model: string;
   paid_min_gap_seconds: number;
   narrate_vehicles: boolean;
+  narrate_people: boolean;
+  schedule: 'always' | 'after_hours' | 'night';
+  daily_budget_usd: number;
 }
 
 export interface AiConfigResponse {

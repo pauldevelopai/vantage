@@ -78,3 +78,56 @@ def test_entity_summary_counts_the_same_vehicle(tmp_path):
     assert summary[0]["cameras"] == ["dahua-91"]
     assert summary[1]["count"] == 1
     assert sum(summary[0]["hours"]) == 3
+
+
+# ── narration trigger policy ───────────────────────────────────────────────
+
+from alibi.ai_config import narration_allowed, DEFAULTS
+
+
+def _cfg(**kw):
+    cfg = dict(DEFAULTS)
+    cfg.update(kw)
+    return cfg
+
+
+def test_flagged_always_narrates_even_over_budget_at_noon():
+    cfg = _cfg(schedule="night", daily_budget_usd=1.0, narrate_people=False)
+    assert narration_allowed(cfg, False, False, True, 12 * 60, 99.0) is True
+
+
+def test_subject_toggles():
+    assert narration_allowed(_cfg(narrate_people=False), True, False, False, 600, 0) is False
+    assert narration_allowed(_cfg(narrate_vehicles=False), False, True, False, 600, 0) is False
+    assert narration_allowed(_cfg(), True, False, False, 600, 0) is True
+
+
+def test_daily_budget_hard_stop():
+    cfg = _cfg(daily_budget_usd=2.0)
+    assert narration_allowed(cfg, True, False, False, 600, 1.99) is True
+    assert narration_allowed(cfg, True, False, False, 600, 2.0) is False
+    assert narration_allowed(_cfg(daily_budget_usd=0), True, False, False, 600, 500.0) is True
+
+
+def test_night_schedule_window():
+    cfg = _cfg(schedule="night")
+    assert narration_allowed(cfg, True, False, False, 23 * 60, 0) is True    # 23:00
+    assert narration_allowed(cfg, True, False, False, 3 * 60, 0) is True     # 03:00
+    assert narration_allowed(cfg, True, False, False, 12 * 60, 0) is False   # noon
+
+
+def test_after_hours_uses_site_hours_with_night_fallback():
+    cfg = _cfg(schedule="after_hours")
+    hours = {"open": "06:00", "close": "22:00"}
+    assert narration_allowed(cfg, True, False, False, 23 * 60, 0, normal_hours=hours) is True
+    assert narration_allowed(cfg, True, False, False, 12 * 60, 0, normal_hours=hours) is False
+    # no hours set -> falls back to the 22:00-06:00 night window
+    assert narration_allowed(cfg, True, False, False, 23 * 60, 0, normal_hours=None) is True
+
+
+def test_config_roundtrip_new_fields(isolated_config):
+    ac.set_ai_config(schedule="night", daily_budget_usd=3.5, narrate_people=False)
+    cfg = ac.get_ai_config()
+    assert (cfg["schedule"], cfg["daily_budget_usd"], cfg["narrate_people"]) == ("night", 3.5, False)
+    with pytest.raises(ValueError):
+        ac.set_ai_config(schedule="sometimes")
