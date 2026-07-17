@@ -83,9 +83,6 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
-
 
 # ── Vehicle make/model catalog (SA market) ─────────────────────────────────
 # Curated from manufacturers' public model catalogues / NAAMSA market lists.
@@ -138,3 +135,7 @@ def seed_vehicle_models(store=None, now=None):
     store = store or DataEngineStore()
     return ingest_items(spec, VEHICLE_MODELS, store, now=now,
                         payload_extra={"provenance": "curated:manufacturer-catalogues"})
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
