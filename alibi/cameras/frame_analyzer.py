@@ -122,29 +122,37 @@ def decide_event(
     hotlist_hit = bool(intel.get("hotlist_hit"))
     watchlist_hit = bool(intel.get("watchlist_hit"))
 
-    if not (has_person or has_vehicle or safety or hotlist_hit or watchlist_hit):
-        return None                                  # honest: nothing to flag
-
     # Presence isn't news — MORE THAN NORMAL is. Each camera learns what it always
     # shows (a parked SUV, a shrub the detector calls a car) and stays quiet about
     # it; a person where there is normally none still raises. Comparing against a
     # learned median also survives detection flicker (1 -> 0 -> 1), which defeated
     # the older "changed since the last frame" rule.
+    #
+    # This runs BEFORE the "nothing to flag" return on purpose: the baseline must
+    # observe EVERY analysed frame, empty ones included. Learning only from frames
+    # that already had a detection is a biased sample — a camera could never learn
+    # that it normally shows nothing, and a mostly-empty view learned from just a
+    # handful of its own false positives.
     baseline_reason = None
+    is_news = True
+    flagged = bool(hotlist_hit or watchlist_hit or safety)
     if intel:
         composition = {"person": person_count, "vehicle": vehicle_count}
-        flagged = bool(hotlist_hit or watchlist_hit or safety)
         try:
             from alibi.cameras.scene_baseline import get_scene_baseline
             bl = get_scene_baseline()
+            # Judge against what we knew BEFORE this frame, then let it teach us.
             is_news, baseline_reason = bl.newsworthy(camera_id, composition, flagged=flagged)
-            bl.observe(camera_id, composition)     # learn from every frame, raised or not
-            if not is_news:
-                return None
+            bl.observe(camera_id, composition)
         except Exception as e:                     # never let the baseline break ingest
             print(f"[frame-ai] scene baseline unavailable: {e}")
-            if not is_new_activity(camera_id, person_count, vehicle_count, flagged=flagged):
-                return None
+            is_news = is_new_activity(camera_id, person_count, vehicle_count, flagged=flagged)
+
+    if not (has_person or has_vehicle or safety or hotlist_hit or watchlist_hit):
+        return None                                  # honest: nothing to flag
+
+    if intel and not is_news:
+        return None
 
     if has_person:
         event_type, severity = "person_detected", 3
