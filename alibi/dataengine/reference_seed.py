@@ -74,11 +74,67 @@ def seed_plate_formats(store=None, now=None):
 
 
 def main() -> int:
-    result = seed_plate_formats()
-    print(f"plate formats: fetched={result.fetched} stored={result.stored} "
-          f"skipped={result.skipped} rejected={result.rejected_personal}")
+    r1 = seed_plate_formats()
+    print(f"plate formats: fetched={r1.fetched} stored={r1.stored} "
+          f"skipped={r1.skipped} rejected={r1.rejected_personal}")
+    r2 = seed_vehicle_models()
+    print(f"vehicle models: fetched={r2.fetched} stored={r2.stored} "
+          f"skipped={r2.skipped} rejected={r2.rejected_personal}")
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+# ── Vehicle make/model catalog (SA market) ─────────────────────────────────
+# Curated from manufacturers' public model catalogues / NAAMSA market lists.
+# Used to VALIDATE VLM-claimed makes and models — a claimed badge that matches
+# nothing in the catalog is downgraded, never displayed.
+
+NAAMSA = "https://naamsa.net/sa-auto-industry/vehicle-sales/"
+
+_SA_VEHICLES = [
+    ("Toyota", ["Hilux", "Fortuner", "Corolla", "Corolla Cross", "Starlet", "Urban Cruiser", "Land Cruiser", "RAV4", "Quantum", "Vitz", "Rumion", "Prado"]),
+    ("Volkswagen", ["Polo", "Polo Vivo", "T-Cross", "Tiguan", "Golf", "Amarok", "T-Roc", "Caddy", "Transporter"]),
+    ("Ford", ["Ranger", "Everest", "EcoSport", "Figo", "Territory", "Transit"]),
+    ("Nissan", ["NP200", "Navara", "Magnite", "X-Trail", "Qashqai", "Almera", "Patrol"]),
+    ("Hyundai", ["i10", "i20", "Venue", "Creta", "Tucson", "H-100", "Staria", "Santa Fe"]),
+    ("Kia", ["Picanto", "Sonet", "Seltos", "Sportage", "Rio", "Pegas"]),
+    ("Suzuki", ["Swift", "S-Presso", "Baleno", "Jimny", "Fronx", "Ertiga", "Vitara Brezza", "Grand Vitara"]),
+    ("Isuzu", ["D-Max", "MU-X"]),
+    ("Renault", ["Kwid", "Triber", "Kiger", "Duster", "Clio"]),
+    ("Haval", ["Jolion", "H6"]),
+    ("GWM", ["P-Series", "Steed"]),
+    ("Mahindra", ["Pik Up", "Scorpio", "XUV300", "XUV700"]),
+    ("BMW", ["1 Series", "3 Series", "X1", "X3", "X5"]),
+    ("Mercedes-Benz", ["A-Class", "C-Class", "GLA", "GLC", "Vito", "Sprinter"]),
+    ("Audi", ["A3", "A4", "Q2", "Q3", "Q5"]),
+    ("Chery", ["Tiggo 4 Pro", "Tiggo 7 Pro", "Tiggo 8 Pro", "Omoda C5"]),
+    ("Omoda", ["C5", "C9"]),
+    ("Mazda", ["CX-3", "CX-30", "CX-5", "Mazda2", "Mazda3", "BT-50"]),
+    ("Honda", ["Fit", "Ballade", "BR-V", "HR-V", "CR-V"]),
+    ("Mitsubishi", ["Triton", "Pajero Sport", "ASX", "Xpander"]),
+    ("Land Rover", ["Defender", "Discovery", "Range Rover Evoque"]),
+    ("Peugeot", ["208", "2008", "3008", "Landtrek"]),
+    ("Opel", ["Corsa", "Crossland", "Grandland"]),
+    ("Fiat", ["500", "Tipo"]),
+    ("Jeep", ["Wrangler", "Grand Cherokee", "Compass"]),
+]
+
+VEHICLE_MODELS = [
+    {"make": make, "model": model, "source_url": NAAMSA}
+    for make, models in _SA_VEHICLES
+    for model in models
+]
+
+
+def seed_vehicle_models(store=None, now=None):
+    """Ingest the curated SA vehicle catalog through the full pipeline."""
+    from alibi.dataengine.ingest import ingest_items
+    from alibi.dataengine.sources import get_source
+    from alibi.dataengine.store import DataEngineStore
+    spec = get_source("reference.vehicle_models")
+    store = store or DataEngineStore()
+    return ingest_items(spec, VEHICLE_MODELS, store, now=now,
+                        payload_extra={"provenance": "curated:manufacturer-catalogues"})

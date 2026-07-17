@@ -27,6 +27,7 @@ import numpy as np
 
 AFTER_HOURS_MARKERS = ("outside normal hours", "closed hours", "after-hours")
 REPEATED_PASS_MARKERS = ("repeated passes",)
+DWELL_MARKERS = ("extended dwell", "dwell at an entry")
 
 
 def trigger_kind(trigger: str) -> Optional[str]:
@@ -36,6 +37,8 @@ def trigger_kind(trigger: str) -> Optional[str]:
         return "after_hours"
     if any(m in low for m in REPEATED_PASS_MARKERS):
         return "repeated_passes"
+    if any(m in low for m in DWELL_MARKERS):
+        return "dwell"
     return None
 
 
@@ -156,6 +159,9 @@ def evaluate_watching_for(site, events, face_sightings=None) -> Dict[str, Any]:
             row.update(evaluate_after_hours(site, events))
         elif kind == "repeated_passes":
             row.update(evaluate_repeated_passes(site, face_sightings or []))
+        elif kind == "dwell":
+            from alibi.patterns.dwell import evaluate_dwell
+            row.update(evaluate_dwell(site, events))
         else:
             row["note"] = "not yet evaluated"
         triggers.append(row)
