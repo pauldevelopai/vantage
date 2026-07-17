@@ -213,3 +213,26 @@ def credit_status(now: Optional[datetime] = None) -> Dict[str, Any]:
         "days_left": days_left,
         "runout_date": runout_date,
     }
+
+
+_today_cache: Dict[str, Any] = {"day": None, "usd": 0.0, "at": 0.0}
+
+
+def todays_spend(service: str = "vision", now: Optional[datetime] = None) -> float:
+    """Today's tracked spend for a service, cached ~60s (called per frame)."""
+    import time as _t
+    now = now or datetime.utcnow()
+    day = now.date().isoformat()
+    if _today_cache["day"] == day and _t.monotonic() - _today_cache["at"] < 60:
+        return _today_cache["usd"]
+    total = 0.0
+    if USAGE_FILE.exists():
+        for line in USAGE_FILE.read_text().splitlines():
+            try:
+                r = json.loads(line)
+                if r.get("service") == service and r.get("ts", "").startswith(day):
+                    total += float(r.get("usd", 0.0))
+            except (json.JSONDecodeError, ValueError):
+                continue
+    _today_cache.update({"day": day, "usd": round(total, 4), "at": _t.monotonic()})
+    return _today_cache["usd"]

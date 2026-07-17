@@ -31,6 +31,9 @@ DEFAULTS: Dict[str, Any] = {
     "vision_model": "claude-opus-4-8",
     "paid_min_gap_seconds": 60,
     "narrate_vehicles": True,
+    "narrate_people": True,
+    "schedule": "always",          # always | after_hours | night
+    "daily_budget_usd": 0.0,       # 0 = no daily cap
 }
 
 _GAP_CHOICES = (8, 30, 60, 120, 300)
@@ -53,9 +56,21 @@ def get_ai_config() -> Dict[str, Any]:
 
 
 def set_ai_config(vision_model: str = None, paid_min_gap_seconds: int = None,
-                  narrate_vehicles: bool = None) -> Dict[str, Any]:
+                  narrate_vehicles: bool = None, narrate_people: bool = None,
+                  schedule: str = None, daily_budget_usd: float = None) -> Dict[str, Any]:
     """Update any subset of the config. Validates; raises ValueError on junk."""
     cfg = get_ai_config()
+    if narrate_people is not None:
+        cfg["narrate_people"] = bool(narrate_people)
+    if schedule is not None:
+        if schedule not in SCHEDULES:
+            raise ValueError(f"schedule must be one of {SCHEDULES}")
+        cfg["schedule"] = schedule
+    if daily_budget_usd is not None:
+        b = float(daily_budget_usd)
+        if b < 0:
+            raise ValueError("daily_budget_usd must be >= 0")
+        cfg["daily_budget_usd"] = round(b, 2)
     if vision_model is not None:
         if vision_model not in VISION_MODELS:
             raise ValueError(f"unknown vision model: {vision_model}")
@@ -70,3 +85,55 @@ def set_ai_config(vision_model: str = None, paid_min_gap_seconds: int = None,
     CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
     CONFIG_FILE.write_text(json.dumps(cfg))
     return cfg
+
+
+# ── When narration is allowed (the trigger policy) ─────────────────────────
+
+SCHEDULES = ("always", "after_hours", "night")
+NIGHT_START_MIN = 22 * 60      # fallback night window, site-local
+NIGHT_END_MIN = 6 * 60
+
+
+def narration_allowed(cfg: Dict[str, Any], has_person: bool, has_vehicle: bool,
+                      flagged: bool, local_minutes: int,
+                      todays_spend_usd: float,
+                      normal_hours: Dict[str, Any] = None) -> bool:
+    """Should this frame earn a PAID narration? Pure — the whole trigger
+    policy in one testable place.
+
+    Hotlist/watchlist hits ALWAYS narrate: a flagged frame is never a place to
+    save money. Everything else respects the owner's dials:
+      * subject toggles  — narrate people / narrate vehicles
+      * schedule         — always | after_hours (outside the site's normal
+                           hours; falls back to the night window if hours are
+                           unset) | night (22:00–06:00 site-local)
+      * daily budget     — hard stop once today's vision spend reaches it
+    """
+    if flagged:
+        return True
+    if has_person and not cfg.get("narrate_people", True):
+        has_person = False
+    if has_vehicle and not cfg.get("narrate_vehicles", True):
+        has_vehicle = False
+    if not (has_person or has_vehicle):
+        return False
+
+    budget = float(cfg.get("daily_budget_usd") or 0)
+    if budget > 0 and todays_spend_usd >= budget:
+        return False
+
+    schedule = cfg.get("schedule", "always")
+    if schedule == "always":
+        return True
+    start, end = NIGHT_START_MIN, NIGHT_END_MIN
+    if schedule == "after_hours" and normal_hours:
+        try:
+            oh, om = str(normal_hours.get("open", "")).split(":")
+            ch, cm = str(normal_hours.get("close", "")).split(":")
+            # narrate OUTSIDE normal hours: night window = close -> open
+            start, end = int(ch) * 60 + int(cm), int(oh) * 60 + int(om)
+        except (ValueError, AttributeError):
+            pass
+    if start < end:                      # window within one day
+        return start <= local_minutes < end
+    return local_minutes >= start or local_minutes < end   # overnight window

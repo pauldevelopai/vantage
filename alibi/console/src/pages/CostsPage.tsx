@@ -187,22 +187,54 @@ function AiControlsPanel() {
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-6">
-          <label className="text-sm text-gray-700">
-            Paid vision calls per camera at most every{' '}
-            <select value={c.paid_min_gap_seconds} disabled={!isAdmin || busy}
-                    onChange={e => update({ paid_min_gap_seconds: parseInt(e.target.value) })}
-                    className="rounded-md border-gray-300 text-sm">
-              {gaps.map(g => <option key={g} value={g}>{g >= 60 ? `${g / 60} min` : `${g}s`}</option>)}
-            </select>
-          </label>
-
-          <label className={`flex items-center gap-2 text-sm text-gray-700 ${isAdmin ? 'cursor-pointer' : 'opacity-70'}`}>
-            <input type="checkbox" checked={c.narrate_vehicles} disabled={!isAdmin || busy}
-                   onChange={e => update({ narrate_vehicles: e.target.checked })} />
-            Narrate vehicle-only frames
-            <span className="text-xs text-gray-400">(people & hotlist/watchlist always narrated)</span>
-          </label>
+        <div>
+          <p className="text-sm font-medium text-gray-700 mb-2">When to trigger vision</p>
+          <div className="space-y-2">
+            <label className="text-sm text-gray-700 block">
+              Paid vision calls per camera at most every{' '}
+              <select value={c.paid_min_gap_seconds} disabled={!isAdmin || busy}
+                      onChange={e => update({ paid_min_gap_seconds: parseInt(e.target.value) })}
+                      className="rounded-md border-gray-300 text-sm">
+                {gaps.map(g => <option key={g} value={g}>{g >= 60 ? `${g / 60} min` : `${g}s`}</option>)}
+              </select>
+            </label>
+            <div className="flex flex-wrap gap-5">
+              <label className={`flex items-center gap-2 text-sm text-gray-700 ${isAdmin ? 'cursor-pointer' : 'opacity-70'}`}>
+                <input type="checkbox" checked={c.narrate_people ?? true} disabled={!isAdmin || busy}
+                       onChange={e => update({ narrate_people: e.target.checked })} />
+                Narrate person frames
+              </label>
+              <label className={`flex items-center gap-2 text-sm text-gray-700 ${isAdmin ? 'cursor-pointer' : 'opacity-70'}`}>
+                <input type="checkbox" checked={c.narrate_vehicles} disabled={!isAdmin || busy}
+                       onChange={e => update({ narrate_vehicles: e.target.checked })} />
+                Narrate vehicle-only frames
+              </label>
+              <span className="text-xs text-gray-400 self-center">hotlist/watchlist hits always narrated</span>
+            </div>
+            <label className="text-sm text-gray-700 block">
+              Schedule{' '}
+              <select value={c.schedule ?? 'always'} disabled={!isAdmin || busy}
+                      onChange={e => update({ schedule: e.target.value as any })}
+                      className="rounded-md border-gray-300 text-sm">
+                <option value="always">always</option>
+                <option value="after_hours">after hours only (site normal hours; 22:00–06:00 if unset)</option>
+                <option value="night">night only (22:00–06:00)</option>
+              </select>
+            </label>
+            <label className="text-sm text-gray-700 block">
+              Daily vision budget{' '}
+              <select value={String(c.daily_budget_usd ?? 0)} disabled={!isAdmin || busy}
+                      onChange={e => update({ daily_budget_usd: parseFloat(e.target.value) })}
+                      className="rounded-md border-gray-300 text-sm">
+                <option value="0">no cap</option>
+                <option value="0.5">$0.50 / day</option>
+                <option value="1">$1 / day</option>
+                <option value="2">$2 / day</option>
+                <option value="5">$5 / day</option>
+              </select>
+              <span className="text-xs text-gray-400 ml-1">hard stop when reached (flagged frames exempt)</span>
+            </label>
+          </div>
         </div>
 
         {err && <p className="text-sm text-red-600">{err}</p>}

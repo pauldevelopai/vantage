@@ -3254,11 +3254,23 @@ async def bridge_ingest_frame(camera_id: str, request: Request,
         # People and hotlist/watchlist hits always qualify.
         if worth_paying and intel_ is not None:
             try:
-                from alibi.ai_config import get_ai_config
+                from alibi.ai_config import get_ai_config, narration_allowed
+                from alibi.cost_tracker import todays_spend
                 cfg = get_ai_config()
                 flagged_ = bool(intel_.get("hotlist_hit") or intel_.get("watchlist_hit"))
                 has_person_ = int(intel_.get("person_count") or 0) > 0
-                if not cfg["narrate_vehicles"] and not has_person_ and not flagged_:
+                has_vehicle_ = int(intel_.get("vehicle_count") or 0) > 0
+                normal_hours = None
+                try:
+                    from alibi.site_profile import get_site_profile_store
+                    _sites = get_site_profile_store().list()
+                    normal_hours = _sites[0].normal_hours if _sites else None
+                except Exception:
+                    pass
+                local_minutes = ((now.hour * 60 + now.minute) + 120) % 1440  # SAST
+                if not narration_allowed(cfg, has_person_, has_vehicle_, flagged_,
+                                         local_minutes, todays_spend("vision"),
+                                         normal_hours=normal_hours):
                     worth_paying = False
                 if worth_paying and not fa.should_pay(camera_id, _time.time(),
                                                       cfg["paid_min_gap_seconds"],
@@ -3696,6 +3708,9 @@ class AiConfigUpdate(BaseModel):
     vision_model: Optional[str] = None
     paid_min_gap_seconds: Optional[int] = None
     narrate_vehicles: Optional[bool] = None
+    narrate_people: Optional[bool] = None
+    schedule: Optional[str] = None
+    daily_budget_usd: Optional[float] = None
 
 
 @app.get("/costs/ai-config", tags=["Costs"])
@@ -3715,7 +3730,8 @@ async def update_ai_config_endpoint(
     from alibi.ai_config import set_ai_config, VISION_MODELS
     try:
         cfg = set_ai_config(payload.vision_model, payload.paid_min_gap_seconds,
-                            payload.narrate_vehicles)
+                            payload.narrate_vehicles, payload.narrate_people,
+                            payload.schedule, payload.daily_budget_usd)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     get_store().append_audit("ai_config_set", {"user": current_user.username, **cfg})
