@@ -179,6 +179,11 @@ def ws_discover(timeout=4.0):
             for k, v in re.findall(r"onvif://www\.onvif\.org/(\w+)/([^\s<]+)", text):
                 if k in ("name", "hardware"):
                     info[k] = v.replace("%20", " ")
+            # Keep the device-service URL: it's what lets us ASK the camera for
+            # its stream URLs instead of guessing a vendor path.
+            m = re.search(r"<[^>]*XAddrs[^>]*>([^<]+)<", text)
+            if m and m.group(1).strip():
+                info["xaddr"] = m.group(1).split()[0].strip()
             found[ip] = info
         sock.close()
     except Exception:
@@ -253,9 +258,38 @@ def read_arp():
     return table
 
 
-def scan(subnet=None):
+def onvif_stream_urls(xaddr, username, password):
+    """Ask an ONVIF camera for its real stream URLs -> (main, sub, resolution).
+
+    This is what removes the guessing: instead of assuming a vendor path, the
+    camera tells us. Needs credentials — ONVIF media calls are authenticated —
+    so it only runs when the scan carried a camera login. Never fatal: a camera
+    that refuses just leaves us where we already were.
+    """
+    try:
+        try:
+            from alibi.cameras import onvif as _onvif      # in-repo
+        except ImportError:
+            import onvif as _onvif                          # flat zipapp layout
+        profiles = _onvif.stream_profiles(xaddr, username or "", password or "")
+        main, sub = _onvif.pick_streams(profiles)
+        if not main:
+            return "", "", ""
+        res = f"{main.width}x{main.height}" if main.width else ""
+        return main.rtsp_url, (sub.rtsp_url if sub else ""), res
+    except Exception as e:
+        print(f"[bridge] onvif stream lookup failed for {xaddr}: {e}")
+        return "", "", ""
+
+
+def scan(subnet=None, username=None, password=None):
     """Discover cameras on the LAN. Returns a list of dicts matching the
-    console's DiscoveredCamera shape."""
+    console's DiscoveredCamera shape.
+
+    When a camera login is supplied, ONVIF cameras are asked for their actual
+    stream URLs, so they arrive already configured rather than needing an RTSP
+    path typed in (and a wrong guess looking exactly like a wrong password).
+    """
     cams = {}
 
     def _get(ip):
@@ -275,6 +309,16 @@ def scan(subnet=None):
         c["discovery_method"] = c["discovery_method"] or "onvif"
         c["name"] = c["name"] or info.get("name", "")
         c["model"] = c["model"] or info.get("hardware", "")
+        # Ask the camera for its own stream URLs (needs the login).
+        xaddr = info.get("xaddr") or f"http://{ip}/onvif/device_service"
+        if username:
+            main_url, sub_url, res = onvif_stream_urls(xaddr, username, password)
+            if main_url:
+                c["rtsp_url"] = main_url
+                c["sub_url"] = sub_url
+                c["resolution"] = res or c["resolution"]
+                c["rtsp_confirmed"] = True          # the camera named it, not us
+                c["found_by"].append("onvif_stream_uri")
 
     for ip, ports in sweep(subnet).items():
         c = _get(ip)
@@ -336,7 +380,12 @@ def poll_once(headers):
               {"site_hint": local_subnet()}, headers=headers)
         return "idle"
     try:
-        cameras = scan((job.get("params") or {}).get("cidr"))
+        params = job.get("params") or {}
+        # A camera login lets us ASK ONVIF cameras for their stream URLs rather
+        # than guessing vendor paths. Optional — without it the scan still works.
+        cameras = scan(params.get("cidr"),
+                       username=params.get("username"),
+                       password=params.get("password"))
         _http("POST", f"/api/cameras/bridge/jobs/{job['job_id']}/results",
               {"cameras": cameras}, headers=headers)
         print(f"[bridge] reported {sum(1 for c in cameras if c['is_camera'])} camera(s).")

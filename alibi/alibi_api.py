@@ -2203,6 +2203,12 @@ class BridgeRegisterRequest(BaseModel):
 
 class BridgeScanRequest(BaseModel):
     cidr: Optional[str] = None
+    # Optional camera login. With it, the recorder asks ONVIF cameras for their
+    # real stream URLs instead of guessing vendor RTSP paths, so cameras arrive
+    # already configured. Passed to the recorder for that one lookup and not
+    # stored on the job.
+    username: Optional[str] = None
+    password: Optional[str] = None
 
 
 class BridgeResultsRequest(BaseModel):
@@ -2319,9 +2325,11 @@ def _build_recorder_zipapp(base_url: str, code: str) -> bytes:
     __main__), URL & pairing code baked in. Returns the .pyz bytes."""
     import io
     import zipfile
-    from alibi.cameras import recorder, bridge_agent, record_agent
+    from alibi.cameras import recorder, bridge_agent, record_agent, onvif
     with open(recorder.__file__) as f:
         recorder_src = f.read()
+    with open(onvif.__file__) as f:
+        onvif_src = f.read()
     with open(record_agent.__file__) as f:
         record_agent_src = f.read()
     with open(bridge_agent.__file__) as f:
@@ -2330,6 +2338,7 @@ def _build_recorder_zipapp(base_url: str, code: str) -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("recorder.py", recorder_src)
+        z.writestr("onvif.py", onvif_src)          # ONVIF stream-URL lookup
         z.writestr("bridge_agent.py", bridge_agent_src)
         z.writestr("record_agent.py", record_agent_src)
         z.writestr("__main__.py", main_src)
@@ -2448,6 +2457,7 @@ async def bridge_download_recorder(
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("recorder.py", recorder_src)
+        z.writestr("onvif.py", onvif_src)          # ONVIF stream-URL lookup
         z.writestr("bridge_agent.py", bridge_agent_src)
         z.writestr("record_agent.py", record_agent_src)
         z.writestr("__main__.py", main_src)
@@ -2474,8 +2484,16 @@ async def bridge_scan(
         raise HTTPException(status_code=404, detail="Bridge not found")
     if not bridge.is_online():
         raise HTTPException(status_code=409, detail="Bridge is offline — start the Vantage Bridge on that network")
-    job = reg.enqueue_scan(bridge_id, params={"cidr": req.cidr} if req.cidr else {})
-    return {"job_id": job.job_id, "status": job.status}
+    params = {}
+    if req.cidr:
+        params["cidr"] = req.cidr
+    if req.username:
+        # Lets the agent run ONVIF GetStreamUri; the camera names its own URL.
+        params["username"] = req.username
+        params["password"] = req.password or ""
+    job = reg.enqueue_scan(bridge_id, params=params)
+    return {"job_id": job.job_id, "status": job.status,
+            "onvif_lookup": bool(req.username)}
 
 
 @app.get("/cameras/bridge/scan/{job_id}", tags=["Camera Bridge"])
