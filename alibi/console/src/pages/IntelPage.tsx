@@ -26,6 +26,67 @@ const STATUS_META: Record<string, { label: string; cls: string; blurb: string }>
   rejected:  { label: 'Won’t use',    cls: 'bg-red-100 text-red-800 border-red-200',       blurb: 'We could connect it, and deliberately do not.' },
 };
 
+const ML_STATUS_META: Record<string, { label: string; cls: string }> = {
+  active:      { label: 'ACTIVE',      cls: 'bg-green-100 text-green-800' },
+  planned:     { label: 'PLANNED',     cls: 'bg-gray-100 text-gray-600' },
+  unavailable: { label: 'UNAVAILABLE', cls: 'bg-red-100 text-red-700' },
+};
+
+/** The honest module inventory: what runs, what it does, what's blocked. */
+function MlStatusSection() {
+  const [ml, setMl] = useState<any>(null);
+  useEffect(() => { api.getMlStatus().then(setMl).catch(() => {}); }, []);
+  if (!ml) return null;
+  return (
+    <>
+      <div className="flex items-baseline justify-between mt-8 mb-2">
+        <h2 className="text-lg font-medium text-gray-900">Vision stack</h2>
+        <span className="text-xs text-gray-500">open-source models on your box · one paid narrator</span>
+      </div>
+      <div className="bg-white shadow rounded-lg divide-y divide-gray-100">
+        {ml.vision_stack.map((m: any) => {
+          const meta = ML_STATUS_META[m.status] || ML_STATUS_META.planned;
+          return (
+            <div key={m.name} className="p-3 flex items-start gap-3">
+              <span className={`mt-0.5 text-[9px] font-bold tracking-wider px-1.5 py-0.5 rounded flex-none ${meta.cls}`}>{meta.label}</span>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium text-gray-900">{m.name}
+                  {m.kind === 'paid_api' && <span className="ml-2 text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">paid</span>}
+                </div>
+                <div className="text-xs text-gray-500">{m.purpose} · {m.detail}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="flex items-baseline justify-between mt-8 mb-2">
+        <h2 className="text-lg font-medium text-gray-900">Data engine feeds</h2>
+        <span className="text-xs text-gray-500">Apify + curated reference · normalise → guard → tag → store</span>
+      </div>
+      <div className="bg-white shadow rounded-lg divide-y divide-gray-100">
+        {ml.data_feeds.map((f: any) => (
+          <div key={f.source_id} className="p-3 flex items-start gap-3">
+            <span className={`mt-0.5 text-[9px] font-bold tracking-wider px-1.5 py-0.5 rounded flex-none ${
+              f.records > 0 ? 'bg-green-100 text-green-800' : f.blocked ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-600'
+            }`}>
+              {f.records > 0 ? `${f.records} RECORDS` : f.blocked ? 'BLOCKED' : 'EMPTY'}
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-gray-900 font-mono">{f.source_id}</div>
+              <div className="text-xs text-gray-500">{f.description}</div>
+              <div className="text-[11px] text-gray-400 mt-0.5">
+                {f.actor ? `actor: ${f.actor}` : 'no actor'} · {f.lawful_basis} · retention {f.retention_days}d
+                {f.blocked && <span className="text-amber-700"> · {f.blocked}</span>}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
 export function IntelPage() {
   const isAdmin = hasRole('admin');
   const [vocab, setVocab] = useState<SourceVocab | null>(null);
@@ -75,6 +136,8 @@ export function IntelPage() {
       </div>
 
       {showAdd && isAdmin && <AddSourceForm vocab={vocab} onDone={() => { setShowAdd(false); load(); }} />}
+
+      <MlStatusSection />
 
       {/* 1. Connected */}
       <div className="flex items-baseline justify-between mt-6 mb-2">
