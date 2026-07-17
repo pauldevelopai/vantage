@@ -83,8 +83,18 @@ class DataEngineStore:
                 continue  # retention enforced on read
             out.append(rec)
 
+        # Content-hash record ids make re-ingest idempotent — enforce it here:
+        # the same record appended by several runs reads as ONE record (keep
+        # the newest, whose retention clock is freshest).
         out.sort(key=lambda r: r.ingested_at, reverse=True)
-        return out[:limit] if limit else out
+        seen: set = set()
+        deduped: List[IngestRecord] = []
+        for rec in out:
+            if rec.record_id in seen:
+                continue
+            seen.add(rec.record_id)
+            deduped.append(rec)
+        return deduped[:limit] if limit else deduped
 
     def latest(self, source_id: str, now: Optional[datetime] = None) -> Optional[IngestRecord]:
         recs = self.query(source_id=source_id, now=now, limit=1)
