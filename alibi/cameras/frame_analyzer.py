@@ -83,12 +83,37 @@ def should_analyze(camera_id: str, now: float, min_gap: float = ANALYZE_MIN_GAP_
     return True
 
 
+def judge_newsworthiness(camera_id: str, intel: Optional[Dict[str, Any]]):
+    """Run the scene-baseline check for a frame BEFORE any paid call: returns
+    (is_news, reason). Judges against what we knew before this frame, then lets
+    the frame teach the baseline — exactly the check decide_event used to run
+    internally, hoisted out so the VLM cost gate can use it too. A camera's
+    permanent furniture (the parked SUV) is not worth a paid narration, let
+    alone an event."""
+    if not intel:
+        return True, None
+    flagged = bool(intel.get("hotlist_hit") or intel.get("watchlist_hit"))
+    composition = {"person": int(intel.get("person_count") or 0),
+                   "vehicle": int(intel.get("vehicle_count") or 0)}
+    try:
+        from alibi.cameras.scene_baseline import get_scene_baseline
+        bl = get_scene_baseline()
+        is_news, reason = bl.newsworthy(camera_id, composition, flagged=flagged)
+        bl.observe(camera_id, composition)
+        return is_news, reason
+    except Exception as e:                     # never let the baseline break ingest
+        print(f"[frame-ai] scene baseline unavailable: {e}")
+        return is_new_activity(camera_id, composition["person"], composition["vehicle"],
+                               flagged=flagged), None
+
+
 def decide_event(
     analysis: Dict[str, Any],
     camera_id: str,
     now: datetime,
     frame_id: str,
     intel: Optional[Dict[str, Any]] = None,
+    newsworthiness: Optional[tuple] = None,
 ) -> Optional[CameraEvent]:
     """Map a frame's findings to a CameraEvent, or None if nothing merits a
     reviewer's attention. Pure + non-accusatory.
@@ -135,23 +160,18 @@ def decide_event(
     # handful of its own false positives.
     baseline_reason = None
     is_news = True
-    flagged = bool(hotlist_hit or watchlist_hit or safety)
-    if intel:
-        composition = {"person": person_count, "vehicle": vehicle_count}
-        try:
-            from alibi.cameras.scene_baseline import get_scene_baseline
-            bl = get_scene_baseline()
-            # Judge against what we knew BEFORE this frame, then let it teach us.
-            is_news, baseline_reason = bl.newsworthy(camera_id, composition, flagged=flagged)
-            bl.observe(camera_id, composition)
-        except Exception as e:                     # never let the baseline break ingest
-            print(f"[frame-ai] scene baseline unavailable: {e}")
-            is_news = is_new_activity(camera_id, person_count, vehicle_count, flagged=flagged)
+    if newsworthiness is not None:
+        # The caller already judged this frame (before the paid VLM call —
+        # judging twice would also double-teach the baseline).
+        is_news, baseline_reason = newsworthiness
+    elif intel:
+        is_news, baseline_reason = judge_newsworthiness(camera_id, intel)
 
     if not (has_person or has_vehicle or safety or hotlist_hit or watchlist_hit):
         return None                                  # honest: nothing to flag
 
-    if intel and not is_news:
+    # A safety concern (from a VLM call that did run) overrides suppression.
+    if intel and not is_news and not safety:
         return None
 
     if has_person:
