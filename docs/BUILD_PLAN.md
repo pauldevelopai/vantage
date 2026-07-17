@@ -68,7 +68,7 @@ threat assessment with the existing "never accuse" safety rules.
 
 ---
 
-## Phase 4 — Security Advisor
+## Phase 4 — Security Advisor ✅ DONE (PR #79)
 "Give suggestions on how to improve your security."
 
 - **Have today:** `continuous_learning` threat enhancement; BE AI READY's
@@ -82,6 +82,10 @@ threat assessment with the existing "never accuse" safety rules.
 ---
 
 ## Phase 5 — Universal Ingest  *(the "any camera, any device" story)*
+> **Design: [PHASE5_UNIVERSAL_INGEST.md](PHASE5_UNIVERSAL_INGEST.md)** — ONVIF
+> discovery is done (PR #84/#85). The rest is designed but unbuilt. Note it also
+> carries the live-view fix: go2rtc speaks WebRTC, which lets the browser reach
+> the recorder directly on the LAN instead of round-tripping through London.
 "Lock onto any cameras on your wifi" + "connect any phone camera or any other
 device in your house."
 
