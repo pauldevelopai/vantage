@@ -3268,6 +3268,14 @@ async def bridge_ingest_frame(camera_id: str, request: Request,
                 print(f"[frame-ai] ai_config unavailable: {e}")
         analysis_ = (fa.analyze_frame(frame, want_vehicle_attrs=wants_attrs) or {}
                      if worth_paying else {})
+        # Validate VLM-claimed badges against the reference catalog — an
+        # unknown make is downgraded so the UI never shows a doubtful badge.
+        if analysis_.get("vehicles"):
+            try:
+                from alibi.dataengine.vehicle_reference import validate_vehicle_attrs
+                analysis_["vehicles"] = validate_vehicle_attrs(analysis_["vehicles"])
+            except Exception:
+                pass
         # Persist a vehicle sighting per detected vehicle (evidence frame + bbox
         # + VLM attributes when unambiguous) — feeds the Overview vehicles strip
         # and vehicle search.

@@ -122,3 +122,25 @@ def test_no_gaps_no_suggestions():
         enrolled_faces=2, face_sightings_ever=10, person_events_window=7,
         hotlist_count=3, cameras_with_area=1)
     assert out == []                                   # honestly empty, never filler
+
+
+# ── vehicle reference validation ───────────────────────────────────────────
+
+from alibi.dataengine.vehicle_reference import validate_vehicle_attrs
+
+
+def test_unknown_make_downgraded_known_kept():
+    makes = {"toyota", "ford"}
+    out = validate_vehicle_attrs([
+        {"make": "Toyota", "model": "Fortuner", "confidence": "high"},
+        {"make": "Zorblax", "model": "Z9", "confidence": "high"},
+        {"make": None, "model": None, "confidence": "low"},
+    ], makes=makes)
+    assert out[0]["confidence"] == "high"
+    assert out[1]["confidence"] == "low" and "catalog" in out[1]["downgraded"]
+    assert out[2]["confidence"] == "low"
+
+
+def test_empty_catalog_changes_nothing():
+    rows = [{"make": "Zorblax", "model": "Z9", "confidence": "high"}]
+    assert validate_vehicle_attrs(rows, makes=set()) == rows
