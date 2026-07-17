@@ -637,6 +637,20 @@ export const api = {
     return res.json();
   },
 
+  /** Name a recurring vehicle ("Paul's Fortuner"); empty label removes it. */
+  async setVehicleLabel(entityId: string, label: string): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/vehicles/entity-label`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entity_id: entityId, label }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to save label');
+    }
+    return res.json();
+  },
+
   /** AI spend controls: vision model, paid-call cap, vehicle narration. */
   async getAiConfig(): Promise<import('./types').AiConfigResponse> {
     const res = await fetchWithAuth(`${API_BASE}/costs/ai-config`);

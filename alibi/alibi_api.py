@@ -1085,6 +1085,58 @@ def _display_names() -> dict:
     return names
 
 
+def _security_suggestions_payload(names: dict) -> list:
+    """Gather the real facts and run the suggestion rules. Degrades to []."""
+    try:
+        from alibi.patterns.suggestions import security_suggestions
+        from alibi.site_profile import get_site_profile_store
+        sites = []
+        try:
+            sites = get_site_profile_store().list()
+        except Exception:
+            pass
+        cameras = []
+        cameras_with_area = 0
+        try:
+            from alibi.cameras.camera_store import get_camera_store
+            cameras = get_camera_store().list_all()
+            cameras_with_area = sum(1 for c in cameras if getattr(c, "area", ""))
+        except Exception:
+            pass
+        enrolled = 0
+        try:
+            from alibi.watchlist.watchlist_store import WatchlistStore
+            enrolled = len(WatchlistStore().get_all_metadata())
+        except Exception:
+            pass
+        faces_ever = 0
+        try:
+            from alibi.watchlist.face_sighting_store import get_face_sighting_store
+            faces_ever = get_face_sighting_store().count()
+        except Exception:
+            pass
+        person_events = 0
+        try:
+            from datetime import timedelta as _td
+            cutoff = datetime.utcnow() - _td(hours=24)
+            for e in get_store().list_events(limit=5000):
+                if getattr(e, "ts", None) and e.ts >= cutoff and e.event_type == "person_detected":
+                    person_events += 1
+        except Exception:
+            pass
+        hotlist_count = 0
+        try:
+            from alibi.plates.hotlist_store import HotlistStore
+            hotlist_count = len(HotlistStore().load_all())
+        except Exception:
+            pass
+        return security_suggestions(sites, cameras, enrolled, faces_ever,
+                                    person_events, hotlist_count, cameras_with_area)
+    except Exception as e:
+        print(f"[dashboard] security suggestions unavailable: {e}")
+        return []
+
+
 @app.get("/dashboard/overview", tags=["Dashboard"])
 async def dashboard_overview(range: str = "24h",
                              current_user: User = Depends(get_current_user)):
@@ -1437,22 +1489,55 @@ async def dashboard_overview(range: str = "24h",
     # vehicles that number represents, and which ones keep coming back.
     vehicles_distinct = None
     recurring_vehicles = []
+    pattern_findings_rows = []
     try:
         from alibi.cameras.cross_camera import get_cross_camera_tracker
+        from alibi.patterns.familiarity import (classify_entity, get_vehicle_labels,
+                                                pattern_findings)
         ent = get_cross_camera_tracker().entity_summary("vehicle", hours=hours)
+        vlabels = get_vehicle_labels()
         if ent:
             vehicles_distinct = len(ent)
             for i, r in enumerate(ent[:5]):
                 # NB: `range` is the shadowing query param here — no range() calls
                 busiest = r["hours"].index(max(r["hours"])) if any(r["hours"]) else None
+                cls = classify_entity(r["count"], r["first_seen"], r["last_seen"],
+                                      r.get("days", 1), r.get("active_hours", 1))
                 recurring_vehicles.append({
                     "label": f"Vehicle {chr(65 + i)}",       # anonymous cluster, honest
+                    "entity_id": r["entity_id"],
+                    "owner_label": (vlabels.get(r["entity_id"]) or {}).get("label"),
+                    "familiarity": cls,
                     "count": r["count"],
+                    "days": r.get("days", 1),
                     "first_seen": r["first_seen"],
                     "last_seen": r["last_seen"],
                     "cameras": [names.get(c, c) for c in r["cameras"]],
                     "busiest_hour_utc": busiest,
                 })
+
+        # Explicit findings: what is here all the time, what is new, what has a
+        # rhythm — plus each camera's learned "normal" scene.
+        camera_normals = {}
+        try:
+            from alibi.cameras.scene_baseline import get_scene_baseline
+            bl = get_scene_baseline()
+            for cid, nm in names.items():
+                if bl.is_learned(cid):
+                    camera_normals[nm] = bl.normal(cid)
+        except Exception:
+            pass
+        people_hours_utc = None
+        if patterns and patterns.get("people_by_hour"):
+            # patterns buckets are site-local; rotate back to UTC for findings
+            # (no range() here — the query param shadows the builtin)
+            local = patterns["people_by_hour"]
+            off = 2  # Africa/Johannesburg
+            people_hours_utc = [local[(i + off) % 24] for i, _ in enumerate(local)]
+        pattern_findings_rows = pattern_findings(
+            [dict(r, label=f"Vehicle {chr(65 + i)}") for i, r in enumerate(ent[:5])],
+            labels=vlabels, camera_normals=camera_normals,
+            people_by_hour=people_hours_utc)
     except Exception as e:
         print(f"[dashboard] vehicle entity summary unavailable: {e}")
 
@@ -1477,6 +1562,8 @@ async def dashboard_overview(range: str = "24h",
         "patterns": patterns,
         "situations": situations,
         "recurring_vehicles": recurring_vehicles,
+        "pattern_findings": pattern_findings_rows,
+        "security_suggestions": _security_suggestions_payload(names),
     }
 
 
@@ -3625,6 +3712,29 @@ async def update_ai_config_endpoint(
         raise HTTPException(status_code=400, detail=str(e))
     get_store().append_audit("ai_config_set", {"user": current_user.username, **cfg})
     return {"config": cfg, "vision_models": VISION_MODELS}
+
+
+class VehicleLabelUpdate(BaseModel):
+    entity_id: str
+    label: str
+
+
+@app.put("/vehicles/entity-label", tags=["Vehicles"])
+async def set_vehicle_entity_label(
+    payload: VehicleLabelUpdate,
+    current_user: User = Depends(require_role([Role.SUPERVISOR, Role.ADMIN])),
+):
+    """Name a recurring vehicle ("Paul's Fortuner") — the owner saying "that
+    one is mine". Identity only ever comes from the owner; empty label removes
+    the name. Audited."""
+    from alibi.patterns.familiarity import set_vehicle_label
+    result = set_vehicle_label(payload.entity_id, payload.label,
+                               set_by=current_user.username)
+    get_store().append_audit("vehicle_labelled", {
+        "user": current_user.username, "entity_id": payload.entity_id,
+        "label": payload.label.strip() or None,
+    })
+    return {"entity_id": payload.entity_id, **(result or {"label": None})}
 
 
 class CreditsUpdate(BaseModel):

@@ -310,13 +310,19 @@ export interface DashboardOverview {
   patterns: DashboardPatterns | null;
   situations: DashboardSituation[];
   recurring_vehicles: RecurringVehicle[];
+  pattern_findings: PatternFinding[];
+  security_suggestions: SecuritySuggestion[];
 }
 
 /** An appearance-ReID cluster: the SAME vehicle seen repeatedly, linked by our
  *  own cameras' embeddings. Anonymous ("Vehicle A") — continuity, no identity. */
 export interface RecurringVehicle {
   label: string;
+  entity_id: string;
+  owner_label: string | null;        // the owner's own name for it ("Paul's Fortuner")
+  familiarity: 'resident' | 'regular' | 'new' | 'occasional';
   count: number;
+  days: number;
   first_seen: string;
   last_seen: string;
   cameras: string[];
@@ -491,4 +497,21 @@ export interface AiConfig {
 export interface AiConfigResponse {
   config: AiConfig;
   vision_models: Record<string, { label: string; in_usd: number; out_usd: number }>;
+}
+
+/** An explicit pattern sentence ("Vehicle C is NEW to the scene — first seen 14:02"). */
+export interface PatternFinding {
+  kind: 'new' | 'regular' | 'resident' | 'occasional' | 'scene' | 'people';
+  entity_id: string | null;
+  label: string;
+  owner_label: string | null;
+  text: string;
+}
+
+/** A cited, actionable way to improve the security setup. */
+export interface SecuritySuggestion {
+  title: string;
+  why: string;
+  link: string;
+  action: string;
 }

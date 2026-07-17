@@ -4,7 +4,7 @@ import { api } from '../lib/api';
 import { hasRole } from '../lib/auth';
 import { AuthImg } from '../components/AuthImg';
 import { CropImg } from '../components/CropImg';
-import type { DashboardOverview, DashboardPatterns, DashboardPerson, DashboardRow, DashboardVehicle, WatchingFor } from '../lib/types';
+import type { DashboardOverview, DashboardPatterns, DashboardPerson, DashboardRow, DashboardVehicle, PatternFinding, RecurringVehicle, WatchingFor } from '../lib/types';
 
 /**
  * The Overview dashboard — the tab shown to clients.
@@ -328,28 +328,44 @@ export function DashboardPage() {
                                  ? `busiest ${String(data.patterns.busiest_hour).padStart(2, '0')}:00–${String((data.patterns.busiest_hour + 1) % 24).padStart(2, '0')}:00 · ${data.patterns.busiest_camera || ''}`
                                  : 'no activity in this window'} />
                     <PatternsHeatmap p={data.patterns} />
+                    {data.pattern_findings?.length > 0 && (
+                      <div className="mt-4 pt-3 border-t border-slate-800/70">
+                        <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-2">
+                          What's happening <span className="text-slate-600 normal-case tracking-normal">— familiar vs new, from your own cameras</span>
+                        </h3>
+                        <FindingsList findings={data.pattern_findings} />
+                      </div>
+                    )}
                     {data.recurring_vehicles?.length > 0 && (
                       <div className="mt-4 pt-3 border-t border-slate-800/70">
                         <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-2">
-                          Recurring vehicles <span className="text-slate-600 normal-case tracking-normal">— the same vehicle, linked by appearance</span>
+                          Recurring vehicles <span className="text-slate-600 normal-case tracking-normal">— linked by appearance · name yours and it reads as familiar</span>
                         </h3>
                         <ul className="space-y-1.5">
                           {data.recurring_vehicles.map(v => (
-                            <li key={v.label} className="flex items-center gap-2 text-xs">
-                              <span className="w-2 h-2 rounded-full bg-cyan-400/80 flex-none" />
-                              <span className="text-slate-300 font-medium">{v.label}</span>
-                              <span className="text-slate-500">
-                                seen {v.count}× · {v.cameras.join(', ')}
-                                {v.busiest_hour_utc !== null && ` · mostly around ${String((v.busiest_hour_utc + 2) % 24).padStart(2, '0')}:00`}
-                              </span>
-                              <span className="text-slate-600 ml-auto font-mono text-[10px]">
-                                {timeAgo(v.last_seen)}
-                              </span>
-                            </li>
+                            <RecurringVehicleRow key={v.entity_id} v={v} onSaved={() => load(range)} />
                           ))}
                         </ul>
                       </div>
                     )}
+                  </Panel>
+                )}
+
+                {data.security_suggestions?.length > 0 && (
+                  <Panel className="mb-4" delay={318}>
+                    <PanelHead title="Improve your security"
+                               right="from this system's own gaps · disappears when fixed" />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {data.security_suggestions.map(sg => (
+                        <div key={sg.title} className="rounded-lg border border-slate-800 bg-black/30 p-3">
+                          <div className="text-xs font-medium text-slate-200">{sg.title}</div>
+                          <p className="mt-1 text-[11px] text-slate-500 leading-relaxed">{sg.why}</p>
+                          <Link to={sg.link} className="mt-1.5 inline-block text-[11px] text-indigo-400 hover:text-indigo-300 no-underline">
+                            {sg.action} →
+                          </Link>
+                        </div>
+                      ))}
+                    </div>
                   </Panel>
                 )}
 
@@ -766,6 +782,84 @@ function PatternsHeatmap({ p }: { p: DashboardPatterns }) {
         <p className="text-[9px] text-slate-600 mt-1.5 ml-[104px]">hour of day ({p.tz})</p>
       </div>
     </div>
+  );
+}
+
+const FINDING_BADGE: Record<string, { label: string; cls: string }> = {
+  new:        { label: 'NEW', cls: 'bg-amber-400 text-black' },
+  regular:    { label: 'PATTERN', cls: 'bg-indigo-500/80 text-white' },
+  resident:   { label: 'FAMILIAR', cls: 'bg-emerald-600/80 text-white' },
+  occasional: { label: 'SEEN', cls: 'bg-slate-700 text-slate-300' },
+  scene:      { label: 'ALWAYS THERE', cls: 'bg-slate-700 text-slate-300' },
+  people:     { label: 'RHYTHM', cls: 'bg-indigo-500/60 text-white' },
+};
+
+/** Explicit sentences about what is happening — familiar vs new, in words. */
+function FindingsList({ findings }: { findings: PatternFinding[] }) {
+  return (
+    <ul className="space-y-1.5">
+      {findings.map((f, i) => {
+        const b = FINDING_BADGE[f.kind] || FINDING_BADGE.occasional;
+        return (
+          <li key={i} className="flex items-start gap-2 text-xs">
+            <span className={`mt-0.5 text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded flex-none ${b.cls} ${f.kind === 'new' ? 'vg-live' : ''}`}>
+              {b.label}
+            </span>
+            <span className="text-slate-400 leading-relaxed">{f.text}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** One recurring-vehicle row with the owner's "name it" control — the vehicle
+ *  analog of enrolling a face: identity only ever comes from the owner. */
+function RecurringVehicleRow({ v, onSaved }: { v: RecurringVehicle; onSaved: () => void }) {
+  const canName = hasRole('supervisor') || hasRole('admin');
+  const [naming, setNaming] = useState(false);
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    setBusy(true);
+    try {
+      await api.setVehicleLabel(v.entity_id, name.trim());
+      setNaming(false);
+      onSaved();
+    } catch { /* row keeps old state */ } finally { setBusy(false); }
+  }
+
+  const fam = FINDING_BADGE[v.familiarity] || FINDING_BADGE.occasional;
+  return (
+    <li className="flex items-center gap-2 text-xs flex-wrap">
+      <span className={`text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded flex-none ${fam.cls}`}>{fam.label}</span>
+      <span className="text-slate-300 font-medium">{v.owner_label ? `“${v.owner_label}”` : v.label}</span>
+      <span className="text-slate-500">
+        seen {v.count}× over {v.days} day{v.days === 1 ? '' : 's'} · {v.cameras.join(', ')}
+        {v.busiest_hour_utc !== null && ` · mostly around ${String((v.busiest_hour_utc + 2) % 24).padStart(2, '0')}:00`}
+      </span>
+      {canName && !naming && (
+        <button onClick={() => { setNaming(true); setName(v.owner_label || ''); }}
+                className="text-[10px] text-indigo-400 hover:text-indigo-300">
+          {v.owner_label ? 'rename' : 'name it'}
+        </button>
+      )}
+      {naming && (
+        <span className="flex items-center gap-1">
+          <input autoFocus value={name} onChange={e => setName(e.target.value)}
+                 onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setNaming(false); }}
+                 placeholder="e.g. Paul's Fortuner"
+                 className="w-36 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-[11px] text-slate-200 placeholder:text-slate-600 focus:border-indigo-500 outline-none" />
+          <button onClick={save} disabled={busy}
+                  className="text-[10px] bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded px-1.5 py-0.5">
+            {busy ? '…' : 'Save'}
+          </button>
+          <button onClick={() => setNaming(false)} className="text-[10px] text-slate-500">✕</button>
+        </span>
+      )}
+      <span className="text-slate-600 ml-auto font-mono text-[10px]">{timeAgo(v.last_seen)}</span>
+    </li>
   );
 }
 
