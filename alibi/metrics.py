@@ -77,17 +77,79 @@ class MetricsAggregator:
         return count
 
     def compute_summary(self, range_str: str = "24h") -> Dict[str, Any]:
-        """Return real KPI counts over the requested window."""
+        """Real KPIs over the window, read through the REAL stores.
+
+        The old version counted raw lines in JSONL files — but those files are
+        encrypted at rest, so every count was silently zero and the Metrics
+        page sat dormant while the system was busy. Each section degrades
+        independently to honest zeros."""
         cutoff = datetime.utcnow() - _parse_range(range_str)
-        return {
+        out: Dict[str, Any] = {
             "range": range_str,
             "generated_at": datetime.utcnow().isoformat(),
-            "incidents": self._count_recent("incident_processing.jsonl", cutoff),
-            "analyses": self._count_recent("camera_analysis.jsonl", cutoff),
-            "cross_camera_sightings": self._count_recent("cross_camera_sightings.jsonl", cutoff),
-            "vehicle_sightings": self._count_recent("vehicle_sightings.jsonl", cutoff),
-            "red_flags": self._count_recent("red_flags.jsonl", cutoff),
+            "total_incidents": 0,
+            "dismissed_rate": 0.0,
+            "escalation_rate": 0.0,
+            "avg_time_to_decision": None,
+            "top_cameras": [],
+            "top_zones": [],
+            "vehicle_sightings": 0,
+            "face_sightings": 0,
         }
+
+        try:
+            from alibi.alibi_store import get_store
+            store = get_store()
+
+            incidents = [i for i in store.list_incidents(limit=2000)
+                         if getattr(i, "created_ts", None) and i.created_ts >= cutoff]
+            out["total_incidents"] = len(incidents)
+            if incidents:
+                statuses = [getattr(i.status, "value", str(i.status)) for i in incidents]
+                out["dismissed_rate"] = round(statuses.count("dismissed") / len(incidents), 3)
+                out["escalation_rate"] = round(statuses.count("escalated") / len(incidents), 3)
+
+            # Time-to-decision: decision ts minus its incident's creation.
+            created = {i.incident_id: i.created_ts for i in incidents}
+            deltas = []
+            try:
+                for d in store.list_decisions(limit=2000):
+                    c = created.get(d.incident_id)
+                    if c is not None and d.decision_ts >= c:
+                        deltas.append((d.decision_ts - c).total_seconds() / 60.0)
+            except Exception:
+                pass
+            if deltas:
+                out["avg_time_to_decision"] = round(sum(deltas) / len(deltas), 1)
+
+            cam_counts: Dict[str, int] = {}
+            zone_counts: Dict[str, int] = {}
+            for e in store.list_events(limit=5000):
+                if getattr(e, "ts", None) and e.ts >= cutoff:
+                    cam_counts[e.camera_id] = cam_counts.get(e.camera_id, 0) + 1
+                    if getattr(e, "zone_id", None):
+                        zone_counts[e.zone_id] = zone_counts.get(e.zone_id, 0) + 1
+            out["top_cameras"] = [{"camera_id": c, "count": n} for c, n in
+                                  sorted(cam_counts.items(), key=lambda kv: -kv[1])[:5]]
+            out["top_zones"] = [{"zone_id": z, "count": n} for z, n in
+                                sorted(zone_counts.items(), key=lambda kv: -kv[1])[:5]]
+        except Exception:
+            pass
+
+        cutoff_iso = cutoff.isoformat()
+        try:
+            from alibi.vehicles.sightings_store import VehicleSightingsStore
+            out["vehicle_sightings"] = sum(
+                1 for s in VehicleSightingsStore().load_all() if s.ts >= cutoff_iso)
+        except Exception:
+            pass
+        try:
+            from alibi.watchlist.face_sighting_store import get_face_sighting_store
+            out["face_sightings"] = sum(
+                1 for s in get_face_sighting_store().load_all() if s.ts >= cutoff_iso)
+        except Exception:
+            pass
+        return out
 
 
 _aggregator_instance: Optional[MetricsAggregator] = None
