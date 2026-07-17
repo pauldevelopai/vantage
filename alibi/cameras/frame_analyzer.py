@@ -125,12 +125,26 @@ def decide_event(
     if not (has_person or has_vehicle or safety or hotlist_hit or watchlist_hit):
         return None                                  # honest: nothing to flag
 
-    # Presence isn't news — change is. A car parked in view is detected in every
-    # frame; without this, that's an alert every few seconds forever. Only raise
-    # when there is MORE than the camera last saw (or something flagged).
-    if intel and not is_new_activity(camera_id, person_count, vehicle_count,
-                                     flagged=(hotlist_hit or watchlist_hit or safety)):
-        return None
+    # Presence isn't news — MORE THAN NORMAL is. Each camera learns what it always
+    # shows (a parked SUV, a shrub the detector calls a car) and stays quiet about
+    # it; a person where there is normally none still raises. Comparing against a
+    # learned median also survives detection flicker (1 -> 0 -> 1), which defeated
+    # the older "changed since the last frame" rule.
+    baseline_reason = None
+    if intel:
+        composition = {"person": person_count, "vehicle": vehicle_count}
+        flagged = bool(hotlist_hit or watchlist_hit or safety)
+        try:
+            from alibi.cameras.scene_baseline import get_scene_baseline
+            bl = get_scene_baseline()
+            is_news, baseline_reason = bl.newsworthy(camera_id, composition, flagged=flagged)
+            bl.observe(camera_id, composition)     # learn from every frame, raised or not
+            if not is_news:
+                return None
+        except Exception as e:                     # never let the baseline break ingest
+            print(f"[frame-ai] scene baseline unavailable: {e}")
+            if not is_new_activity(camera_id, person_count, vehicle_count, flagged=flagged):
+                return None
 
     if has_person:
         event_type, severity = "person_detected", 3
@@ -171,6 +185,10 @@ def decide_event(
             "cross_camera_alerts": intel.get("cross_camera_alerts") or [],
             "detections": intel.get("detections") or [],
         }
+        # Why this frame was worth raising when the camera's normal scene isn't —
+        # the explainer and the brief can quote it verbatim.
+        if baseline_reason:
+            metadata["intel"]["why_raised"] = baseline_reason
 
     return CameraEvent(
         event_id=f"frm_{frame_id}",

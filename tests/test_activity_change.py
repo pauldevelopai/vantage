@@ -11,12 +11,25 @@ from datetime import datetime
 from alibi.cameras.frame_analyzer import (
     decide_event, is_new_activity, reset_activity_baseline,
 )
+from alibi.cameras import scene_baseline as sb
 
 NOW = datetime(2026, 7, 16, 20, 0, 0)
+
+LEARN = 10          # comfortably past the baseline's min_frames
 
 
 def setup_function():
     reset_activity_baseline()
+    # decide_event consults the GLOBAL scene baseline, which persists to disk.
+    # Swap in an isolated in-memory one so tests never touch real data.
+    store = {}
+    sb._baseline = sb.SceneBaseline(storage_path=None, min_frames=8,
+                                    loader=lambda: store,
+                                    saver=lambda h: store.update(h))
+
+
+def teardown_function():
+    sb.reset_scene_baseline()
 
 
 def _r(desc="", safety=False):
@@ -65,26 +78,33 @@ def test_baseline_is_per_camera():
 # --- through decide_event --------------------------------------------------- #
 
 def test_static_scene_stops_raising_incidents():
+    """A parked car is news while the camera is still learning its scene, then
+    becomes furniture once the baseline knows it's always there."""
     intel = {"person_count": 0, "vehicle_count": 1}
-    first = decide_event(_r("a car on the driveway"), "cam1", NOW, "f1", intel=intel)
-    assert first is not None                          # the arrival
-    again = decide_event(_r("a car on the driveway"), "cam1", NOW, "f2", intel=intel)
-    assert again is None                              # the same parked car — silence
+    first = decide_event(_r("a car on the driveway"), "cam1", NOW, "f0", intel=intel)
+    assert first is not None                          # first sighting is news
+    for i in range(LEARN):                            # it never leaves — learn that
+        decide_event(_r("a car on the driveway"), "cam1", NOW, f"f{i}", intel=intel)
+    again = decide_event(_r("a car on the driveway"), "cam1", NOW, "fz", intel=intel)
+    assert again is None                              # now it's scenery — silence
 
 
 def test_person_arriving_still_raises_despite_static_car():
     car = {"person_count": 0, "vehicle_count": 1}
-    decide_event(_r(), "cam1", NOW, "f1", intel=car)
-    decide_event(_r(), "cam1", NOW, "f2", intel=car)
-    ev = decide_event(_r(), "cam1", NOW, "f3", intel={"person_count": 1, "vehicle_count": 1})
+    for i in range(LEARN):
+        decide_event(_r(), "cam1", NOW, f"f{i}", intel=car)   # learn the parked car
+    assert decide_event(_r(), "cam1", NOW, "fq", intel=car) is None      # quiet
+    ev = decide_event(_r(), "cam1", NOW, "fp", intel={"person_count": 1, "vehicle_count": 1})
     assert ev is not None and ev.event_type == "person_detected"
+    assert "normally shows none" in ev.metadata["intel"]["why_raised"]
 
 
 def test_hotlist_still_raises_on_an_unchanged_scene():
     intel = {"person_count": 0, "vehicle_count": 1, "hotlist_hit": True}
-    decide_event(_r(), "cam1", NOW, "f1", intel=intel)
-    ev = decide_event(_r(), "cam1", NOW, "f2", intel=intel)
-    assert ev is not None and ev.severity == 4        # never suppressed
+    for i in range(LEARN):
+        decide_event(_r(), "cam1", NOW, f"f{i}", intel=intel)
+    ev = decide_event(_r(), "cam1", NOW, "fz", intel=intel)
+    assert ev is not None and ev.severity == 4        # never treated as scenery
 
 
 def test_vlm_only_path_is_unaffected():
