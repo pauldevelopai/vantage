@@ -104,11 +104,20 @@ def decide_event(
     desc = str(analysis.get("description") or "")
     low = desc.lower()
 
-    # Structured detections (reliable) OR the VLM's read (fallback).
+    # When the detector ran, it IS the answer. Do not also substring-match the
+    # VLM's prose: "No people are visible in this nighttime frame" contains the
+    # word "people", so the naive match read a flat denial as a sighting and
+    # stamped person_detected on an empty garden — every single frame.
+    # The text match survives only as a fallback for when there is no detector.
     person_count = int(intel.get("person_count") or 0)
     vehicle_count = int(intel.get("vehicle_count") or 0)
-    has_person = person_count > 0 or "person" in objs or "people" in low or "person" in low
-    has_vehicle = vehicle_count > 0 or any(v in objs for v in _VEHICLE_WORDS) or any(v in low for v in _VEHICLE_WORDS)
+    if intel:
+        has_person = person_count > 0
+        has_vehicle = vehicle_count > 0
+    else:
+        has_person = "person" in objs or "people" in low or "person" in low
+        has_vehicle = (any(v in objs for v in _VEHICLE_WORDS)
+                       or any(v in low for v in _VEHICLE_WORDS))
     safety = bool(analysis.get("safety_concern"))
     hotlist_hit = bool(intel.get("hotlist_hit"))
     watchlist_hit = bool(intel.get("watchlist_hit"))
