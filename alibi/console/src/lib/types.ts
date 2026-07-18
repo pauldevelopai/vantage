@@ -266,10 +266,26 @@ export interface DashboardVehicle {
   model: string | null;
   body: string | null;
   attr_confidence: 'high' | 'medium' | 'low' | null;
+  /** Free D-FINE class (car/truck/bus/motorcycle) — a real coarse type even
+   *  when the VLM didn't run to give a body/make/model. */
+  det_class: string | null;
   plate: string | null;
+  /** Where the vehicle is REGISTERED (from the plate) — never where a person
+   *  is from. Present only when the plate could be placed with confidence. */
+  region: PlateRegion | null;
   camera_id: string;
   camera_name: string;
   ts: string;
+}
+
+export interface PlateRegion {
+  plate: string;
+  province: string;
+  town: string | null;
+  confidence: 'high' | 'medium' | 'low';
+  out_of_area: boolean;
+  text: string;
+  basis: string | null;
 }
 
 /** One posture trigger on the watching-for panel. evaluated=false means armed

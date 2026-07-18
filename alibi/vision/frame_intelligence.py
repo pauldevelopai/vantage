@@ -116,18 +116,34 @@ def _run_plates(mce, frame, camera_id: str, ts: datetime, out: Dict[str, Any]) -
             out["hotlist_hit"] = True
             out["hotlist_reason"] = hl_reason
 
+        # Decode the plate's REGISTRATION region — where the vehicle is
+        # registered (province/town), never where a person is "from". A
+        # deterministic, free signal; out-of-province plates are worth a look.
+        region = None
+        try:
+            from alibi.vehicles.plate_region import registration_note
+            region = registration_note(plate_key)
+        except Exception:
+            region = None
+
         out["plates"].append({
             "text": plate_key, "display": display_text,
             "confidence": round(min(plate.confidence, ocr_conf), 2),
             "hotlist_match": is_hotlist, "hotlist_reason": hl_reason,
+            "region": region,
         })
 
         try:
+            plate_meta = {"plate_text": plate_key, "ocr_confidence": ocr_conf}
+            if region:
+                plate_meta["reg_province"] = region["province"]
+                plate_meta["reg_town"] = region["town"]
+                plate_meta["reg_out_of_area"] = region["out_of_area"]
             mce._sightings_store.add_sighting(VehicleSighting(
                 sighting_id=str(uuid.uuid4()), camera_id=camera_id, ts=ts.isoformat(),
                 bbox=plate.bbox, color="unknown", make="unknown", model="unknown",
                 confidence=round(min(plate.confidence, ocr_conf), 2),
-                metadata={"plate_text": plate_key, "ocr_confidence": ocr_conf},
+                metadata=plate_meta,
             ))
         except Exception as e:  # pragma: no cover
             print(f"[frame-intel] vehicle-sighting write failed: {e}")
