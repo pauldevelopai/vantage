@@ -864,16 +864,20 @@ function RecurringVehicleRow({ v, onSaved }: { v: RecurringVehicle; onSaved: () 
 }
 
 /** Honest vehicle description: the badge (make/model) is shown ONLY at high VLM
- *  confidence — otherwise colour + body ("White SUV"). Colour may also come
- *  from the crop's own pixels (HSV). Never a guessed model. */
+ *  confidence — otherwise colour + body ("White SUV"). Type falls back to the
+ *  free D-FINE class (truck/bus/motorcycle) when the VLM didn't run. Colour may
+ *  come from the crop's own pixels (HSV). Never a guessed model. */
 function vehicleTitle(v: DashboardVehicle): string {
   const colour = v.colour ? v.colour[0].toUpperCase() + v.colour.slice(1) : '';
   const badge = v.attr_confidence === 'high' && v.make
     ? [v.make, v.model].filter(Boolean).join(' ')
     : '';
-  const body = badge || v.body || (colour ? 'vehicle' : '');
+  // Prefer the VLM body; else the detector's own class (a real, free type);
+  // 'car' stays generic ("vehicle") since it adds nothing over the word.
+  const detType = v.det_class && v.det_class !== 'car' ? v.det_class : '';
+  const body = badge || v.body || detType || (colour ? 'vehicle' : '');
   const title = [colour, body].filter(Boolean).join(' ').trim();
-  return title || 'Vehicle';
+  return title ? title.charAt(0).toUpperCase() + title.slice(1) : 'Vehicle';
 }
 
 function VehicleCard({ v, i }: { v: DashboardVehicle; i: number }) {
@@ -887,10 +891,22 @@ function VehicleCard({ v, i }: { v: DashboardVehicle; i: number }) {
         <span className="absolute bottom-1 right-1.5 text-[8px] px-1 py-0.5 rounded bg-black/80 text-slate-400 font-mono">
           {timeAgo(v.ts)}
         </span>
+        {v.region?.out_of_area && (
+          <span className="absolute top-1 left-1 text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded bg-amber-400 text-black vg-live">
+            OUT OF PROVINCE
+          </span>
+        )}
       </div>
       <div className="px-2 py-1.5 border-t border-slate-800/70">
         <div className="text-[11px] font-medium text-slate-200 truncate">{vehicleTitle(v)}</div>
         {v.plate && <div className="text-[10px] font-mono text-cyan-400 truncate">{v.plate}</div>}
+        {v.region && (
+          <div className={`text-[9px] truncate ${v.region.out_of_area ? 'text-amber-400' : 'text-slate-500'}`}
+               title={v.region.basis || undefined}>
+            {v.region.town ? `${v.region.town}, ${v.region.province}` : v.region.province}
+            {v.region.out_of_area ? ' · out of area' : v.region.province === 'Western Cape' ? ' · local' : ''}
+          </div>
+        )}
         <div className="text-[9px] text-slate-600 truncate">{v.camera_name}</div>
       </div>
     </div>

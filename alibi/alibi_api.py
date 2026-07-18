@@ -1304,7 +1304,11 @@ async def dashboard_overview(range: str = "24h",
             continue
         attrs_list = i.get("vehicle_attrs") or []
         attach = attrs_list[0] if (len(dets) == 1 and len(attrs_list) == 1) else None
-        plates = [p.get("display") or p.get("text") for p in (i.get("plates") or [])]
+        plate_objs = i.get("plates") or []
+        plates = [p.get("display") or p.get("text") for p in plate_objs]
+        # Registration region of the first read plate (province/town + whether
+        # it's out of province for this site). Where the vehicle is registered.
+        plate_region = next((p.get("region") for p in plate_objs if p.get("region")), None)
         for d in dets:
             if len(recent_vehicles) >= 12:
                 break
@@ -1338,7 +1342,9 @@ async def dashboard_overview(range: str = "24h",
                 "model": attach.get("model") if attach else None,
                 "body": attach.get("body") if attach else None,
                 "attr_confidence": attach.get("confidence") if attach else None,
+                "det_class": d.get("class"),   # free D-FINE type (car/truck/bus/motorcycle)
                 "plate": plates[0] if plates else None,
+                "region": plate_region,        # where the vehicle is registered
                 "camera_id": e.camera_id,
                 "camera_name": names.get(e.camera_id, e.camera_id),
                 "ts": e.ts.isoformat(),
