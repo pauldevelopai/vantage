@@ -1308,7 +1308,19 @@ async def dashboard_overview(range: str = "24h",
         plates = [p.get("display") or p.get("text") for p in plate_objs]
         # Registration region of the first read plate (province/town + whether
         # it's out of province for this site). Where the vehicle is registered.
+        # Prefer the region stored at read-time; else decode now from the plate
+        # string (pure + free) so plates read before this shipped still resolve.
         plate_region = next((p.get("region") for p in plate_objs if p.get("region")), None)
+        if plate_region is None and plate_objs:
+            try:
+                from alibi.vehicles.plate_region import registration_note
+                for p in plate_objs:
+                    note = registration_note(p.get("text") or p.get("display") or "")
+                    if note:
+                        plate_region = note
+                        break
+            except Exception:
+                plate_region = None
         for d in dets:
             if len(recent_vehicles) >= 12:
                 break
