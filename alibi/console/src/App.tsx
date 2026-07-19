@@ -110,7 +110,7 @@ function Layout({ children }: { children: React.ReactNode }) {
             <Link to="/" className="text-white font-bold text-base mr-4 whitespace-nowrap tracking-tight no-underline">
               Vantage
             </Link>
-            <div className="hidden sm:flex items-center gap-0.5 overflow-x-auto flex-1" style={{ scrollbarWidth: 'none' }}>
+            <div className="hidden sm:flex items-center gap-0.5 overflow-x-auto flex-1 pr-3" style={{ scrollbarWidth: 'none' }}>
               {/* The at-a-glance view of everything the cameras have seen */}
               {navLink('/overview', 'Overview')}
               <div className="w-px h-5 bg-white/10 mx-1.5 flex-shrink-0" />
@@ -136,7 +136,7 @@ function Layout({ children }: { children: React.ReactNode }) {
               {hasRole('admin') && navLink('/costs', 'Costs')}
               {hasRole('admin') && navLink('/settings', 'Settings')}
             </div>
-            <div className="flex items-center gap-2.5 ml-auto flex-shrink-0">
+            <div className="flex items-center gap-2.5 ml-auto flex-shrink-0 pl-3 border-l border-white/10 bg-gray-900/95 backdrop-blur-xl">
               <ThemeToggle />
               <button
                 onClick={toggleLayout}

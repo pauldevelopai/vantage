@@ -3576,11 +3576,16 @@ async def get_site_brief(
     and what may be worth a human look, grounded in this site's real incidents
     and tuned to its posture. Honest empty state when the window is quiet."""
     from alibi.security_brief import generate_brief_for_site
+    from alibi.ttl_cache import cached
     window_hours = max(1, min(int(window_hours or 24), 24 * 30))   # clamp 1h..30d
-    brief = generate_brief_for_site(site_id, window_hours=window_hours)
-    if brief is None:
+    # Cache 10 min: the brief makes a PAID Claude call to phrase the narrative,
+    # so recomputing on every Advisor page view was both ~20s slow AND a repeat
+    # spend. Incidents change slowly; 10 min is plenty fresh.
+    result = cached(f"brief:{site_id}:{window_hours}", 600.0,
+                    lambda: generate_brief_for_site(site_id, window_hours=window_hours))
+    if result is None:
         raise HTTPException(status_code=404, detail="Site not found")
-    return brief.to_dict()
+    return result.to_dict()
 
 
 @app.put("/sites/{site_id}", tags=["Sites"])
