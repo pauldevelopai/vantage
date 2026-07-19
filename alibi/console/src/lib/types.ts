@@ -330,6 +330,23 @@ export interface DashboardOverview {
   recurring_vehicles: RecurringVehicle[];
   pattern_findings: PatternFinding[];
   security_suggestions: SecuritySuggestion[];
+  field_reports?: FieldReport[];
+}
+
+/** A human observation from the ground (guard/operator) — evidence beside the
+ *  cameras, never a verdict. corroboration is a camera sighting that backs it. */
+export interface FieldReport {
+  report_id: string;
+  ts: string;
+  observer: string;
+  subject: 'person' | 'vehicle' | 'other';
+  note: string;
+  camera_id: string | null;
+  camera_name?: string | null;
+  location: string;
+  tags: Record<string, string>;
+  source: string;
+  corroboration?: { event_id: string; ts: string; colour: string | null; camera_name: string | null } | null;
 }
 
 /** An appearance-ReID cluster: the SAME vehicle seen repeatedly, linked by our

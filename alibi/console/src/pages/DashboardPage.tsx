@@ -4,7 +4,7 @@ import { api } from '../lib/api';
 import { hasRole } from '../lib/auth';
 import { AuthImg } from '../components/AuthImg';
 import { CropImg } from '../components/CropImg';
-import type { DashboardOverview, DashboardPatterns, DashboardPerson, DashboardRow, DashboardVehicle, PatternFinding, RecurringVehicle, WatchingFor } from '../lib/types';
+import type { DashboardOverview, DashboardPatterns, DashboardPerson, DashboardRow, DashboardVehicle, FieldReport, PatternFinding, RecurringVehicle, WatchingFor } from '../lib/types';
 
 /**
  * The Overview dashboard — the tab shown to clients.
@@ -93,6 +93,7 @@ const CSS = `
 export function DashboardPage() {
   const [range, setRange] = useState('24h');
   const [vehicleHistory, setVehicleHistory] = useState<string | null>(null);
+  const [logReport, setLogReport] = useState(false);
   const [data, setData] = useState<DashboardOverview | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -210,6 +211,17 @@ export function DashboardPage() {
                     <WatchingForPanel wf={data.watching_for} />
                   </Panel>
                 )}
+
+                <Panel className="mb-4" delay={210}>
+                  <div className="flex items-center justify-between mb-3">
+                    <h2 className="text-[11px] font-semibold text-slate-300 uppercase tracking-[0.14em]">Reports from the ground</h2>
+                    <button onClick={() => setLogReport(true)}
+                            className="text-[10px] text-indigo-400 hover:text-indigo-300 border border-indigo-500/30 hover:border-indigo-400/60 rounded px-2 py-0.5">
+                      + Log a report
+                    </button>
+                  </div>
+                  <FieldReportsList reports={data.field_reports || []} />
+                </Panel>
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
                   <Panel className="lg:col-span-2" delay={220}>
@@ -404,6 +416,106 @@ export function DashboardPage() {
       {vehicleHistory && (
         <VehicleHistoryModal entityId={vehicleHistory} onClose={() => setVehicleHistory(null)} />
       )}
+      {logReport && (
+        <LogReportModal cameras={(data?.cameras || []).map(c => ({ id: c.camera_id, name: c.name }))}
+                        onClose={() => setLogReport(false)}
+                        onSaved={() => { setLogReport(false); load(range); }} />
+      )}
+    </div>
+  );
+}
+
+/** Recent human observations, newest first, each with a corroboration badge
+ *  when a camera sighting backs it up. Honest empty state. */
+function FieldReportsList({ reports }: { reports: FieldReport[] }) {
+  if (reports.length === 0) {
+    return <p className="text-xs text-slate-600 py-3">No reports yet. A guard or operator can log what they see — it sits beside the camera data.</p>;
+  }
+  const icon: Record<string, string> = { vehicle: '🚗', person: '🚶', other: '📍' };
+  return (
+    <ul className="space-y-2">
+      {reports.map(r => (
+        <li key={r.report_id} className="flex items-start gap-2 text-xs">
+          <span className="text-sm leading-none mt-0.5">{icon[r.subject] || '📍'}</span>
+          <div className="min-w-0 flex-1">
+            <div className="text-slate-300">{r.note}</div>
+            <div className="text-[10px] text-slate-500">
+              {r.observer}{r.camera_name ? ` · ${r.camera_name}` : r.location ? ` · ${r.location}` : ''} · {timeAgo(r.ts)}
+              {r.corroboration && (
+                <span className="ml-1 text-emerald-400" title={`Camera sighting at ${r.corroboration.camera_name || ''}`}>
+                  ✓ camera corroborates
+                </span>
+              )}
+            </div>
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Log a field report — a guard/operator observation. Situational, not a verdict. */
+function LogReportModal({ cameras, onClose, onSaved }:
+                        { cameras: Array<{ id: string; name: string }>; onClose: () => void; onSaved: () => void }) {
+  const [subject, setSubject] = useState('vehicle');
+  const [note, setNote] = useState('');
+  const [cameraId, setCameraId] = useState('');
+  const [colour, setColour] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function save() {
+    if (!note.trim()) { setErr('Describe what you saw'); return; }
+    setBusy(true); setErr(null);
+    try {
+      const tags: Record<string, string> = {};
+      if (colour.trim()) tags.colour = colour.trim();
+      await api.submitFieldReport({ subject, note: note.trim(), camera_id: cameraId || undefined, tags });
+      onSaved();
+    } catch (e: any) { setErr(e?.message || 'Failed to log'); } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-xl max-w-md w-full" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 border-b border-slate-800">
+          <h2 className="text-sm font-semibold text-white">Log a report</h2>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-300 text-sm">✕</button>
+        </div>
+        <div className="p-4 space-y-3">
+          <div className="flex gap-2">
+            {['vehicle', 'person', 'other'].map(s => (
+              <button key={s} onClick={() => setSubject(s)}
+                      className={`px-2.5 py-1 text-xs rounded ${subject === s ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-400'}`}>
+                {s}
+              </button>
+            ))}
+          </div>
+          <textarea autoFocus value={note} onChange={e => setNote(e.target.value)} rows={3}
+                    placeholder="e.g. White bakkie, no plate, parked at the north gate ~02:00, left after 20 min"
+                    className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 placeholder:text-slate-600 focus:border-indigo-500 outline-none" />
+          <div className="flex gap-2">
+            <select value={cameraId} onChange={e => setCameraId(e.target.value)}
+                    className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-300">
+              <option value="">Location / camera (optional)</option>
+              {cameras.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            {subject === 'vehicle' && (
+              <input value={colour} onChange={e => setColour(e.target.value)} placeholder="colour"
+                     className="w-24 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 placeholder:text-slate-600" />
+            )}
+          </div>
+          {err && <div className="text-xs text-red-400">{err}</div>}
+          <div className="flex justify-end gap-2">
+            <button onClick={onClose} className="text-xs text-slate-500 px-2">Cancel</button>
+            <button onClick={save} disabled={busy}
+                    className="text-xs bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded px-3 py-1.5">
+              {busy ? 'Saving…' : 'Log report'}
+            </button>
+          </div>
+          <p className="text-[10px] text-slate-600">Kept as evidence beside the camera data. Situational — never an accusation.</p>
+        </div>
+      </div>
     </div>
   );
 }
