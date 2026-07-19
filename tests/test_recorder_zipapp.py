@@ -88,3 +88,24 @@ def test_modules_use_flat_import_fallback():
     src = record_agent.__file__ and open(record_agent.__file__).read()
     assert "from recorder import" in src          # fallback path exists
     assert "import bridge_agent as ba" in src
+
+
+def test_recorder_zipapp_builds_valid_archive_with_disk_fix():
+    """Regression guard: the download builder must produce a valid zip with all
+    members (the endpoint once inlined a stale copy referencing an unread
+    `onvif_src` and 500'd), and the bundled recorder must carry the always-on
+    retention (disk-conservation) code."""
+    import io
+    import zipfile
+    from alibi.alibi_api import _build_recorder_zipapp
+
+    data = _build_recorder_zipapp("https://vantage.example", "PAIR123")
+    z = zipfile.ZipFile(io.BytesIO(data))
+    assert set(z.namelist()) == {
+        "recorder.py", "onvif.py", "bridge_agent.py", "record_agent.py", "__main__.py",
+    }
+    recorder_src = z.read("recorder.py").decode()
+    assert "default_retention_policy" in recorder_src
+    assert "min_free_bytes" in recorder_src
+    agent_src = z.read("record_agent.py").decode()
+    assert "default_retention_policy(" in agent_src   # retention on by default

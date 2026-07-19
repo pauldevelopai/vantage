@@ -2949,39 +2949,20 @@ async def bridge_download_recorder(
     runs ONE file — `python vantage_recorder.pyz` — and every camera records to
     that PC, auto-pairing on first launch. Bundles the recorder engine, the
     bridge connection helpers, and the record-agent orchestration."""
-    import io
-    import zipfile
     from fastapi.responses import Response
-    from alibi.cameras import recorder, bridge_agent, record_agent
     from alibi.cameras.bridge import get_bridge_registry
 
     pc = get_bridge_registry().create_pairing_code(created_by=current_user.username)
     base_url = str(request.base_url).rstrip("/")
 
-    with open(recorder.__file__) as f:
-        recorder_src = f.read()
-    with open(record_agent.__file__) as f:
-        record_agent_src = f.read()
-    with open(bridge_agent.__file__) as f:
-        bridge_agent_src = _bake_agent_config(f.read(), base_url, pc.code)
-
-    main_src = (
-        "import sys\n"
-        "import record_agent\n"
-        "sys.exit(record_agent.main())\n"
-    )
-
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("recorder.py", recorder_src)
-        z.writestr("onvif.py", onvif_src)          # ONVIF stream-URL lookup
-        z.writestr("bridge_agent.py", bridge_agent_src)
-        z.writestr("record_agent.py", record_agent_src)
-        z.writestr("__main__.py", main_src)
-    buf.seek(0)
+    # Single source of truth for the zipapp contents — the helper bundles the
+    # recorder engine (incl. onvif.py) + bridge + agent, config baked in. The
+    # endpoint used to inline a stale copy that referenced an unread `onvif_src`
+    # and 500'd; delegating fixes that and keeps one builder.
+    payload = _build_recorder_zipapp(base_url, pc.code)
 
     return Response(
-        content=buf.read(),
+        content=payload,
         media_type="application/zip",
         headers={"Content-Disposition": 'attachment; filename="vantage_recorder.pyz"'},
     )
