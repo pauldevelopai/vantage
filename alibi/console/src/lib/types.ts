@@ -252,6 +252,7 @@ export interface DashboardPerson {
   matched_label: string | null;
   times_seen: number;                // 0 for detection-only rows (no embedding to link)
   first_seen: string | null;
+  incident_id?: string | null;       // the incident this sighting belongs to (click-through)
 }
 
 /** One tile on the Overview vehicles strip. Attributes are the VLM's opinion of
@@ -273,6 +274,7 @@ export interface DashboardVehicle {
   /** Where the vehicle is REGISTERED (from the plate) — never where a person
    *  is from. Present only when the plate could be placed with confidence. */
   region: PlateRegion | null;
+  incident_id?: string | null;       // the incident this vehicle sighting belongs to
   camera_id: string;
   camera_name: string;
   ts: string;

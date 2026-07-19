@@ -1276,6 +1276,7 @@ async def dashboard_overview(range: str = "24h",
                     "matched_label": None,
                     "times_seen": 0,
                     "first_seen": None,
+                    "event_id": e.event_id,
                 })
 
     # Vehicles strip — one row per detected vehicle in recent events, cropped
@@ -1558,6 +1559,32 @@ async def dashboard_overview(range: str = "24h",
             people_by_hour=people_hours_utc)
     except Exception as e:
         print(f"[dashboard] vehicle entity summary unavailable: {e}")
+
+    # Click-through: map each card back to the incident it belongs to, so a
+    # person/vehicle picture on the Overview opens its incident + full detail.
+    # Incidents store event_ids; build event_id -> incident_id once (cheap now
+    # that list_incidents is O(file)). Face-people rows carry a frame_url whose
+    # frame_id ties to the "frm_<id>" event.
+    try:
+        ev_to_incident: dict = {}
+        for inc in store.list_incidents(limit=2000):
+            for eid in [ev.event_id for ev in inc.events]:
+                ev_to_incident.setdefault(eid, inc.incident_id)
+
+        def _attach_incident(row):
+            eid = row.get("event_id")
+            if not eid and row.get("frame_url"):
+                fid = str(row["frame_url"]).rsplit("/", 1)[-1].replace(".jpg", "")
+                eid = f"frm_{fid}"
+            row["incident_id"] = ev_to_incident.get(eid) if eid else None
+            return row
+
+        for r in recent_vehicles:
+            _attach_incident(r)
+        for p in recent_people:
+            _attach_incident(p)
+    except Exception as e:
+        print(f"[dashboard] incident linkage unavailable: {e}")
 
     return {
         "range": range,
