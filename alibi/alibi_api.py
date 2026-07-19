@@ -3313,13 +3313,16 @@ async def bridge_ingest_frame(camera_id: str, request: Request,
                 except Exception:
                     pass
                 local_minutes = ((now.hour * 60 + now.minute) + 120) % 1440  # SAST
+                from alibi.ai_config import is_local_vision
+                free_vision = is_local_vision(cfg.get("vision_model", ""))
                 if not narration_allowed(cfg, has_person_, has_vehicle_, flagged_,
                                          local_minutes, todays_spend("vision"),
                                          normal_hours=normal_hours):
                     worth_paying = False
-                if worth_paying and not fa.should_pay(camera_id, _time.time(),
-                                                      cfg["paid_min_gap_seconds"],
-                                                      flagged=flagged_):
+                # The per-camera gap throttle exists to bound PAID spend; a free
+                # local model isn't rate-capped, so it describes every frame.
+                if worth_paying and not free_vision and not fa.should_pay(
+                        camera_id, _time.time(), cfg["paid_min_gap_seconds"], flagged=flagged_):
                     worth_paying = False
             except Exception as e:
                 print(f"[frame-ai] ai_config unavailable: {e}")

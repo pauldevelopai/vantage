@@ -137,6 +137,10 @@ export function CamerasPage() {
   const [addingCamera, setAddingCamera] = useState<string | null>(null);
   const [showScanResults, setShowScanResults] = useState(false);
 
+  // Add-a-phone panel + the mobile stream URL to open on a phone.
+  const [showPhone, setShowPhone] = useState(false);
+  const phoneUrl = `${window.location.origin}/camera/mobile-stream`;
+
   // Camera Bridge state (scan the user's own WiFi via a local agent)
   const [showOtherDevices, setShowOtherDevices] = useState(false);
   const [showBridge, setShowBridge] = useState(false);
@@ -463,6 +467,12 @@ export function CamerasPage() {
                 {showBridge ? 'Close' : 'Find my cameras'}
               </button>
               <button
+                onClick={() => setShowPhone(!showPhone)}
+                className="px-4 py-2 bg-white text-gray-700 text-sm font-medium rounded-md border border-gray-300 hover:bg-gray-50"
+              >
+                📱 {showPhone ? 'Close' : 'Add a phone'}
+              </button>
+              <button
                 onClick={() => { resetForm(); setShowForm(!showForm); }}
                 className="px-4 py-2 bg-white text-gray-700 text-sm font-medium rounded-md border border-gray-300 hover:bg-gray-50"
               >
@@ -480,6 +490,31 @@ export function CamerasPage() {
           </div>
         )}
       </div>
+
+      {/* Add a phone as a camera — open the stream page on any phone browser */}
+      {showPhone && isAdmin && (
+        <div className="bg-white shadow rounded-lg p-6 mb-6 border-l-4 border-emerald-400">
+          <h2 className="text-lg font-medium text-gray-900">Add a phone as a camera</h2>
+          <p className="mt-1 text-sm text-gray-500">
+            Any phone can become a camera — it streams frames into Vantage and runs the same
+            detection, faces, plates and scene analysis as your fixed cameras. Open this on the
+            phone’s browser and allow the camera:
+          </p>
+          <div className="mt-3 flex items-center gap-2">
+            <code className="flex-1 text-sm bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-800 break-all">
+              {phoneUrl}
+            </code>
+            <button onClick={() => navigator.clipboard?.writeText(phoneUrl)}
+                    className="px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-md">Copy</button>
+            <a href={phoneUrl} target="_blank" rel="noreferrer"
+               className="px-3 py-2 text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded-md no-underline">Open</a>
+          </div>
+          <p className="mt-2 text-xs text-gray-400">
+            The phone signs in the same way you did, then streams. Point it wherever you need eyes —
+            a doorway, a second gate, a room. It appears alongside your other cameras.
+          </p>
+        </div>
+      )}
 
       {/* Camera Bridge — scan the WiFi where the user's cameras are */}
       {showBridge && isAdmin && (

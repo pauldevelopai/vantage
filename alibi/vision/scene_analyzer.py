@@ -163,6 +163,18 @@ class SceneAnalyzer:
                 "raw_response": {...}
             }
         """
+        # The owner's chosen vision model (Costs page) decides the path. When it
+        # names a local/offline model ("ollama:<model>"), use Ollama with that
+        # model directly — free, on-site, and it describes every frame.
+        try:
+            from alibi.ai_config import get_ai_config, is_local_vision
+            chosen = get_ai_config().get("vision_model", "")
+            if is_local_vision(chosen):
+                self.ollama_vision_model = chosen.split(":", 1)[1] if ":" in chosen else self.ollama_vision_model
+                return self._analyze_with_ollama(frame, prompt)
+        except Exception:
+            pass
+
         if self.mode == "auto":
             # Prefer local Ollama (data stays in-country); then Claude, the
             # preferred cloud model; then OpenAI/Google as optional fallbacks.
