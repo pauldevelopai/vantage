@@ -1085,6 +1085,24 @@ def _display_names() -> dict:
     return names
 
 
+def _field_reports_payload(recent_vehicles: list, cutoff, names: dict) -> list:
+    """Recent human field reports for the Overview, each with a camera name and
+    a corroborating camera sighting when one backs it up. Degrades to []."""
+    try:
+        from alibi.reports.field_reports import get_field_report_store, corroborating_sighting
+        reports = get_field_report_store().list_recent(limit=12, since_iso=cutoff.isoformat())
+        out = []
+        for r in reports:
+            d = r.to_dict()
+            d["camera_name"] = names.get(r.camera_id, r.camera_id) if r.camera_id else None
+            d["corroboration"] = corroborating_sighting(r, recent_vehicles)
+            out.append(d)
+        return out
+    except Exception as e:
+        print(f"[dashboard] field reports unavailable: {e}")
+        return []
+
+
 def _security_suggestions_payload(names: dict) -> list:
     """Gather the real facts and run the suggestion rules. Degrades to []."""
     try:
@@ -1609,6 +1627,7 @@ async def dashboard_overview(range: str = "24h",
         "recurring_vehicles": recurring_vehicles,
         "pattern_findings": pattern_findings_rows,
         "security_suggestions": _security_suggestions_payload(names),
+        "field_reports": _field_reports_payload(recent_vehicles, cutoff, names),
     }
 
 
@@ -3930,6 +3949,51 @@ async def ml_status(current_user: User = Depends(get_current_user)):
 
     return {"vision_stack": vision, "data_feeds": feeds,
             "generated_at": datetime.utcnow().isoformat()}
+
+
+class FieldReportCreate(BaseModel):
+    subject: str                       # person | vehicle | other
+    note: str
+    observer: Optional[str] = None     # defaults to the logged-in user
+    camera_id: Optional[str] = None
+    location: str = ""
+    ts: Optional[str] = None           # when observed (defaults to now)
+    tags: Optional[Dict[str, Any]] = None
+
+
+@app.post("/reports/field", tags=["Reports"])
+async def submit_field_report(
+    payload: FieldReportCreate,
+    current_user: User = Depends(require_role([Role.OPERATOR, Role.SUPERVISOR, Role.ADMIN])),
+):
+    """Log a human observation from the ground (a guard, an operator) as a
+    first-class data source beside the cameras. Evidence, never a verdict."""
+    from alibi.reports.field_reports import build_report, get_field_report_store
+    try:
+        report = build_report(
+            observer=(payload.observer or current_user.username),
+            subject=payload.subject, note=payload.note, camera_id=payload.camera_id,
+            location=payload.location, tags=payload.tags, ts=payload.ts, source="console",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    get_field_report_store().add(report)
+    get_store().append_audit("field_report_logged", {
+        "user": current_user.username, "subject": report.subject,
+        "camera_id": report.camera_id,
+    })
+    return report.to_dict()
+
+
+@app.get("/reports/field", tags=["Reports"])
+async def list_field_reports(limit: int = 30, hours: int = 168,
+                             current_user: User = Depends(get_current_user)):
+    """Recent field reports, newest first."""
+    from datetime import timedelta as _td
+    from alibi.reports.field_reports import get_field_report_store
+    cutoff = (datetime.utcnow() - _td(hours=max(1, hours))).isoformat()
+    reports = get_field_report_store().list_recent(limit=limit, since_iso=cutoff)
+    return {"reports": [r.to_dict() for r in reports], "count": len(reports)}
 
 
 @app.get("/intelligence/sources", tags=["Intelligence"])

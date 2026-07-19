@@ -112,6 +112,14 @@ export const api = {
     return res.json();
   },
 
+  async submitFieldReport(body: { subject: string; note: string; camera_id?: string; location?: string; tags?: Record<string, string> }): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/reports/field`, {
+      method: 'POST', body: JSON.stringify(body),
+    });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed to log report'); }
+    return res.json();
+  },
+
   async getVehicleHistory(entityId: string, window: string = '7d'): Promise<VehicleHistory> {
     const res = await fetchWithAuth(`${API_BASE}/patterns/vehicle/${encodeURIComponent(entityId)}?window=${window}`);
     if (!res.ok) throw new Error('Failed to fetch vehicle history');
