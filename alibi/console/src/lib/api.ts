@@ -1,6 +1,6 @@
 // API client for Alibi backend
 
-import type { DashboardOverview, PersonRow, PersonHistoryResult, SourceVocab, UserSource, HotlistEntry, SiteBrief, AdvisorResult, IncidentSummary, IncidentDetail, IncidentExplanation, DecisionRequest, Settings, ShiftReport, Camera, TrailEntry, Site, Posture, SubjectType, CostSummary } from './types';
+import type { DashboardOverview, PersonRow, PersonHistoryResult, SourceVocab, UserSource, HotlistEntry, SiteBrief, AdvisorResult, IncidentSummary, IncidentDetail, IncidentExplanation, DecisionRequest, Settings, ShiftReport, Camera, TrailEntry, Site, Posture, SubjectType, CostSummary, VehicleHistory } from './types';
 import { getToken } from './auth';
 
 const API_BASE = '/api';
@@ -109,6 +109,12 @@ export const api = {
   async getPlateIncidents(plate: string, windowMinutes: number = 30): Promise<any> {
     const res = await fetchWithAuth(`${API_BASE}/patterns/plate/${encodeURIComponent(plate)}/incidents?window_minutes=${windowMinutes}`);
     if (!res.ok) throw new Error(`Failed to fetch plate incidents: ${res.statusText}`);
+    return res.json();
+  },
+
+  async getVehicleHistory(entityId: string, window: string = '7d'): Promise<VehicleHistory> {
+    const res = await fetchWithAuth(`${API_BASE}/patterns/vehicle/${encodeURIComponent(entityId)}?window=${window}`);
+    if (!res.ok) throw new Error('Failed to fetch vehicle history');
     return res.json();
   },
 
