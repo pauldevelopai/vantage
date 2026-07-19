@@ -21,11 +21,22 @@ CONFIG_FILE = Path("alibi/data/ai_config.json")
 
 # Allowed vision models with USD per 1M tokens (input, output) — shown on the
 # Costs page so the choice is an informed one. Keep in sync with cost_tracker.
+# `local: True` models run offline (Ollama on the box/PC) at $0 — data stays
+# on-site AND, because they cost nothing, they describe EVERY frame (the paid
+# throttle is bypassed for them).
 VISION_MODELS: Dict[str, Dict[str, Any]] = {
     "claude-opus-4-8":  {"label": "Opus 4.8 — most capable", "in_usd": 5.0, "out_usd": 25.0},
     "claude-sonnet-5":  {"label": "Sonnet 5 — near-Opus quality, 40% cheaper", "in_usd": 3.0, "out_usd": 15.0},
     "claude-haiku-4-5": {"label": "Haiku 4.5 — fastest, 5× cheaper than Opus", "in_usd": 1.0, "out_usd": 5.0},
+    "ollama:llama3.2-vision": {"label": "Offline (local Ollama) — free, describes every frame, data stays on-site",
+                               "in_usd": 0.0, "out_usd": 0.0, "local": True},
 }
+
+
+def is_local_vision(model: str) -> bool:
+    """True when the vision model runs offline for free (Ollama)."""
+    spec = VISION_MODELS.get(model or "")
+    return bool(spec and spec.get("local"))
 
 DEFAULTS: Dict[str, Any] = {
     "vision_model": "claude-opus-4-8",
@@ -117,6 +128,13 @@ def narration_allowed(cfg: Dict[str, Any], has_person: bool, has_vehicle: bool,
         has_vehicle = False
     if not (has_person or has_vehicle):
         return False
+
+    # A free/local model has no cost, so there's nothing to save by throttling —
+    # describe every worth-narrating frame (this is what brings "tell me what's
+    # in every shot" back at $0). The paid schedule/budget/gap only apply to
+    # models that actually cost money.
+    if is_local_vision(cfg.get("vision_model", "")):
+        return True
 
     budget = float(cfg.get("daily_budget_usd") or 0)
     if budget > 0 and todays_spend_usd >= budget:

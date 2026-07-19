@@ -131,3 +131,33 @@ def test_config_roundtrip_new_fields(isolated_config):
     assert (cfg["schedule"], cfg["daily_budget_usd"], cfg["narrate_people"]) == ("night", 3.5, False)
     with pytest.raises(ValueError):
         ac.set_ai_config(schedule="sometimes")
+
+
+# ── free/local vision bypasses the paid throttle (describe every frame) ─────
+
+from alibi.ai_config import is_local_vision
+
+
+def test_is_local_vision():
+    assert is_local_vision("ollama:llama3.2-vision") is True
+    assert is_local_vision("claude-opus-4-8") is False
+    assert is_local_vision("") is False
+
+
+def test_free_model_describes_every_frame_ignoring_schedule_and_budget():
+    cfg = _cfg(vision_model="ollama:llama3.2-vision", schedule="night",
+              daily_budget_usd=1.0)
+    # noon (outside night) AND over budget — a paid model would be blocked
+    assert narration_allowed(cfg, True, False, False, 12 * 60, 99.0) is True
+    assert narration_allowed(cfg, False, True, False, 12 * 60, 99.0) is True
+
+
+def test_free_model_still_respects_subject_toggles():
+    cfg = _cfg(vision_model="ollama:llama3.2-vision", narrate_vehicles=False)
+    assert narration_allowed(cfg, False, True, False, 12 * 60, 0) is False  # vehicles off
+    assert narration_allowed(cfg, True, False, False, 12 * 60, 0) is True   # people on
+
+
+def test_paid_model_still_throttled():
+    cfg = _cfg(vision_model="claude-haiku-4-5", schedule="night")
+    assert narration_allowed(cfg, True, False, False, 12 * 60, 0) is False  # noon, night-only
