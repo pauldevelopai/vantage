@@ -26,11 +26,13 @@ try:  # in-repo (tests, the cloud box)
     from alibi.cameras.recorder import (
         CameraRecorder, RetentionPolicy, ffmpeg_available, build_hls_command,
         choose_video_args, DEFAULT_MOTION_THRESHOLD,
+        default_retention_policy, DEFAULT_MIN_FREE_FRACTION, DEFAULT_MAX_AGE_DAYS,
     )
 except ImportError:  # flat zipapp layout on the user's PC
     from recorder import (
         CameraRecorder, RetentionPolicy, ffmpeg_available, build_hls_command,
         choose_video_args, DEFAULT_MOTION_THRESHOLD,
+        default_retention_policy, DEFAULT_MIN_FREE_FRACTION, DEFAULT_MAX_AGE_DAYS,
     )
 
 
@@ -359,6 +361,9 @@ def main(argv=None):  # pragma: no cover
     p.add_argument("--dir", default=os.environ.get("VANTAGE_REC_DIR", "./vantage-recordings"))
     p.add_argument("--max-gb", type=float, default=float(os.environ.get("VANTAGE_MAX_GB", "0")) or None)
     p.add_argument("--max-days", type=float, default=float(os.environ.get("VANTAGE_MAX_DAYS", "0")) or None)
+    p.add_argument("--min-free-percent", type=float,
+                   default=float(os.environ.get("VANTAGE_MIN_FREE_PCT", str(DEFAULT_MIN_FREE_FRACTION * 100))),
+                   help="Always keep at least this %% of the disk free (0 disables)")
     p.add_argument("--poll-seconds", type=int, default=15)
     p.add_argument("--refresh-seconds", type=int, default=60)
     p.add_argument("--motion-threshold", type=float,
@@ -444,11 +449,11 @@ def main(argv=None):  # pragma: no cover
     ).start()
 
     # --- report what we're storing (so the console can show it) ------------- #
-    caps = {}
-    if args.max_gb:
-        caps["max_gb"] = args.max_gb
-    if args.max_days:
-        caps["max_days"] = args.max_days
+    caps = {
+        "max_gb": args.max_gb,
+        "max_days": args.max_days or DEFAULT_MAX_AGE_DAYS,
+        "min_free_percent": args.min_free_percent or None,
+    }
 
     def report_storage(stats):
         if caps:
@@ -474,12 +479,19 @@ def main(argv=None):  # pragma: no cover
             time.sleep(getattr(ba, "POLL_SECONDS", 3))
     threading.Thread(target=scan_loop, daemon=True).start()
 
-    retention = None
-    if args.max_gb or args.max_days:
-        retention = RetentionPolicy(
-            max_bytes=int(args.max_gb * 1024 ** 3) if args.max_gb else None,
-            max_age_seconds=int(args.max_days * 86400) if args.max_days else None,
-        )
+    # Retention is ALWAYS on — the whole point of this change. Owner caps fill
+    # in; the rest defaults to a 14-day age cap + keep 10% of the disk free, so
+    # a recorder can never silently fill the drive again.
+    import shutil as _shutil
+    try:
+        _total = _shutil.disk_usage(args.dir).total
+    except OSError:
+        _total = None
+    min_free_fraction = (args.min_free_percent / 100.0) if args.min_free_percent else None
+    retention = default_retention_policy(
+        disk_total_bytes=_total, max_gb=args.max_gb, max_days=args.max_days,
+        min_free_fraction=min_free_fraction,
+    )
 
     agent = RecordAgent(base_dir=args.dir, retention=retention,
                         motion_threshold=args.motion_threshold)

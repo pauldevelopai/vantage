@@ -8,7 +8,7 @@ type Storage = {
   dir: string; total_bytes: number; files: number;
   oldest: number | null; newest: number | null;
   disk?: { total: number; used: number; free: number };
-  caps?: { max_gb?: number; max_days?: number };
+  caps?: { max_gb?: number; max_days?: number; min_free_percent?: number };
   cameras: Record<string, CamStorage>;
 } | null;
 type Bridge = { bridge_id: string; name: string; online: boolean; site_hint: string; last_seen: string | null; storage?: Storage };
@@ -211,12 +211,15 @@ export function RecordersPage() {
                       )}
 
                       {/* Retention cap — how much is kept before old footage rolls off */}
-                      {s.caps && (s.caps.max_gb || s.caps.max_days) && (
+                      {s.caps && (s.caps.max_gb || s.caps.max_days || s.caps.min_free_percent) && (
                         <div className="mt-1 text-gray-500">
-                          ♻️ Keeping up to
-                          {s.caps.max_gb ? ` ${s.caps.max_gb} GB` : ''}
-                          {s.caps.max_gb && s.caps.max_days ? ' /' : ''}
-                          {s.caps.max_days ? ` ${s.caps.max_days} days` : ''} — older footage is deleted automatically.
+                          ♻️ Auto-cleanup:
+                          {s.caps.max_gb ? ` ${s.caps.max_gb} GB/camera` : ''}
+                          {s.caps.max_gb && s.caps.max_days ? ' ·' : ''}
+                          {s.caps.max_days ? ` ${s.caps.max_days}-day cap` : ''}
+                          {(s.caps.max_gb || s.caps.max_days) && s.caps.min_free_percent ? ' ·' : ''}
+                          {s.caps.min_free_percent ? ` always keep ${s.caps.min_free_percent}% free` : ''}
+                          {' '}— oldest footage is deleted automatically.
                         </div>
                       )}
 

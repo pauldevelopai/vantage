@@ -248,10 +248,34 @@ def ffmpeg_available(ffmpeg: str = FFMPEG, run: Callable = subprocess.run) -> bo
 # Retention — bound disk with an oldest-first sweep.
 # --------------------------------------------------------------------------- #
 
+# Sensible defaults so a recorder started with NO flags still bounds its disk.
+# The old default was None → "keep forever", which silently filled the drive.
+DEFAULT_MAX_AGE_DAYS = 14
+DEFAULT_MIN_FREE_FRACTION = 0.10     # always leave at least 10% of the volume free
+
+
 @dataclass
 class RetentionPolicy:
     max_bytes: Optional[int] = None          # per-camera disk budget for segments
     max_age_seconds: Optional[int] = None    # hard age cap regardless of size
+    min_free_bytes: Optional[int] = None     # keep at least this much free on the VOLUME
+
+
+def default_retention_policy(disk_total_bytes: Optional[int] = None,
+                             max_gb: Optional[float] = None,
+                             max_days: Optional[float] = None,
+                             min_free_fraction: Optional[float] = DEFAULT_MIN_FREE_FRACTION,
+                             ) -> RetentionPolicy:
+    """Resolve owner-supplied caps (any subset) into a policy, filling the gaps
+    with safe defaults so disk is ALWAYS bounded. The free-space floor is the
+    backstop that answers 'it's filling my drive' regardless of per-camera size.
+    """
+    return RetentionPolicy(
+        max_bytes=int(max_gb * 1024 ** 3) if max_gb else None,
+        max_age_seconds=int((max_days if max_days else DEFAULT_MAX_AGE_DAYS) * 86400),
+        min_free_bytes=(int(disk_total_bytes * min_free_fraction)
+                        if (disk_total_bytes and min_free_fraction) else None),
+    )
 
 
 @dataclass
@@ -261,11 +285,15 @@ class FileInfo:
     mtime: float
 
 
-def plan_retention(files: Sequence[FileInfo], now: float, policy: RetentionPolicy) -> List[str]:
+def plan_retention(files: Sequence[FileInfo], now: float, policy: RetentionPolicy,
+                   disk_free: Optional[int] = None) -> List[str]:
     """Return the paths to delete (oldest-first) to satisfy the policy.
 
-    Age cap first (delete anything too old), then the byte budget (delete oldest
-    until under budget). Pure: no filesystem access, so it's fully testable.
+    Order: age cap (delete anything too old) → byte budget (delete oldest until
+    under the per-camera budget) → free-space floor (if the VOLUME's free space
+    is below `min_free_bytes`, delete oldest until it isn't, counting the bytes
+    each deletion frees). Pure: no filesystem access, so it's fully testable —
+    `disk_free` is passed in.
     """
     ordered = sorted(files, key=lambda f: f.mtime)   # oldest first
     to_delete: List[str] = []
@@ -286,6 +314,19 @@ def plan_retention(files: Sequence[FileInfo], now: float, policy: RetentionPolic
             to_delete.append(f.path)
             deleted.add(f.path)
             total -= f.size
+
+    # Free-space floor — the backstop. Deleting a file returns its bytes to the
+    # volume, so project free space forward as we schedule deletions.
+    if policy.min_free_bytes is not None and disk_free is not None:
+        projected_free = disk_free + sum(f.size for f in ordered if f.path in deleted)
+        for f in ordered:
+            if projected_free >= policy.min_free_bytes:
+                break
+            if f.path in deleted:
+                continue
+            to_delete.append(f.path)
+            deleted.add(f.path)
+            projected_free += f.size
 
     return to_delete
 
@@ -438,11 +479,20 @@ class CameraRecorder:
         if not self.retention:
             return []
         now = self._clock() if now is None else now
+        # Current free space on the recording volume — drives the free-space
+        # floor. Best-effort: if we can't read it, the floor simply doesn't fire.
+        disk_free = None
+        if self.retention.min_free_bytes is not None:
+            try:
+                import shutil
+                disk_free = shutil.disk_usage(self.base_dir).free
+            except OSError:
+                disk_free = None
         deleted: List[str] = []
         for d in (self.recordings_dir, self.motion_dir if self.record_motion else None):
             if not d:
                 continue
-            for path in plan_retention(scan(d), now, self.retention):
+            for path in plan_retention(scan(d), now, self.retention, disk_free=disk_free):
                 try:
                     remove(path)
                     deleted.append(path)
@@ -490,7 +540,9 @@ def _parse_args(argv):
     p.add_argument("--no-motion", action="store_true", help="Record only; skip the motion trigger")
     p.add_argument("--audio", action="store_true", help="Record audio too (transcoded to AAC). Off by default — many cameras send MP4-incompatible audio, and audio recording has stricter legal duties than video.")
     p.add_argument("--max-gb", type=float, default=None, help="Disk budget for this camera (GB); oldest deleted first")
-    p.add_argument("--max-days", type=float, default=None, help="Hard age cap (days) regardless of size")
+    p.add_argument("--max-days", type=float, default=None, help=f"Hard age cap (days) regardless of size (default {DEFAULT_MAX_AGE_DAYS})")
+    p.add_argument("--min-free-percent", type=float, default=DEFAULT_MIN_FREE_FRACTION * 100,
+                   help="Always keep at least this %% of the disk free (oldest deleted first). 0 disables.")
     p.add_argument("--poll-seconds", type=int, default=15, help="How often to health-check ffmpeg + sweep retention")
     p.add_argument("--ffmpeg", default=FFMPEG, help="Path to the ffmpeg binary")
     return p.parse_args(argv)
@@ -504,12 +556,17 @@ def run_cli(argv=None) -> int:
         print(f"[recorder] ffmpeg not found (tried '{args.ffmpeg}'). Install ffmpeg and retry.")
         return 2
 
-    retention = None
-    if args.max_gb is not None or args.max_days is not None:
-        retention = RetentionPolicy(
-            max_bytes=int(args.max_gb * 1024 ** 3) if args.max_gb is not None else None,
-            max_age_seconds=int(args.max_days * 86400) if args.max_days is not None else None,
-        )
+    # Retention is ALWAYS on now — a fresh recorder must bound its own disk.
+    # Owner caps fill in; the rest defaults (14-day age cap + keep 10% free).
+    import shutil as _shutil
+    try:
+        _total = _shutil.disk_usage(args.dir).total
+    except OSError:
+        _total = None
+    retention = default_retention_policy(
+        disk_total_bytes=_total, max_gb=args.max_gb, max_days=args.max_days,
+        min_free_fraction=(args.min_free_percent / 100.0) if args.min_free_percent else None,
+    )
 
     rec = CameraRecorder(
         camera_id=args.camera_id,
