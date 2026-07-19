@@ -536,3 +536,21 @@ export interface SecuritySuggestion {
   link: string;
   action: string;
 }
+
+
+/** Vehicle history — how often a recurring vehicle (ReID cluster) has been seen
+ *  over a window. Continuity from our own cameras, never identity. */
+export interface VehicleHistory {
+  entity_id: string;
+  window: string;
+  owner_label: string | null;
+  familiarity: 'resident' | 'regular' | 'new' | 'occasional';
+  count: number;
+  days: number;
+  first_seen: string;
+  last_seen: string;
+  cameras: string[];
+  hours: number[];
+  per_day: Array<{ day: string; count: number }>;
+  trail: Array<{ camera_id: string; ts: string }>;
+}

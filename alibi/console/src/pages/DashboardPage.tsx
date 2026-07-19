@@ -92,6 +92,7 @@ const CSS = `
 
 export function DashboardPage() {
   const [range, setRange] = useState('24h');
+  const [vehicleHistory, setVehicleHistory] = useState<string | null>(null);
   const [data, setData] = useState<DashboardOverview | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -343,7 +344,8 @@ export function DashboardPage() {
                         </h3>
                         <ul className="space-y-1.5">
                           {data.recurring_vehicles.map(v => (
-                            <RecurringVehicleRow key={v.entity_id} v={v} onSaved={() => load(range)} />
+                            <RecurringVehicleRow key={v.entity_id} v={v} onSaved={() => load(range)}
+                                                 onOpen={() => setVehicleHistory(v.entity_id)} />
                           ))}
                         </ul>
                       </div>
@@ -399,6 +401,94 @@ export function DashboardPage() {
           </>
         )}
       </div>
+      {vehicleHistory && (
+        <VehicleHistoryModal entityId={vehicleHistory} onClose={() => setVehicleHistory(null)} />
+      )}
+    </div>
+  );
+}
+
+/** How often a recurring vehicle has been seen — count, per-day sparkline,
+ *  hour-of-day, familiarity, and the sighting trail. Continuity, not identity. */
+function VehicleHistoryModal({ entityId, onClose }: { entityId: string; onClose: () => void }) {
+  const [h, setH] = useState<import('../lib/types').VehicleHistory | null>(null);
+  const [win, setWin] = useState('7d');
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    setH(null); setErr(null);
+    api.getVehicleHistory(entityId, win)
+      .then(setH)
+      .catch(e => setErr(e?.message || 'Could not load history'));
+  }, [entityId, win]);
+
+  const maxDay = h ? Math.max(1, ...h.per_day.map(d => d.count)) : 1;
+  const fam = h ? (FINDING_BADGE[h.familiarity] || FINDING_BADGE.occasional) : null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-xl max-w-lg w-full max-h-[85vh] overflow-y-auto"
+           onClick={e => e.stopPropagation()}>
+        <div className="flex items-start justify-between p-4 border-b border-slate-800">
+          <div className="flex items-center gap-2">
+            {fam && <span className={`text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded ${fam.cls}`}>{fam.label}</span>}
+            <h2 className="text-sm font-semibold text-white">
+              {h?.owner_label ? `“${h.owner_label}”` : 'Recurring vehicle'}
+            </h2>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-0.5 p-0.5 rounded bg-slate-800">
+              {['24h', '7d', '30d'].map(w => (
+                <button key={w} onClick={() => setWin(w)}
+                        className={`px-2 py-0.5 text-[10px] rounded ${win === w ? 'bg-indigo-500 text-white' : 'text-slate-400'}`}>
+                  {w.toUpperCase()}
+                </button>
+              ))}
+            </div>
+            <button onClick={onClose} className="text-slate-500 hover:text-slate-300 text-sm">✕</button>
+          </div>
+        </div>
+        <div className="p-4">
+          {err && <p className="text-sm text-red-400">{err}</p>}
+          {!h && !err && <p className="text-sm text-slate-500">Loading…</p>}
+          {h && (
+            <>
+              <div className="grid grid-cols-3 gap-2 text-center mb-4">
+                <Stat label="Sightings" value={String(h.count)} />
+                <Stat label="Days seen" value={String(h.days)} />
+                <Stat label="Cameras" value={String(h.cameras.length)} />
+              </div>
+              <p className="text-xs text-slate-400 mb-3">
+                First seen {new Date(h.first_seen.endsWith('Z') ? h.first_seen : h.first_seen + 'Z').toLocaleString()} ·
+                last {timeAgo(h.last_seen)}. Appearance match from your own cameras — continuity, not identity.
+              </p>
+              {h.per_day.length > 0 && (
+                <div className="mb-3">
+                  <div className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Sightings per day</div>
+                  <div className="flex items-end gap-1 h-16">
+                    {h.per_day.map(d => (
+                      <div key={d.day} className="flex-1 bg-cyan-500/70 rounded-t" title={`${d.day}: ${d.count}`}
+                           style={{ height: `${Math.max(6, (d.count / maxDay) * 100)}%` }} />
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div className="text-[10px] text-slate-600">
+                Cameras: {h.cameras.join(', ')}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md bg-slate-800/60 p-2">
+      <div className="text-lg font-semibold text-white truncate">{value}</div>
+      <div className="text-[10px] text-slate-500">{label}</div>
     </div>
   );
 }
@@ -829,7 +919,7 @@ function FindingsList({ findings }: { findings: PatternFinding[] }) {
 
 /** One recurring-vehicle row with the owner's "name it" control — the vehicle
  *  analog of enrolling a face: identity only ever comes from the owner. */
-function RecurringVehicleRow({ v, onSaved }: { v: RecurringVehicle; onSaved: () => void }) {
+function RecurringVehicleRow({ v, onSaved, onOpen }: { v: RecurringVehicle; onSaved: () => void; onOpen: () => void }) {
   const canName = hasRole('supervisor') || hasRole('admin');
   const [naming, setNaming] = useState(false);
   const [name, setName] = useState('');
@@ -848,11 +938,13 @@ function RecurringVehicleRow({ v, onSaved }: { v: RecurringVehicle; onSaved: () 
   return (
     <li className="flex items-center gap-2 text-xs flex-wrap">
       <span className={`text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded flex-none ${fam.cls}`}>{fam.label}</span>
-      <span className="text-slate-300 font-medium">{v.owner_label ? `“${v.owner_label}”` : v.label}</span>
-      <span className="text-slate-500">
+      <button onClick={onOpen} className="text-slate-300 font-medium hover:text-white underline decoration-dotted underline-offset-2">
+        {v.owner_label ? `“${v.owner_label}”` : v.label}
+      </button>
+      <button onClick={onOpen} className="text-slate-500 hover:text-slate-300 text-left">
         seen {v.count}× over {v.days} day{v.days === 1 ? '' : 's'} · {v.cameras.join(', ')}
         {v.busiest_hour_utc !== null && ` · mostly around ${String((v.busiest_hour_utc + 2) % 24).padStart(2, '0')}:00`}
-      </span>
+      </button>
       {canName && !naming && (
         <button onClick={() => { setNaming(true); setName(v.owner_label || ''); }}
                 className="text-[10px] text-indigo-400 hover:text-indigo-300">

@@ -56,3 +56,55 @@ async def person_history(
         np.array(match.embedding, dtype=np.float32), exclude_sighting_id=sighting_id
     )
     return asdict(result)
+
+
+@router.get("/vehicle/{entity_id}")
+async def vehicle_history(
+    entity_id: str,
+    window: str = "7d",
+    current_user: User = Depends(get_current_user),
+):
+    """How often a recurring vehicle (an appearance-ReID cluster) has been seen
+    over a window: total, per-day/per-hour breakdown, familiarity class, owner
+    label if named, and the chronological trail. Continuity from our own
+    cameras — never identity."""
+    from datetime import datetime as _dt
+    from alibi.cameras.cross_camera import get_cross_camera_tracker
+    from alibi.patterns.familiarity import classify_entity, get_vehicle_labels
+
+    hours = {"24h": 24, "7d": 24 * 7, "30d": 24 * 30}.get(window, 24 * 7)
+    tracker = get_cross_camera_tracker()
+
+    summary = next((e for e in tracker.entity_summary("vehicle", hours=hours)
+                    if e["entity_id"] == entity_id), None)
+    if summary is None:
+        raise HTTPException(status_code=404,
+                            detail="No sightings for this vehicle in the window")
+
+    trail = tracker.get_entity_trail("vehicle", entity_id, hours=hours)
+    label = (get_vehicle_labels().get(entity_id) or {}).get("label")
+    cls = classify_entity(summary["count"], summary["first_seen"], summary["last_seen"],
+                          summary.get("days", 1), summary.get("active_hours", 1))
+
+    # Per-day counts for a sparkline (site-local via UTC buckets).
+    per_day: dict = {}
+    for entry in trail:
+        ts = entry.get("timestamp", "")[:10]
+        if ts:
+            per_day[ts] = per_day.get(ts, 0) + 1
+
+    return {
+        "entity_id": entity_id,
+        "window": window,
+        "owner_label": label,
+        "familiarity": cls,
+        "count": summary["count"],
+        "days": summary.get("days", 1),
+        "first_seen": summary["first_seen"],
+        "last_seen": summary["last_seen"],
+        "cameras": summary["cameras"],
+        "hours": summary["hours"],
+        "per_day": [{"day": d, "count": n} for d, n in sorted(per_day.items())],
+        "trail": [{"camera_id": e.get("camera_id"), "ts": e.get("timestamp")}
+                  for e in trail],
+    }
