@@ -82,7 +82,10 @@ class MetricsAggregator:
         every page poll took ~20s; the numbers don't need per-second freshness.
         """
         from alibi.ttl_cache import cached
-        return cached(f"metrics:{range_str}", 30.0,
+        # 120s > the 15s poll interval so page polls hit the cache instead of
+        # recomputing. (The underlying incident load was also just made O(file)
+        # instead of O(incidents × file), so a cold miss is now fast too.)
+        return cached(f"metrics:{range_str}", 120.0,
                       lambda: self._compute_summary(range_str))
 
     def _compute_summary(self, range_str: str = "24h") -> Dict[str, Any]:
