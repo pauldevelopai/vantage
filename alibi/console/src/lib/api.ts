@@ -112,6 +112,20 @@ export const api = {
     return res.json();
   },
 
+  async getVehicleReview(): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/vehicles/review`);
+    if (!res.ok) throw new Error('Failed to load review queue');
+    return res.json();
+  },
+
+  async decideVehicleReview(itemId: string, body: { decision: 'confirm' | 'reject'; make?: string; model?: string; colour?: string; body?: string }): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/vehicles/review/${encodeURIComponent(itemId)}`, {
+      method: 'POST', body: JSON.stringify(body),
+    });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed'); }
+    return res.json();
+  },
+
   async submitFieldReport(body: { subject: string; note: string; camera_id?: string; location?: string; tags?: Record<string, string> }): Promise<any> {
     const res = await fetchWithAuth(`${API_BASE}/reports/field`, {
       method: 'POST', body: JSON.stringify(body),

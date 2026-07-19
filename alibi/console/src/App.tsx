@@ -7,6 +7,7 @@ import { SettingsPage } from './pages/SettingsPage';
 import { LoginPage } from './pages/LoginPage';
 import { MetricsPage } from './pages/MetricsPage';
 import { VehicleSearchPage } from './pages/VehicleSearchPage';
+import { VehicleReviewPage } from './pages/VehicleReviewPage';
 import { CamerasPage } from './pages/CamerasPage';
 import { RecordersPage } from './pages/RecordersPage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -128,6 +129,7 @@ function Layout({ children }: { children: React.ReactNode }) {
               {navLink('/search', 'Search')}
               {navLink('/metrics', 'Metrics')}
               {navLink('/vehicle-search', 'Vehicles')}
+              {(hasRole('supervisor') || hasRole('admin')) && navLink('/vehicle-review', 'Review')}
               {(hasRole('supervisor') || hasRole('admin')) && navLink('/hotlist', 'Hotlist')}
               {(hasRole('supervisor') || hasRole('admin')) && navLink('/faces', 'Faces')}
               <div className="w-px h-5 bg-white/10 mx-1.5 flex-shrink-0" />
@@ -194,6 +196,7 @@ function App() {
                   <Route path="/metrics" element={<MetricsPage />} />
                   <Route path="/search" element={<SearchPage />} />
                   <Route path="/vehicle-search" element={<VehicleSearchPage />} />
+                  <Route path="/vehicle-review" element={<VehicleReviewPage />} />
                   <Route path="/hotlist" element={<HotlistPage />} />
                   <Route path="/cameras" element={<CamerasPage />} />
                   <Route path="/recorders" element={<RecordersPage />} />

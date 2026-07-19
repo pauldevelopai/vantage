@@ -3342,6 +3342,14 @@ async def bridge_ingest_frame(camera_id: str, request: Request,
                                             camera_id, now, frame_id)
             except Exception as e:
                 print(f"[frame-ai] vehicle sighting persist failed: {e}")
+            # Local-data loop: log the crop + VLM guess for human review, so
+            # confirmed rows become a locally-labelled training corpus.
+            try:
+                from alibi.vehicles.review_queue import enqueue_vehicle_guess
+                enqueue_vehicle_guess(intel_, analysis_.get("vehicles"),
+                                      camera_id, frame_id, now=now)
+            except Exception as e:
+                print(f"[frame-ai] review-queue enqueue failed: {e}")
         return intel_, analysis_, news
 
     intel, analysis, news = await run_in_threadpool(_analyze)
@@ -3949,6 +3957,67 @@ async def ml_status(current_user: User = Depends(get_current_user)):
 
     return {"vision_stack": vision, "data_feeds": feeds,
             "generated_at": datetime.utcnow().isoformat()}
+
+
+@app.get("/vehicles/review", tags=["Vehicles"])
+async def list_vehicle_review(limit: int = 40,
+                              current_user: User = Depends(get_current_user)):
+    """Pending vehicle crops awaiting make/model confirmation, plus counts and
+    how many confirmed labels the local-training corpus holds."""
+    from alibi.vehicles.review_queue import get_review_queue_store
+    store = get_review_queue_store()
+    return {
+        "pending": [i.to_dict() for i in store.list_pending(limit=limit)],
+        "counts": store.counts(),
+        "corpus_size": len(store.confirmed_labels()),
+    }
+
+
+class VehicleReviewDecision(BaseModel):
+    decision: str                      # confirm | reject
+    make: Optional[str] = None
+    model: Optional[str] = None
+    colour: Optional[str] = None
+    body: Optional[str] = None
+
+
+@app.post("/vehicles/review/{item_id}", tags=["Vehicles"])
+async def decide_vehicle_review(
+    item_id: str,
+    payload: VehicleReviewDecision,
+    current_user: User = Depends(require_role([Role.SUPERVISOR, Role.ADMIN])),
+):
+    """Confirm (accept the VLM guess, or a correction) or reject a review item.
+    Confirmed rows become gold labels for the local classifier."""
+    from alibi.vehicles.review_queue import get_review_queue_store, apply_review
+    store = get_review_queue_store()
+    item = store.get(item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Review item not found")
+    label = None
+    if payload.decision == "confirm" and any([payload.make, payload.model, payload.colour, payload.body]):
+        label = {"make": payload.make, "model": payload.model,
+                 "colour": payload.colour, "body": payload.body}
+    try:
+        apply_review(item, payload.decision, current_user.username, label=label)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    store.update(item)
+    get_store().append_audit("vehicle_review", {
+        "user": current_user.username, "item_id": item_id, "decision": payload.decision,
+    })
+    return item.to_dict()
+
+
+@app.get("/vehicles/dataset", tags=["Vehicles"])
+async def vehicle_local_dataset(current_user: User = Depends(require_role([Role.ADMIN]))):
+    """The locally-labelled training corpus so far: confirmed crops + gold
+    labels (rendered from frames we already store; no second copy at rest)."""
+    from alibi.vehicles.review_queue import get_review_queue_store
+    rows = get_review_queue_store().confirmed_labels()
+    from collections import Counter
+    by_make = Counter((r["label"] or {}).get("make") or "unknown" for r in rows)
+    return {"count": len(rows), "by_make": dict(by_make.most_common()), "manifest": rows}
 
 
 class FieldReportCreate(BaseModel):
