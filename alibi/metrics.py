@@ -77,7 +77,16 @@ class MetricsAggregator:
         return count
 
     def compute_summary(self, range_str: str = "24h") -> Dict[str, Any]:
-        """Real KPIs over the window, read through the REAL stores.
+        """Real KPIs over the window, read through the REAL stores. Cached for
+        30s — the underlying stores are encrypted and large, so recomputing on
+        every page poll took ~20s; the numbers don't need per-second freshness.
+        """
+        from alibi.ttl_cache import cached
+        return cached(f"metrics:{range_str}", 30.0,
+                      lambda: self._compute_summary(range_str))
+
+    def _compute_summary(self, range_str: str = "24h") -> Dict[str, Any]:
+        """The real work. See compute_summary for the cache wrapper.
 
         The old version counted raw lines in JSONL files — but those files are
         encrypted at rest, so every count was silently zero and the Metrics
