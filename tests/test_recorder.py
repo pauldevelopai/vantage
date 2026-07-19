@@ -320,3 +320,60 @@ def test_probe_failure_still_records(tmp_path):
     rec, spawned = _recorder(tmp_path, probe=boom)
     rec.start()                                    # must not raise
     assert "-tag:v" not in spawned[0].cmd
+
+
+# ── free-space floor + default retention (disk-conservation) ───────────────
+
+from alibi.cameras.recorder import (
+    default_retention_policy, DEFAULT_MAX_AGE_DAYS, DEFAULT_MIN_FREE_FRACTION,
+)
+
+
+def _fi(path, size, mtime):
+    from alibi.cameras.recorder import FileInfo
+    return FileInfo(path=path, size=size, mtime=mtime)
+
+
+def test_free_space_floor_deletes_oldest_until_headroom():
+    # 5 files × 10 bytes; disk has 5 free; floor wants 30 free -> delete 3 oldest.
+    files = [_fi(f"f{i}", 10, mtime=i) for i in range(5)]
+    pol = RetentionPolicy(min_free_bytes=30)
+    out = plan_retention(files, now=100, policy=pol, disk_free=5)
+    assert out == ["f0", "f1", "f2"]                 # oldest-first, exactly enough
+
+
+def test_free_space_floor_noop_when_enough_free():
+    files = [_fi(f"f{i}", 10, mtime=i) for i in range(5)]
+    pol = RetentionPolicy(min_free_bytes=30)
+    assert plan_retention(files, now=100, policy=pol, disk_free=40) == []
+
+
+def test_free_space_floor_needs_disk_free_to_fire():
+    files = [_fi(f"f{i}", 10, mtime=i) for i in range(3)]
+    pol = RetentionPolicy(min_free_bytes=999)
+    assert plan_retention(files, now=100, policy=pol, disk_free=None) == []  # unknown -> safe no-op
+
+
+def test_age_and_floor_combine_without_double_counting():
+    # f0 is ancient (age-deleted); floor then counts the bytes it already freed.
+    files = [_fi("f0", 10, mtime=0), _fi("f1", 10, mtime=90), _fi("f2", 10, mtime=95)]
+    pol = RetentionPolicy(max_age_seconds=50, min_free_bytes=25)
+    out = plan_retention(files, now=100, policy=pol, disk_free=5)
+    # f0 aged out (frees 10 -> projected 15); need 25 -> delete f1 (->25). f2 kept.
+    assert out == ["f0", "f1"]
+
+
+def test_default_policy_is_always_bounded():
+    # No owner caps at all -> still an age cap AND a free-space floor.
+    pol = default_retention_policy(disk_total_bytes=1000 * 1024 ** 3)
+    assert pol.max_age_seconds == DEFAULT_MAX_AGE_DAYS * 86400
+    assert pol.min_free_bytes == int(1000 * 1024 ** 3 * DEFAULT_MIN_FREE_FRACTION)
+    assert pol.max_bytes is None                      # no per-camera cap unless asked
+
+
+def test_default_policy_honours_owner_caps():
+    pol = default_retention_policy(disk_total_bytes=None, max_gb=20, max_days=7,
+                                   min_free_fraction=None)
+    assert pol.max_bytes == 20 * 1024 ** 3
+    assert pol.max_age_seconds == 7 * 86400
+    assert pol.min_free_bytes is None                 # fraction disabled -> off
