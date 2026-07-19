@@ -152,20 +152,28 @@ class VantageStore:
                     if new_version > current_version:
                         incidents_by_id[incident_id] = incident_dict
         
-        # Convert to Incident objects and filter
+        # Hydrate events in ONE pass. The old code called get_events_by_ids per
+        # incident, and each call re-decrypted the ENTIRE events file — so
+        # listing 167 incidents decrypted the events log 167 times (~31s). Read
+        # the events file once into a lookup, then attach; O(file + incidents).
+        needed: set = set()
+        for d in incidents_by_id.values():
+            needed.update(d.get("event_ids", []) or [])
+        events_map: Dict[str, CameraEvent] = {}
+        if needed and self.events_file.exists():
+            for event_dict in self._crypto.read_lines(self.events_file):
+                eid = event_dict.get("event_id")
+                if eid in needed:
+                    events_map[eid] = self._deserialize_event(event_dict)
+
         incidents = []
         for incident_dict in incidents_by_id.values():
-            incident = self._deserialize_incident(incident_dict)
-            
-            # Apply filters
+            incident = self._deserialize_incident(incident_dict, events_map=events_map)
             if status and incident.status != status:
                 continue
-            
             incidents.append(incident)
-        
-        # Sort by created_ts descending
+
         incidents.sort(key=lambda i: i.created_ts, reverse=True)
-        
         return incidents[:limit]
     
     def list_incidents_with_metadata(
@@ -270,12 +278,18 @@ class VantageStore:
         }
         return data
     
-    def _deserialize_incident(self, data: Dict[str, Any]) -> Incident:
-        """Deserialize dict to Incident"""
-        # Load events by IDs
+    def _deserialize_incident(self, data: Dict[str, Any],
+                              events_map: Optional[Dict[str, "CameraEvent"]] = None) -> Incident:
+        """Deserialize dict to Incident. When `events_map` is provided, events
+        are looked up from it (one shared read) instead of re-scanning the
+        events file per incident — the difference between O(file) and
+        O(incidents × file) when listing."""
         event_ids = data.get("event_ids", [])
-        events = self.get_events_by_ids(event_ids)
-        
+        if events_map is not None:
+            events = [events_map[e] for e in event_ids if e in events_map]
+        else:
+            events = self.get_events_by_ids(event_ids)
+
         return Incident(
             incident_id=data["incident_id"],
             status=IncidentStatus(data["status"]),

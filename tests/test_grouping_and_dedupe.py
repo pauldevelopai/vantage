@@ -379,3 +379,29 @@ class TestProcessCameraEvent:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_list_incidents_hydrates_events_in_one_pass(temp_store):
+    """list_incidents must attach each incident's real events (regression: the
+    old per-incident get_events_by_ids re-read the whole events file each time,
+    making listing O(incidents × events) — ~31s for 167 incidents live)."""
+    from alibi.schemas import Incident
+    now = datetime.utcnow()
+    for n in range(3):
+        ev = CameraEvent(event_id=f"e{n}", camera_id=f"cam{n}", ts=now,
+                         zone_id="z", event_type="person_detected",
+                         confidence=0.9, severity=3, metadata={})
+        temp_store.append_event(ev)
+        inc = Incident(incident_id=f"inc{n}", status=IncidentStatus.NEW,
+                       created_ts=now, updated_ts=now, events=[ev], metadata={})
+        temp_store.upsert_incident(inc)
+
+    out = temp_store.list_incidents(limit=10)
+    assert len(out) == 3
+    by_id = {i.incident_id: i for i in out}
+    # each incident carries its own event, correctly matched
+    assert [e.event_id for e in by_id["inc1"].events] == ["e1"]
+    assert by_id["inc2"].events[0].camera_id == "cam2"
+    # an incident whose event_ids reference a missing event just gets no events,
+    # never another incident's event
+    assert all(all(e.event_id in {"e0", "e1", "e2"} for e in i.events) for i in out)
