@@ -503,14 +503,17 @@ function PersonCard({ p, i, onEnrolled }: { p: DashboardPerson; i: number; onEnr
   return (
     <div className="vg-rise group rounded-lg overflow-hidden bg-black border border-slate-800 hover:border-indigo-500/70 transition-all duration-300"
          style={{ animationDelay: `${340 + i * 40}ms` }}>
-      <div className="relative aspect-square bg-slate-900">
+      <CropLink incidentId={p.incident_id} className="relative block aspect-square bg-slate-900">
         <CropImg src={p.frame_url} alt={enrolled ? p.matched_label! : 'Person'}
                  bbox={p.bbox as [number, number, number, number]} pad={isFace ? 0.45 : 0.2}
                  className="w-full h-full" />
         <span className="absolute bottom-1 right-1.5 text-[8px] px-1 py-0.5 rounded bg-black/80 text-slate-400 font-mono">
           {timeAgo(p.ts)}
         </span>
-      </div>
+        {p.incident_id && (
+          <span className="absolute top-1 right-1.5 text-[8px] px-1 py-0.5 rounded bg-black/70 text-indigo-300">details →</span>
+        )}
+      </CropLink>
       <div className="px-2 py-1.5 border-t border-slate-800/70">
         <div className={`text-[11px] font-medium truncate ${enrolled ? 'text-emerald-300' : 'text-slate-200'}`}>
           {enrolled ? p.matched_label : isFace ? 'Unknown person' : 'Person'}
@@ -794,6 +797,17 @@ const FINDING_BADGE: Record<string, { label: string; cls: string }> = {
   people:     { label: 'RHYTHM', cls: 'bg-indigo-500/60 text-white' },
 };
 
+/** Wraps a card's image in a link to its incident when one is known, else a
+ *  plain container (no dead links). Keeps sibling controls — the enrol button —
+ *  outside, so only the picture navigates. */
+function CropLink({ incidentId, className, children }:
+                  { incidentId?: string | null; className?: string; children: React.ReactNode }) {
+  if (incidentId) {
+    return <Link to={`/incidents/${incidentId}`} className={`${className || ''} group no-underline`}>{children}</Link>;
+  }
+  return <div className={className}>{children}</div>;
+}
+
 /** Explicit sentences about what is happening — familiar vs new, in words. */
 function FindingsList({ findings }: { findings: PatternFinding[] }) {
   return (
@@ -884,7 +898,7 @@ function VehicleCard({ v, i }: { v: DashboardVehicle; i: number }) {
   return (
     <div className="vg-rise rounded-lg overflow-hidden bg-black border border-slate-800 hover:border-cyan-500/60 transition-all duration-300"
          style={{ animationDelay: `${340 + i * 40}ms` }}>
-      <div className="relative aspect-video bg-slate-900">
+      <CropLink incidentId={v.incident_id} className="relative block aspect-video bg-slate-900">
         <CropImg src={v.frame_url} alt={vehicleTitle(v)}
                  bbox={v.bbox as [number, number, number, number]} pad={0.25}
                  className="w-full h-full" />
@@ -896,7 +910,10 @@ function VehicleCard({ v, i }: { v: DashboardVehicle; i: number }) {
             OUT OF PROVINCE
           </span>
         )}
-      </div>
+        {v.incident_id && (
+          <span className="absolute top-1 right-1.5 text-[8px] px-1 py-0.5 rounded bg-black/70 text-indigo-300">details →</span>
+        )}
+      </CropLink>
       <div className="px-2 py-1.5 border-t border-slate-800/70">
         <div className="text-[11px] font-medium text-slate-200 truncate">{vehicleTitle(v)}</div>
         {v.plate && <div className="text-[10px] font-mono text-cyan-400 truncate">{v.plate}</div>}
