@@ -328,6 +328,7 @@ export interface DashboardOverview {
   patterns: DashboardPatterns | null;
   situations: DashboardSituation[];
   out_of_ordinary_vehicles?: OutOfOrdinaryVehicle[];
+  named_vehicles?: NamedVehicle[];
   recurring_vehicles: RecurringVehicle[];
   pattern_findings: PatternFinding[];
   security_suggestions: SecuritySuggestion[];
@@ -398,6 +399,21 @@ export interface DashboardSituation {
   bbox?: number[] | null;
   plate?: string | null;
   confirmed: { by: string; ts: string; label: string | null; notes?: string } | null;
+}
+
+/** A vehicle the owner has named — the persistent "known vehicles" database.
+ *  Stays listed even when not seen recently or nothing is recording. */
+export interface NamedVehicle {
+  entity_id: string;
+  label: string;
+  plate?: string | null;
+  plate_region?: string | null;
+  frame_url?: string | null;
+  bbox?: number[] | null;
+  last_seen?: string | null;
+  count?: number | null;
+  cameras: string[];
+  seen_recently: boolean;
 }
 
 /** A car that is NOT the usual scene — new or occasional, unnamed — with how

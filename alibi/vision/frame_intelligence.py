@@ -180,43 +180,45 @@ def _run_plates(mce, frame, camera_id: str, ts: datetime, out: Dict[str, Any],
                 "region": region_note,
             })
 
-        try:
-            plate_meta = {"plate_text": plate_key, "ocr_confidence": ocr_conf}
-            if region:
-                plate_meta["reg_province"] = region["province"]
-                plate_meta["reg_town"] = region["town"]
-                plate_meta["reg_out_of_area"] = region["out_of_area"]
-            mce._sightings_store.add_sighting(VehicleSighting(
-                sighting_id=str(uuid.uuid4()), camera_id=camera_id, ts=ts.isoformat(),
-                bbox=plate.bbox, color="unknown", make="unknown", model="unknown",
-                confidence=round(min(plate.confidence, ocr_conf), 2),
-                metadata=plate_meta,
-            ))
-        except Exception as e:  # pragma: no cover
-            print(f"[frame-intel] vehicle-sighting write failed: {e}")
+            # Everything below is PER-PLATE and must stay INSIDE the plate loop —
+            # plate_key/plate/ocr_conf are only defined here.
+            try:
+                plate_meta = {"plate_text": plate_key, "ocr_confidence": ocr_conf}
+                if region_note:
+                    plate_meta["reg_province"] = region_note["province"]
+                    plate_meta["reg_town"] = region_note["town"]
+                    plate_meta["reg_out_of_area"] = region_note["out_of_area"]
+                mce._sightings_store.add_sighting(VehicleSighting(
+                    sighting_id=str(uuid.uuid4()), camera_id=camera_id, ts=ts.isoformat(),
+                    bbox=plate.bbox, color="unknown", make="unknown", model="unknown",
+                    confidence=round(min(plate.confidence, ocr_conf), 2),
+                    metadata=plate_meta,
+                ))
+            except Exception as e:  # pragma: no cover
+                print(f"[frame-intel] vehicle-sighting write failed: {e}")
 
-        try:
-            for ca in mce._cross_camera_tracker.record_sighting(
-                camera_id=camera_id, entity_type="plate", entity_id=plate_key,
-                timestamp=ts.isoformat(), metadata={"confidence": ocr_conf},
-            ) or []:
-                out["cross_camera_alerts"].append(
-                    {"type": ca.alert_type, "message": ca.message, "cameras": ca.cameras})
-                out["hotlist_hit"] = True
-                out["hotlist_reason"] = ca.message
-        except Exception:
-            pass
+            try:
+                for ca in mce._cross_camera_tracker.record_sighting(
+                    camera_id=camera_id, entity_type="plate", entity_id=plate_key,
+                    timestamp=ts.isoformat(), metadata={"confidence": ocr_conf},
+                ) or []:
+                    out["cross_camera_alerts"].append(
+                        {"type": ca.alert_type, "message": ca.message, "cameras": ca.cameras})
+                    out["hotlist_hit"] = True
+                    out["hotlist_reason"] = ca.message
+            except Exception:
+                pass
 
-        try:
-            travel = mce._travel_detector.check(plate_key, camera_id, ts.isoformat())
-            if travel:
-                out["cross_camera_alerts"].append(
-                    {"type": "impossible_travel", "message": travel.message,
-                     "cameras": [travel.camera_a, camera_id]})
-                out["hotlist_hit"] = True
-                out["hotlist_reason"] = travel.message
-        except Exception:
-            pass
+            try:
+                travel = mce._travel_detector.check(plate_key, camera_id, ts.isoformat())
+                if travel:
+                    out["cross_camera_alerts"].append(
+                        {"type": "impossible_travel", "message": travel.message,
+                         "cameras": [travel.camera_a, camera_id]})
+                    out["hotlist_hit"] = True
+                    out["hotlist_reason"] = travel.message
+            except Exception:
+                pass
 
 
 def face_within_person(face_bbox, person_boxes, pad: float = 0.35) -> bool:
