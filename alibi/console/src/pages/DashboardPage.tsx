@@ -202,6 +202,20 @@ export function DashboardPage() {
                                    onOpenVehicle={(eid) => setVehicleHistory(eid)} />
                 </Panel>
 
+                {/* Your vehicles — the persistent list of cars you've named. It
+                    stays here for good (that's where a just-named car "goes"),
+                    visible even when it hasn't been seen lately. */}
+                {(data.named_vehicles?.length ?? 0) > 0 && (
+                  <Panel className="mb-4" delay={193}>
+                    <div className="flex items-center justify-between mb-3">
+                      <h2 className="text-[11px] font-semibold text-slate-300 uppercase tracking-[0.14em]">Your vehicles</h2>
+                      <span className="text-[10px] text-slate-600 font-mono hidden sm:inline">named &amp; remembered · kept even when idle</span>
+                    </div>
+                    <NamedVehiclesPanel vehicles={data.named_vehicles || []}
+                                        onOpen={(eid) => setVehicleHistory(eid)} />
+                  </Panel>
+                )}
+
                 {/* Out of the ordinary — the cars that are NOT the usual scene,
                     with how often each came down the road and when. Residents,
                     regulars and named vehicles are excluded by definition. */}
@@ -1175,6 +1189,45 @@ function FindingsList({ findings }: { findings: PatternFinding[] }) {
           </li>
         );
       })}
+    </ul>
+  );
+}
+
+/** Your named vehicles — the persistent known-cars database. A named car lives
+ *  here for good (this is where it "goes" after you name it), with its photo,
+ *  plate and when it was last seen; click through for its full history. */
+function NamedVehiclesPanel({ vehicles, onOpen }: { vehicles: import('../lib/types').NamedVehicle[]; onOpen: (entityId: string) => void }) {
+  if (!vehicles.length) return null;
+  return (
+    <ul className="space-y-1.5">
+      {vehicles.map((v, i) => (
+        <li key={v.entity_id || i} className="flex items-center gap-2 text-xs flex-wrap">
+          {v.frame_url && v.bbox
+            ? <button onClick={() => onOpen(v.entity_id)} className="w-9 h-9 flex-none rounded overflow-hidden bg-slate-900 border border-slate-700 hover:border-emerald-500">
+                <CropImg src={v.frame_url} alt={v.label}
+                         bbox={v.bbox as [number, number, number, number]} pad={0.3}
+                         className="w-full h-full" />
+              </button>
+            : <span className="w-9 h-9 flex-none rounded bg-slate-800 border border-slate-700 flex items-center justify-center text-[8px] text-slate-600">no pic</span>}
+          <span className="text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded flex-none bg-emerald-600/80 text-white">YOURS</span>
+          <button onClick={() => onOpen(v.entity_id)}
+                  className="text-emerald-200 hover:text-white font-medium text-left underline decoration-dotted underline-offset-2">
+            {v.label}
+          </button>
+          {v.plate && (
+            <span className="font-mono text-[10px] font-bold text-slate-200 bg-slate-800 border border-slate-600 rounded px-1.5 py-0.5 tracking-wider flex-none">{v.plate}</span>
+          )}
+          <span className="text-slate-500">
+            {v.seen_recently
+              ? <>seen {v.count}× · {v.cameras.join(', ')}</>
+              : <>not seen recently</>}
+          </span>
+          <span className="text-slate-600 ml-auto font-mono text-[10px]">{v.last_seen ? timeAgo(v.last_seen) : ''}</span>
+        </li>
+      ))}
+      <li className="text-[10px] text-slate-600 pt-1">
+        These stay listed even when idle or when nothing is recording — it's your saved list, not a live feed.
+      </li>
     </ul>
   );
 }

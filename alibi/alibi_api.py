@@ -1848,6 +1848,49 @@ async def dashboard_overview(range: str = "24h",
         print(f"[dashboard] criteria situations unavailable: {e}")
         situations = situations[:8]
 
+    # Your named vehicles — the PERSISTENT known-vehicles list. Once you name a
+    # car it belongs here for good (keyed by its cluster AND its plate), and it
+    # stays visible even when it hasn't been seen recently or nothing is
+    # recording. This is what stops a just-named car "vanishing" the moment it
+    # leaves the out-of-ordinary list.
+    named_vehicles: list = []
+    try:
+        ent_by_id = {e["entity_id"]: e for e in ent}
+        seen = set()
+        for eid, meta in (vlabels or {}).items():
+            label = (meta or {}).get("label")
+            if not label:
+                continue
+            plate = (meta or {}).get("plate")
+            if (label, plate) in seen:
+                continue
+            seen.add((label, plate))
+            e = ent_by_id.get(eid)
+            ev = _vehicle_evidence(eid) if e else {}
+            # If the named cluster isn't in the window, follow its PLATE to any
+            # cluster that is, so we can still show a recent photo + last-seen.
+            if not e and plate:
+                for cand in ent:
+                    cev = _vehicle_evidence(cand["entity_id"])
+                    if cev.get("plate") and cev["plate"] == plate:
+                        e, ev, eid = cand, cev, cand["entity_id"]
+                        break
+            named_vehicles.append({
+                "entity_id": eid,
+                "label": label,
+                "plate": plate or (ev.get("plate") if ev else None),
+                "plate_region": ev.get("plate_region") if ev else None,
+                "frame_url": ev.get("frame_url") if ev else None,
+                "bbox": ev.get("bbox") if ev else None,
+                "last_seen": (e["last_seen"] if e else (meta or {}).get("set_at")),
+                "count": (e["count"] if e else None),
+                "cameras": [names.get(c, c) for c in (e["cameras"] if e else [])],
+                "seen_recently": bool(e),
+            })
+        named_vehicles.sort(key=lambda v: str(v.get("last_seen") or ""), reverse=True)
+    except Exception as e:
+        print(f"[dashboard] named vehicles unavailable: {e}")
+
     return {
         "range": range,
         "generated_at": datetime.utcnow().isoformat(),
@@ -1869,6 +1912,7 @@ async def dashboard_overview(range: str = "24h",
         "patterns": patterns,
         "situations": situations,
         "out_of_ordinary_vehicles": out_of_ordinary,
+        "named_vehicles": named_vehicles,
         "recurring_vehicles": recurring_vehicles,
         "pattern_findings": pattern_findings_rows,
         "security_suggestions": _security_suggestions_payload(names),
