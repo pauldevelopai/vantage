@@ -429,7 +429,8 @@ export function DashboardPage() {
         )}
       </div>
       {vehicleHistory && (
-        <VehicleHistoryModal entityId={vehicleHistory} onClose={() => setVehicleHistory(null)} />
+        <VehicleHistoryModal entityId={vehicleHistory} onClose={() => setVehicleHistory(null)}
+                             onSaved={() => { setVehicleHistory(null); load(range); }} />
       )}
       {logReport && (
         <LogReportModal cameras={(data?.cameras || []).map(c => ({ id: c.camera_id, name: c.name }))}
@@ -535,12 +536,18 @@ function LogReportModal({ cameras, onClose, onSaved }:
   );
 }
 
-/** How often a recurring vehicle has been seen — count, per-day sparkline,
- *  hour-of-day, familiarity, and the sighting trail. Continuity, not identity. */
-function VehicleHistoryModal({ entityId, onClose }: { entityId: string; onClose: () => void }) {
+/** A recurring vehicle in full: the actual photo(s), how often + when it's been
+ *  seen, and a correction — "this is my car" — that names it and takes it out of
+ *  the out-of-ordinary flagging. Continuity from our own cameras, not identity. */
+function VehicleHistoryModal({ entityId, onClose, onSaved }: { entityId: string; onClose: () => void; onSaved: () => void }) {
   const [h, setH] = useState<import('../lib/types').VehicleHistory | null>(null);
   const [win, setWin] = useState('7d');
   const [err, setErr] = useState<string | null>(null);
+  const canName = hasRole('supervisor') || hasRole('admin');
+  const [naming, setNaming] = useState(false);
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [saveErr, setSaveErr] = useState<string | null>(null);
 
   useEffect(() => {
     setH(null); setErr(null);
@@ -549,19 +556,30 @@ function VehicleHistoryModal({ entityId, onClose }: { entityId: string; onClose:
       .catch(e => setErr(e?.message || 'Could not load history'));
   }, [entityId, win]);
 
+  async function save(label: string) {
+    if (!label.trim()) return;
+    setBusy(true); setSaveErr(null);
+    try {
+      await api.setVehicleLabel(entityId, label.trim());
+      onSaved();
+    } catch (e: any) {
+      setSaveErr(e?.message || 'Could not save');
+    } finally { setBusy(false); }
+  }
+
   const maxDay = h ? Math.max(1, ...h.per_day.map(d => d.count)) : 1;
   const fam = h ? (FINDING_BADGE[h.familiarity] || FINDING_BADGE.occasional) : null;
+  const descriptor = h ? [h.colour && h.colour !== 'unknown' ? h.colour[0].toUpperCase() + h.colour.slice(1) : '', h.body || ''].filter(Boolean).join(' ') : '';
+  const title = h?.owner_label ? `“${h.owner_label}”` : (descriptor || 'Recurring vehicle');
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
-      <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-xl max-w-lg w-full max-h-[85vh] overflow-y-auto"
+      <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-xl max-w-lg w-full max-h-[88vh] overflow-y-auto"
            onClick={e => e.stopPropagation()}>
         <div className="flex items-start justify-between p-4 border-b border-slate-800">
           <div className="flex items-center gap-2">
             {fam && <span className={`text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded ${fam.cls}`}>{fam.label}</span>}
-            <h2 className="text-sm font-semibold text-white">
-              {h?.owner_label ? `“${h.owner_label}”` : 'Recurring vehicle'}
-            </h2>
+            <h2 className="text-sm font-semibold text-white">{title}</h2>
           </div>
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-0.5 p-0.5 rounded bg-slate-800">
@@ -580,7 +598,55 @@ function VehicleHistoryModal({ entityId, onClose }: { entityId: string; onClose:
           {!h && !err && <p className="text-sm text-slate-500">Loading…</p>}
           {h && (
             <>
-              <div className="grid grid-cols-3 gap-2 text-center mb-4">
+              {/* The full-sized evidence photo of the actual car. */}
+              {h.frame_url && (
+                <a href={h.frame_url} target="_blank" rel="noreferrer"
+                   className="block mb-3 rounded-lg overflow-hidden bg-black border border-slate-800">
+                  <AuthImg src={h.frame_url} alt="vehicle" className="w-full max-h-72 object-contain" />
+                </a>
+              )}
+
+              {/* Correction — "this is my car". Names it and stops it being flagged
+                  as out-of-ordinary; a named vehicle reads as part of the scene. */}
+              {canName && !h.owner_label && (
+                <div className="mb-3 rounded-md bg-indigo-500/10 border border-indigo-500/30 p-3">
+                  {!naming ? (
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-indigo-200">Is this one of your vehicles?</span>
+                      <div className="flex gap-1.5">
+                        <button onClick={() => save('My car')} disabled={busy}
+                                className="text-[11px] font-medium bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded px-2.5 py-1">
+                          {busy ? '…' : 'This is my car'}
+                        </button>
+                        <button onClick={() => { setNaming(true); setName(''); }}
+                                className="text-[11px] text-indigo-300 hover:text-white border border-indigo-500/40 rounded px-2 py-1">
+                          Name it…
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      <input autoFocus value={name} onChange={e => setName(e.target.value)}
+                             onKeyDown={e => { if (e.key === 'Enter') save(name); if (e.key === 'Escape') setNaming(false); }}
+                             placeholder="e.g. Paul's Fortuner, the gardener's bakkie"
+                             className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-slate-200 placeholder:text-slate-600 focus:border-indigo-500 outline-none" />
+                      <button onClick={() => save(name)} disabled={busy || !name.trim()}
+                              className="text-[11px] font-medium bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded px-2.5 py-1">
+                        {busy ? '…' : 'Save'}
+                      </button>
+                      <button onClick={() => setNaming(false)} className="text-[11px] text-slate-500 px-1">Cancel</button>
+                    </div>
+                  )}
+                  {saveErr && <p className="mt-1 text-[10px] text-red-400">{saveErr}</p>}
+                </div>
+              )}
+              {h.owner_label && (
+                <p className="mb-3 text-xs text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded p-2">
+                  Named “{h.owner_label}” — treated as part of the scene, no longer flagged as out-of-ordinary.
+                </p>
+              )}
+
+              <div className="grid grid-cols-3 gap-2 text-center mb-3">
                 <Stat label="Sightings" value={String(h.count)} />
                 <Stat label="Days seen" value={String(h.days)} />
                 <Stat label="Cameras" value={String(h.cameras.length)} />
@@ -600,9 +666,28 @@ function VehicleHistoryModal({ entityId, onClose }: { entityId: string; onClose:
                   </div>
                 </div>
               )}
-              <div className="text-[10px] text-slate-600">
-                Cameras: {h.cameras.join(', ')}
-              </div>
+              {/* Every appearance, with its photo — history a human can check by eye. */}
+              {h.frames && h.frames.length > 0 && (
+                <div className="mb-3">
+                  <div className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Its appearances</div>
+                  <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5 max-h-48 overflow-y-auto pr-1">
+                    {h.frames.map((f, i) => (
+                      <div key={i} className="rounded overflow-hidden border border-slate-800 bg-slate-900">
+                        <div className="aspect-square">
+                          <CropImg src={f.frame_url} alt={f.camera_id}
+                                   bbox={f.bbox as [number, number, number, number]} pad={0.3}
+                                   className="w-full h-full" />
+                        </div>
+                        <div className="px-1 py-0.5 text-[8px] text-slate-500 truncate">{timeAgo(f.ts)}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <p className="text-[10px] text-slate-600">
+                Cameras: {h.cameras.join(', ')}. Vehicles are grouped by appearance, which can split
+                the same car across clusters — naming it is the reliable way to teach the system it's yours.
+              </p>
             </>
           )}
         </div>

@@ -83,8 +83,26 @@ async def vehicle_history(
 
     trail = tracker.get_entity_trail("vehicle", entity_id, hours=hours)
     label = (get_vehicle_labels().get(entity_id) or {}).get("label")
-    cls = classify_entity(summary["count"], summary["first_seen"], summary["last_seen"],
-                          summary.get("days", 1), summary.get("active_hours", 1))
+    # A vehicle the owner has CLAIMED is theirs is, by definition, part of the
+    # scene — treat it as resident regardless of how the raw maths would class
+    # this particular ReID fragment.
+    if label:
+        cls = "resident"
+    else:
+        cls = classify_entity(summary["count"], summary["first_seen"], summary["last_seen"],
+                              summary.get("days", 1), summary.get("active_hours", 1))
+
+    # Real evidence photos: a representative frame + per-sighting frames, linked
+    # from the vehicle-sightings store by (camera, second).
+    frame_url, bbox, colour, body, frames = None, None, None, None, []
+    try:
+        from alibi.vehicles.evidence import sightings_index, entity_evidence, trail_frames
+        idx = sightings_index()
+        ev = entity_evidence(trail, idx)
+        frame_url, bbox, colour, body = ev["frame_url"], ev["bbox"], ev["colour"], ev["body"]
+        frames = trail_frames(trail, idx)
+    except Exception:
+        pass
 
     # Per-day counts for a sparkline (site-local via UTC buckets).
     per_day: dict = {}
@@ -104,6 +122,11 @@ async def vehicle_history(
         "last_seen": summary["last_seen"],
         "cameras": summary["cameras"],
         "hours": summary["hours"],
+        "colour": colour,
+        "body": body,
+        "frame_url": frame_url,
+        "bbox": bbox,
+        "frames": frames,      # per-sighting evidence photos (newest first)
         "per_day": [{"day": d, "count": n} for d, n in sorted(per_day.items())],
         "trail": [{"camera_id": e.get("camera_id"), "ts": e.get("timestamp")}
                   for e in trail],
