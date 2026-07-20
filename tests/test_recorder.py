@@ -268,6 +268,39 @@ def test_apply_retention_deletes_and_reports(tmp_path):
     assert removed == ["a"]
 
 
+def test_no_video_keeps_only_the_motion_job(tmp_path):
+    # continuous video off → only motion stills recorded (smallest footprint)
+    rec, spawned = _recorder(tmp_path, record_video=False)
+    rec.start()
+    assert len(spawned) == 1
+    assert "record" not in rec.status()["jobs"]
+    assert "motion" in rec.status()["jobs"]
+
+
+def test_video_retention_policy_is_a_tight_default_and_liftable():
+    from alibi.cameras.recorder import default_video_retention_policy, DEFAULT_VIDEO_MAX_GB
+    p = default_video_retention_policy()
+    assert p.max_bytes == int(DEFAULT_VIDEO_MAX_GB * 1024 ** 3)     # capped by default
+    assert default_video_retention_policy(max_gb=0).max_bytes is None   # 0 lifts the GB cap
+
+
+def test_video_and_stills_swept_by_separate_budgets(tmp_path):
+    # video is capped tight (drops the oldest); tiny stills under their own loose
+    # cap are kept — the whole point of the split
+    rec, _ = _recorder(tmp_path,
+                       video_retention=RetentionPolicy(max_bytes=150),   # tight video
+                       retention=RetentionPolicy(max_bytes=10_000))      # loose stills
+    removed = []
+    fake_files = {
+        rec.recordings_dir: [_f("vid_a", 100, 1), _f("vid_b", 100, 2)],  # 200>150 → drop oldest
+        rec.motion_dir: [_f("img_a", 50, 1), _f("img_b", 50, 2)],        # 100<10k → keep both
+    }
+    deleted = rec.apply_retention(now=10, scan=lambda d: fake_files.get(d, []),
+                                  remove=lambda p: removed.append(p))
+    assert deleted == ["vid_a"]                     # only the oldest video went
+    assert "img_a" not in removed and "img_b" not in removed
+
+
 def test_stop_terminates_running_jobs(tmp_path):
     rec, spawned = _recorder(tmp_path)
     rec.start()

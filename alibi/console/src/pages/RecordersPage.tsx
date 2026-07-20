@@ -77,9 +77,11 @@ export function RecordersPage() {
   }
 
   const isMac = /Mac/i.test(navigator.platform || navigator.userAgent);
+  // Video is the disk hog, so it's capped tight by default (5GB / 7 days per
+  // camera); motion stills + the cloud intelligence are tiny and kept longer.
   const cmdLines = isMac
-    ? 'cd ~/Downloads\npython3 vantage_recorder.pyz --dir ~/vantage-rec --max-gb 200 --max-days 30'
-    : 'cd %USERPROFILE%\\Downloads\npython vantage_recorder.pyz --dir vantage-rec --max-gb 200 --max-days 30';
+    ? 'cd ~/Downloads\npython3 vantage_recorder.pyz --dir ~/vantage-rec'
+    : 'cd %USERPROFILE%\\Downloads\npython vantage_recorder.pyz --dir vantage-rec';
   const [launching, setLaunching] = useState(false);
   const [copied, setCopied] = useState(false);
   function copyCmd() {
@@ -319,6 +321,13 @@ export function RecordersPage() {
                   </button>
                 </div>
                 <span className="text-xs text-gray-500">You should see <code className="bg-gray-100 px-1 rounded">paired as brg_…</code>. Leave the window open — it appears under “Your recorders” above.</span>
+                <div className="mt-1.5 text-xs text-gray-500 leading-relaxed">
+                  <span className="font-medium text-gray-700">Tight on disk?</span> Recorded video is the big user and is capped at
+                  <code className="bg-gray-100 px-1 rounded mx-1">5&nbsp;GB&nbsp;/&nbsp;7&nbsp;days</code> per camera by default. Change it with
+                  <code className="bg-gray-100 px-1 rounded mx-1">--video-max-gb&nbsp;20</code>, or add
+                  <code className="bg-gray-100 px-1 rounded mx-1">--no-video</code> to keep <em>only</em> the motion snapshots + AI
+                  (a tiny fraction of the space — the cameras still see everything).
+                </div>
               </li>
               <li>
                 <span className="font-medium">4. Optional — free scene descriptions</span> (no AI cost).{' '}

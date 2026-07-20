@@ -261,6 +261,13 @@ def ffmpeg_available(ffmpeg: str = FFMPEG, run: Callable = subprocess.run) -> bo
 DEFAULT_MAX_AGE_DAYS = 14
 DEFAULT_MIN_FREE_FRACTION = 0.10     # always leave at least 10% of the volume free
 
+# Continuous VIDEO is the disk hog (a low-res stream is ~1GB/camera/day); motion
+# STILLS + the cloud intelligence are tiny. So video gets its OWN tight budget by
+# default while stills keep a generous age cap — the split that stops the drive
+# filling without losing the evidence.
+DEFAULT_VIDEO_MAX_GB = 5             # per-camera cap on recorded video (owner-tunable)
+DEFAULT_VIDEO_MAX_DAYS = 7           # ...and never older than this
+
 
 @dataclass
 class RetentionPolicy:
@@ -281,6 +288,25 @@ def default_retention_policy(disk_total_bytes: Optional[int] = None,
     return RetentionPolicy(
         max_bytes=int(max_gb * 1024 ** 3) if max_gb else None,
         max_age_seconds=int((max_days if max_days else DEFAULT_MAX_AGE_DAYS) * 86400),
+        min_free_bytes=(int(disk_total_bytes * min_free_fraction)
+                        if (disk_total_bytes and min_free_fraction) else None),
+    )
+
+
+def default_video_retention_policy(disk_total_bytes: Optional[int] = None,
+                                   max_gb: Optional[float] = None,
+                                   max_days: Optional[float] = None,
+                                   min_free_fraction: Optional[float] = DEFAULT_MIN_FREE_FRACTION,
+                                   ) -> RetentionPolicy:
+    """A TIGHT budget for the continuous video, separate from the stills. Defaults
+    to a small per-camera GB cap (+ a days backstop + the free-space floor), so
+    video can't eat the drive; pass max_gb=0 to lift the GB cap (days/floor still
+    bound it). Stills are swept by the generous `default_retention_policy`."""
+    if max_gb is None:
+        max_gb = DEFAULT_VIDEO_MAX_GB
+    return RetentionPolicy(
+        max_bytes=int(max_gb * 1024 ** 3) if max_gb else None,   # 0 → lift GB cap
+        max_age_seconds=int((max_days if max_days else DEFAULT_VIDEO_MAX_DAYS) * 86400),
         min_free_bytes=(int(disk_total_bytes * min_free_fraction)
                         if (disk_total_bytes and min_free_fraction) else None),
     )
@@ -384,6 +410,7 @@ class CameraRecorder:
         retention: Optional[RetentionPolicy] = None,
         motion_threshold: float = DEFAULT_MOTION_THRESHOLD,
         record_motion: bool = True,
+        record_video: bool = True,
         record_audio: bool = False,
         ffmpeg: str = FFMPEG,
         spawn: Callable = subprocess.Popen,
@@ -391,16 +418,19 @@ class CameraRecorder:
         video_codec: Optional[str] = None,
         probe: Optional[Callable] = None,
         still_width: int = DEFAULT_STILL_WIDTH,
+        video_retention: Optional[RetentionPolicy] = None,
     ):
         self.camera_id = camera_id
         self.record_url = record_url
         self.motion_url = motion_url or record_url   # prefer the cheap sub-stream
         self.base_dir = base_dir
         self.segment_seconds = segment_seconds
-        self.retention = retention
+        self.retention = retention                   # stills budget (generous — tiny)
+        self.video_retention = video_retention       # video budget (tight — the hog)
         self.motion_threshold = motion_threshold
         self.still_width = still_width               # motion-still width cap (plate legibility)
         self.record_motion = record_motion
+        self.record_video = record_video             # False → keep only stills + intel
         self.record_audio = record_audio
         self.ffmpeg = ffmpeg
         self._spawn = spawn
@@ -441,13 +471,17 @@ class CameraRecorder:
         return self._record_codec
 
     def _build_jobs(self) -> List[_Job]:
-        jobs = [_Job("record", build_record_command(
-            self.record_url, self.recordings_dir,
-            segment_seconds=self.segment_seconds,
-            prefix=self.camera_id, ffmpeg=self.ffmpeg,
-            audio=self.record_audio,
-            video_codec=self._probe_record_codec(),
-        ))]
+        jobs: List[_Job] = []
+        # Continuous video is optional: an owner can keep only motion stills +
+        # the cloud intelligence (a fraction of the disk) by turning it off.
+        if self.record_video:
+            jobs.append(_Job("record", build_record_command(
+                self.record_url, self.recordings_dir,
+                segment_seconds=self.segment_seconds,
+                prefix=self.camera_id, ffmpeg=self.ffmpeg,
+                audio=self.record_audio,
+                video_codec=self._probe_record_codec(),
+            )))
         if self.record_motion:
             jobs.append(_Job("motion", build_motion_command(
                 self.motion_url, self.motion_dir,
@@ -486,24 +520,30 @@ class CameraRecorder:
         scan: Callable[[str], List[FileInfo]] = _scan_dir,
         remove: Callable[[str], None] = os.remove,
     ) -> List[str]:
-        """Delete old segments/motion frames per policy. Returns deleted paths."""
-        if not self.retention:
+        """Delete old video + stills per their SEPARATE policies (video is capped
+        tight; stills keep a generous age cap). Returns deleted paths."""
+        # (dir, policy) pairs — video swept by video_retention, stills by retention.
+        targets = [
+            (self.recordings_dir if self.record_video else None,
+             self.video_retention or self.retention),
+            (self.motion_dir if self.record_motion else None, self.retention),
+        ]
+        if not any(p for _, p in targets):
             return []
         now = self._clock() if now is None else now
-        # Current free space on the recording volume — drives the free-space
-        # floor. Best-effort: if we can't read it, the floor simply doesn't fire.
+        # Current free space on the recording volume — drives the free-space floor.
         disk_free = None
-        if self.retention.min_free_bytes is not None:
+        if any(p and p.min_free_bytes is not None for _, p in targets):
             try:
                 import shutil
                 disk_free = shutil.disk_usage(self.base_dir).free
             except OSError:
                 disk_free = None
         deleted: List[str] = []
-        for d in (self.recordings_dir, self.motion_dir if self.record_motion else None):
-            if not d:
+        for d, policy in targets:
+            if not d or not policy:
                 continue
-            for path in plan_retention(scan(d), now, self.retention, disk_free=disk_free):
+            for path in plan_retention(scan(d), now, policy, disk_free=disk_free):
                 try:
                     remove(path)
                     deleted.append(path)
