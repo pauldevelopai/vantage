@@ -106,6 +106,15 @@ def test_motion_stills_are_rate_capped():
     assert "prev_selected_t" not in vf3               # opt out => every motion frame
 
 
+def test_motion_still_width_is_plate_legible_by_default_and_tunable():
+    """640px made plates ~20px (unreadable). Default is now 1280 so a plate has
+    enough pixels; owners on a tight uplink can shrink it."""
+    _vf = lambda **k: (lambda c: c[c.index("-vf") + 1])(build_motion_command("u", "/d", **k))
+    assert "scale='min(iw,1280)':-2" in _vf()          # legible default
+    assert "scale='min(iw,640)':-2" in _vf(still_width=640)
+    assert "scale='min(iw,320)':-2" in _vf(still_width=10)   # floored, never absurd
+
+
 def test_ffmpeg_available_true_and_false():
     class R:  # fake completed process
         def __init__(self, rc): self.returncode = rc

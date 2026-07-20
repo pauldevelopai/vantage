@@ -42,6 +42,12 @@ FFMPEG = "ffmpeg"
 # 0.02 catches a person/vehicle while ignoring sensor noise; the cloud throttles
 # analysis to one frame per camera per 8s regardless, so erring low is cheap.
 DEFAULT_MOTION_THRESHOLD = 0.02
+# Motion-still width cap. 640 kept uploads tiny but made number plates ~20px —
+# unreadable, and no crop/upscale can recover detail that was never captured.
+# 1280 gives a plate enough pixels to read (with the vehicle-crop pass) while the
+# JPEG stays ~100KB. Tunable via --still-width / VANTAGE_STILL_WIDTH for owners
+# on tight uplinks who don't need plates.
+DEFAULT_STILL_WIDTH = 1280
 DEFAULT_SEGMENT_SECONDS = 600          # 10-minute segments
 _RESTART_BACKOFF_SECONDS = 10          # wait before relaunching a died ffmpeg
 
@@ -99,6 +105,7 @@ def build_motion_command(
     prefix: str = "cam",
     ffmpeg: str = FFMPEG,
     min_gap_seconds: float = 1.0,
+    still_width: int = DEFAULT_STILL_WIDTH,
 ) -> List[str]:
     """Write a JPEG only when the scene changes past `threshold` (= motion), and
     at most one per `min_gap_seconds`.
@@ -124,7 +131,8 @@ def build_motion_command(
         # AND (*) a minimum gap since the previously selected frame; OR (+) the
         # very first frame, whose prev_selected_t is NaN.
         gate = f"({gate})*(isnan(prev_selected_t)+gte(t-prev_selected_t,{gap}))"
-    vf = f"select='{gate}',scale='min(iw,640)':-2,format=yuvj420p"
+    sw = max(320, int(still_width or DEFAULT_STILL_WIDTH))
+    vf = f"select='{gate}',scale='min(iw,{sw})':-2,format=yuvj420p"
     return [
         ffmpeg, "-nostdin", "-loglevel", "error",
         "-rtsp_transport", "tcp",
@@ -382,6 +390,7 @@ class CameraRecorder:
         clock: Callable[[], float] = None,
         video_codec: Optional[str] = None,
         probe: Optional[Callable] = None,
+        still_width: int = DEFAULT_STILL_WIDTH,
     ):
         self.camera_id = camera_id
         self.record_url = record_url
@@ -390,6 +399,7 @@ class CameraRecorder:
         self.segment_seconds = segment_seconds
         self.retention = retention
         self.motion_threshold = motion_threshold
+        self.still_width = still_width               # motion-still width cap (plate legibility)
         self.record_motion = record_motion
         self.record_audio = record_audio
         self.ffmpeg = ffmpeg
@@ -443,6 +453,7 @@ class CameraRecorder:
                 self.motion_url, self.motion_dir,
                 threshold=self.motion_threshold,
                 prefix=self.camera_id, ffmpeg=self.ffmpeg,
+                still_width=self.still_width,
             )))
         return jobs
 
