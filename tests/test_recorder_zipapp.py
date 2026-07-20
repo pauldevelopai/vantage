@@ -102,10 +102,13 @@ def test_recorder_zipapp_builds_valid_archive_with_disk_fix():
     data = _build_recorder_zipapp("https://vantage.example", "PAIR123")
     z = zipfile.ZipFile(io.BytesIO(data))
     assert set(z.namelist()) == {
-        "recorder.py", "onvif.py", "bridge_agent.py", "record_agent.py", "__main__.py",
+        "recorder.py", "onvif.py", "local_vision.py", "bridge_agent.py",
+        "record_agent.py", "__main__.py",
     }
     recorder_src = z.read("recorder.py").decode()
     assert "default_retention_policy" in recorder_src
     assert "min_free_bytes" in recorder_src
     agent_src = z.read("record_agent.py").decode()
     assert "default_retention_policy(" in agent_src   # retention on by default
+    lv_src = z.read("local_vision.py").decode()
+    assert "security camera analyst operating in South Africa" in lv_src  # shared prompt bundled
