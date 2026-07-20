@@ -265,8 +265,9 @@ DEFAULT_MIN_FREE_FRACTION = 0.10     # always leave at least 10% of the volume f
 # STILLS + the cloud intelligence are tiny. So video gets its OWN tight budget by
 # default while stills keep a generous age cap — the split that stops the drive
 # filling without losing the evidence.
-DEFAULT_VIDEO_MAX_GB = 5             # per-camera cap on recorded video (owner-tunable)
+DEFAULT_VIDEO_MAX_GB = 5             # per-camera cap on recorded video (standalone CLI)
 DEFAULT_VIDEO_MAX_DAYS = 7           # ...and never older than this
+DEFAULT_SHARED_VIDEO_MAX_GB = 10     # combined video budget across ALL cameras (the agent)
 
 
 @dataclass
@@ -522,10 +523,12 @@ class CameraRecorder:
     ) -> List[str]:
         """Delete old video + stills per their SEPARATE policies (video is capped
         tight; stills keep a generous age cap). Returns deleted paths."""
-        # (dir, policy) pairs — video swept by video_retention, stills by retention.
+        # (dir, policy) pairs. Video is swept ONLY when this recorder was given a
+        # video policy; when it wasn't, the agent owns a SHARED video budget
+        # across all cameras and sweeps it there. Stills are always per-camera.
         targets = [
-            (self.recordings_dir if self.record_video else None,
-             self.video_retention or self.retention),
+            (self.recordings_dir if (self.record_video and self.video_retention) else None,
+             self.video_retention),
             (self.motion_dir if self.record_motion else None, self.retention),
         ]
         if not any(p for _, p in targets):

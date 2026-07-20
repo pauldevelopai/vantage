@@ -16,6 +16,7 @@ class FakeRecorder:
         self.camera_id = target["camera_id"]
         self.record_url = target["record_url"]
         self.motion_url = target.get("motion_url")
+        self.recordings_dir = f"/rec/{target['camera_id']}/recordings"
         self.started = False
         self.stopped = False
         self.polls = 0
@@ -37,6 +38,40 @@ def _agent():
 
 def _t(cam_id, url, motion=None):
     return {"camera_id": cam_id, "record_url": url, "motion_url": motion or url}
+
+
+def test_video_budget_is_shared_across_cameras_oldest_first():
+    """ONE combined video cap across every camera: the oldest segment anywhere is
+    deleted first until the pooled total is under budget."""
+    from alibi.cameras.recorder import RetentionPolicy, FileInfo
+    created = []
+    agent = RecordAgent(base_dir="/tmp/x",
+                        recorder_factory=lambda t: created.append(FakeRecorder(t)) or created[-1],
+                        video_retention=RetentionPolicy(max_bytes=150), record_video=True)
+    agent.sync_targets([_t("cam1", "rtsp://a"), _t("cam2", "rtsp://b")])
+    files = {  # 3 segments × 100B across the two cameras = 300 > 150
+        "/rec/cam1/recordings": [FileInfo("cam1_old", 100, 1.0), FileInfo("cam1_new", 100, 5.0)],
+        "/rec/cam2/recordings": [FileInfo("cam2_mid", 100, 3.0)],
+    }
+    removed = []
+    deleted = agent.sweep_shared_video(now=10, scan=lambda d: files.get(d, []),
+                                       remove=lambda p: removed.append(p))
+    # oldest-first across the POOL until <=150: drop cam1_old(t1) then cam2_mid(t3)
+    assert deleted == ["cam1_old", "cam2_mid"]
+    assert "cam1_new" not in removed                 # newest kept
+
+
+def test_no_shared_video_sweep_when_video_off():
+    from alibi.cameras.recorder import RetentionPolicy, FileInfo
+    created = []
+    agent = RecordAgent(base_dir="/tmp/x",
+                        recorder_factory=lambda t: created.append(FakeRecorder(t)) or created[-1],
+                        video_retention=RetentionPolicy(max_bytes=1), record_video=False)
+    agent.sync_targets([_t("cam1", "rtsp://a")])
+    removed = []
+    agent.sweep_shared_video(now=10, scan=lambda d: [FileInfo("x", 999, 1.0)],
+                             remove=lambda p: removed.append(p))
+    assert removed == []                             # video off → nothing swept here
 
 
 # --- sync_targets ---------------------------------------------------------- #

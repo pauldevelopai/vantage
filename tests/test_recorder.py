@@ -253,7 +253,8 @@ def test_poll_respects_backoff_window(tmp_path):
 
 
 def test_apply_retention_deletes_and_reports(tmp_path):
-    rec, _ = _recorder(tmp_path, retention=RetentionPolicy(max_bytes=150))
+    # a standalone recorder given its own video budget sweeps its recordings
+    rec, _ = _recorder(tmp_path, video_retention=RetentionPolicy(max_bytes=150))
     removed = []
     fake_files = {
         rec.recordings_dir: [_f("a", 100, 1), _f("b", 100, 2)],   # 200 > 150 → drop a

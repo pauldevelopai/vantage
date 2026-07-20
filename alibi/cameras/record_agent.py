@@ -28,7 +28,8 @@ try:  # in-repo (tests, the cloud box)
         choose_video_args, DEFAULT_MOTION_THRESHOLD,
         default_retention_policy, default_video_retention_policy,
         DEFAULT_MIN_FREE_FRACTION, DEFAULT_MAX_AGE_DAYS,
-        DEFAULT_VIDEO_MAX_GB, DEFAULT_VIDEO_MAX_DAYS,
+        DEFAULT_VIDEO_MAX_GB, DEFAULT_VIDEO_MAX_DAYS, DEFAULT_SHARED_VIDEO_MAX_GB,
+        plan_retention, _scan_dir,
     )
 except ImportError:  # flat zipapp layout on the user's PC
     from recorder import (
@@ -36,7 +37,8 @@ except ImportError:  # flat zipapp layout on the user's PC
         choose_video_args, DEFAULT_MOTION_THRESHOLD,
         default_retention_policy, default_video_retention_policy,
         DEFAULT_MIN_FREE_FRACTION, DEFAULT_MAX_AGE_DAYS,
-        DEFAULT_VIDEO_MAX_GB, DEFAULT_VIDEO_MAX_DAYS,
+        DEFAULT_VIDEO_MAX_GB, DEFAULT_VIDEO_MAX_DAYS, DEFAULT_SHARED_VIDEO_MAX_GB,
+        plan_retention, _scan_dir,
     )
 
 
@@ -75,7 +77,7 @@ class RecordAgent:
             motion_url=target.get("motion_url"),
             base_dir=self.base_dir,
             retention=self.retention,
-            video_retention=self.video_retention,
+            video_retention=None,          # the AGENT sweeps video as a shared pool
             record_video=self.record_video,
             **kwargs,
         )
@@ -119,7 +121,44 @@ class RecordAgent:
         """Restart any died ffmpeg jobs and sweep retention. Call on a loop."""
         for rec in self._recorders.values():
             rec.poll()
-            rec.apply_retention()
+            rec.apply_retention()          # per-camera: STILLS only now
+        self.sweep_shared_video()          # combined VIDEO budget across all cameras
+
+    def sweep_shared_video(self, now=None, scan=None, remove=os.remove):
+        """Enforce ONE video budget across every camera: pool all recording
+        segments, delete the OLDEST first until the combined size is under the
+        cap (and the disk keeps its free-space floor).
+
+        Deleting a segment loses no intelligence: the AI is harvested from the
+        motion snapshots, which are uploaded and analysed on the box in near
+        real time — so by the time the oldest video is dropped, everything the
+        cameras saw is already stored as intelligence on the box. The video is
+        only the raw scrubbable tape."""
+        if not self.video_retention or not self.record_video:
+            return []
+        scan = scan or _scan_dir
+        now = self._clock() if now is None else now
+        disk_free = None
+        if self.video_retention.min_free_bytes is not None:
+            try:
+                import shutil
+                disk_free = shutil.disk_usage(self.base_dir).free
+            except OSError:
+                disk_free = None
+        pooled = []
+        for rec in self._recorders.values():
+            try:
+                pooled.extend(scan(rec.recordings_dir))
+            except OSError:
+                pass
+        deleted = []
+        for path in plan_retention(pooled, now, self.video_retention, disk_free=disk_free):
+            try:
+                remove(path)
+                deleted.append(path)
+            except OSError:
+                pass
+        return deleted
 
     def stop_all(self):
         for cam_id in list(self._recorders):
@@ -392,7 +431,8 @@ def main(argv=None):  # pragma: no cover
     # Continuous VIDEO is the disk hog — cap it tightly, separate from stills.
     p.add_argument("--video-max-gb", type=float,
                    default=float(os.environ.get("VANTAGE_VIDEO_MAX_GB", "0")) or None,
-                   help=f"Per-camera cap on recorded VIDEO (GB; default {DEFAULT_VIDEO_MAX_GB}). 0 lifts the GB cap.")
+                   help=f"COMBINED video budget across ALL cameras (GB; default {DEFAULT_SHARED_VIDEO_MAX_GB}). "
+                        f"Oldest deleted first once the total is exceeded. 0 lifts the GB cap.")
     p.add_argument("--video-max-days", type=float,
                    default=float(os.environ.get("VANTAGE_VIDEO_MAX_DAYS", "0")) or None,
                    help=f"Video age cap (days; default {DEFAULT_VIDEO_MAX_DAYS})")
@@ -515,7 +555,8 @@ def main(argv=None):  # pragma: no cover
         "min_free_percent": args.min_free_percent or None,
         "record_video": not args.no_video,
         "video_max_gb": (None if args.no_video else
-                         (args.video_max_gb if args.video_max_gb is not None else DEFAULT_VIDEO_MAX_GB)),
+                         (args.video_max_gb if args.video_max_gb is not None else DEFAULT_SHARED_VIDEO_MAX_GB)),
+        "video_max_gb_shared": True,       # combined across all cameras
         "video_max_days": (None if args.no_video else (args.video_max_days or DEFAULT_VIDEO_MAX_DAYS)),
     }
 
@@ -558,8 +599,10 @@ def main(argv=None):  # pragma: no cover
         disk_total_bytes=_total, max_gb=args.max_gb, max_days=args.max_days,
         min_free_fraction=min_free_fraction,
     )
+    # ONE video budget shared across every camera (oldest deleted first).
+    _shared_gb = args.video_max_gb if args.video_max_gb is not None else DEFAULT_SHARED_VIDEO_MAX_GB
     video_retention = default_video_retention_policy(
-        disk_total_bytes=_total, max_gb=args.video_max_gb, max_days=args.video_max_days,
+        disk_total_bytes=_total, max_gb=_shared_gb, max_days=args.video_max_days,
         min_free_fraction=min_free_fraction,
     )
 
@@ -570,8 +613,8 @@ def main(argv=None):  # pragma: no cover
     if args.no_video:
         print("[record-agent] continuous video OFF — keeping only motion stills + cloud intelligence")
     else:
-        _vg = args.video_max_gb if args.video_max_gb is not None else DEFAULT_VIDEO_MAX_GB
-        print(f"[record-agent] video capped at {_vg}GB / {args.video_max_days or DEFAULT_VIDEO_MAX_DAYS}d per camera; "
+        print(f"[record-agent] video capped at {_shared_gb}GB TOTAL across all cameras "
+              f"(oldest deleted first) / {args.video_max_days or DEFAULT_VIDEO_MAX_DAYS}d; "
               f"stills kept {args.max_days or DEFAULT_MAX_AGE_DAYS}d")
     print(f"[record-agent] motion trigger at {args.motion_threshold or DEFAULT_MOTION_THRESHOLD} "
           f"(motion stills are what feed the AI)")
