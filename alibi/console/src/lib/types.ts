@@ -603,6 +603,11 @@ export interface VehicleHistory {
   last_seen: string;
   cameras: string[];
   hours: number[];
+  colour?: string | null;
+  body?: string | null;
+  frame_url?: string | null;                                   // representative photo
+  bbox?: number[] | null;
+  frames?: Array<{ ts: string; camera_id: string; frame_url: string; bbox: number[] }>;
   per_day: Array<{ day: string; count: number }>;
   trail: Array<{ camera_id: string; ts: string }>;
 }

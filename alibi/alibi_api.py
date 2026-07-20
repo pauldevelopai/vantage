@@ -1587,8 +1587,11 @@ async def dashboard_overview(range: str = "24h",
             for r in ent[:5]:
                 # NB: `range` is the shadowing query param here — no range() calls
                 busiest = r["hours"].index(max(r["hours"])) if any(r["hours"]) else None
-                cls = classify_entity(r["count"], r["first_seen"], r["last_seen"],
-                                      r.get("days", 1), r.get("active_hours", 1))
+                owner_r = (vlabels.get(r["entity_id"]) or {}).get("label")
+                # A vehicle the owner has claimed IS part of the scene — resident.
+                cls = "resident" if owner_r else classify_entity(
+                    r["count"], r["first_seen"], r["last_seen"],
+                    r.get("days", 1), r.get("active_hours", 1))
                 ev = _vehicle_evidence(r["entity_id"])
                 desc = _label_for(r)
                 recurring_vehicles.append({
