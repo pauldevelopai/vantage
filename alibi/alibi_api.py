@@ -1861,20 +1861,21 @@ async def dashboard_overview(range: str = "24h",
             label = (meta or {}).get("label")
             if not label:
                 continue
-            plate = (meta or {}).get("plate")
-            if (label, plate) in seen:
-                continue
-            seen.add((label, plate))
             e = ent_by_id.get(eid)
             ev = _vehicle_evidence(eid) if e else {}
-            # If the named cluster isn't in the window, follow its PLATE to any
-            # cluster that is, so we can still show a recent photo + last-seen.
+            # Resolve the plate from the label OR the cluster's reads, then collapse
+            # duplicates: the same car named on several ReID fragments is ONE entry.
+            plate = (meta or {}).get("plate") or (ev.get("plate") if ev else None)
             if not e and plate:
                 for cand in ent:
                     cev = _vehicle_evidence(cand["entity_id"])
                     if cev.get("plate") and cev["plate"] == plate:
                         e, ev, eid = cand, cev, cand["entity_id"]
                         break
+            key = (label, plate) if plate else ("id", eid)
+            if key in seen:
+                continue
+            seen.add(key)
             named_vehicles.append({
                 "entity_id": eid,
                 "label": label,
