@@ -368,6 +368,8 @@ export interface RecurringVehicle {
   bbox?: number[] | null;            // its box in that frame (for a client-side crop)
   colour?: string | null;
   body?: string | null;
+  plate?: string | null;             // most-read plate (the stable identity), or null
+  plate_region?: string | null;
 }
 
 /** One row on the Overview's Situations panel — the top things worth a look,
@@ -394,6 +396,7 @@ export interface DashboardSituation {
   snapshot_url: string | null;
   frame_url?: string | null;          // vehicle situations: photo of the car (crop with bbox)
   bbox?: number[] | null;
+  plate?: string | null;
   confirmed: { by: string; ts: string; label: string | null; notes?: string } | null;
 }
 
@@ -414,6 +417,8 @@ export interface OutOfOrdinaryVehicle {
   cameras: string[];
   frame_url?: string | null;   // a real photo of the actual car
   bbox?: number[] | null;      // its box in that frame (for a client-side crop)
+  plate?: string | null;       // most-read plate, or null
+  plate_region?: string | null;
 }
 
 /** Hour-of-day activity per camera (site-local time) — all from real events. */
@@ -605,6 +610,8 @@ export interface VehicleHistory {
   hours: number[];
   colour?: string | null;
   body?: string | null;
+  plate?: string | null;              // most-read plate — the stable identity
+  plate_region?: string | null;
   frame_url?: string | null;                                   // representative photo
   bbox?: number[] | null;
   frames?: Array<{ ts: string; camera_id: string; frame_url: string; bbox: number[] }>;

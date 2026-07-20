@@ -560,7 +560,9 @@ function VehicleHistoryModal({ entityId, onClose, onSaved }: { entityId: string;
     if (!label.trim()) return;
     setBusy(true); setSaveErr(null);
     try {
-      await api.setVehicleLabel(entityId, label.trim());
+      // Key the name to the plate when we have one, so it follows the car across
+      // appearance-clusters — not just this one fragment.
+      await api.setVehicleLabel(entityId, label.trim(), h?.plate);
       onSaved();
     } catch (e: any) {
       setSaveErr(e?.message || 'Could not save');
@@ -605,6 +607,17 @@ function VehicleHistoryModal({ entityId, onClose, onSaved }: { entityId: string;
                   <AuthImg src={h.frame_url} alt="vehicle" className="w-full max-h-72 object-contain" />
                 </a>
               )}
+
+              {/* The number plate — the one stable identity a car has. Prominent
+                  when read; honest when not (these wide angles rarely catch one). */}
+              <div className="mb-3 flex items-center gap-2">
+                <span className="text-[10px] text-slate-500 uppercase tracking-wide">Plate</span>
+                {h.plate
+                  ? <span className="font-mono text-sm font-bold text-white bg-slate-800 border border-slate-600 rounded px-2 py-0.5 tracking-wider">
+                      {h.plate}{h.plate_region ? <span className="ml-2 text-[10px] font-normal text-slate-400">{h.plate_region}</span> : null}
+                    </span>
+                  : <span className="text-xs text-slate-500">not captured yet — the reader rarely catches a plate at this camera angle</span>}
+              </div>
 
               {/* Correction — "this is my car". Names it and stops it being flagged
                   as out-of-ordinary; a named vehicle reads as part of the scene. */}
@@ -1194,6 +1207,9 @@ function OutOfOrdinaryPanel({ vehicles, onOpen }: { vehicles: import('../lib/typ
             <span className={`text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded flex-none ${b.cls} ${v.familiarity === 'new' ? 'vg-live' : ''}`}>
               {b.label}
             </span>
+            {v.plate && (
+              <span className="font-mono text-[10px] font-bold text-slate-200 bg-slate-800 border border-slate-600 rounded px-1.5 py-0.5 tracking-wider flex-none">{v.plate}</span>
+            )}
             <button onClick={() => onOpen(v.entity_id)}
                     className="text-slate-300 hover:text-white text-left underline decoration-dotted underline-offset-2">
               {v.descriptor ? `${v.descriptor} · ` : ''}{times} over {v.days} day{v.days === 1 ? '' : 's'}

@@ -1544,8 +1544,33 @@ async def dashboard_overview(range: str = "24h",
     except Exception as e:
         print(f"[dashboard] vehicle sightings index unavailable: {e}")
 
+    # Plate reads are rare + noisy and live on the camera EVENTS (not sightings),
+    # so index them over the baseline window (cached — a 7-day event scan is too
+    # heavy for a 15s poll) and let a cluster inherit its most-read plate. A plate
+    # is the one stable identity a car has; a name given to a plate follows it.
+    _plate_idx: dict = {}
+    try:
+        from alibi.ttl_cache import cached as _cached
+        from alibi.vehicles.evidence import plate_index as _pidx
+
+        def _build_plate_index():
+            from datetime import timedelta as _td
+            pcut = datetime.utcnow() - _td(hours=_VEH_BASELINE_HOURS)
+            pev = [e for e in store.list_events(limit=8000)
+                   if getattr(e, "ts", None) and e.ts >= pcut]
+            return _pidx(pev)
+        _plate_idx = _cached("dash:plate_index", 300, _build_plate_index)
+    except Exception as e:
+        print(f"[dashboard] plate index unavailable: {e}")
+    _plate_to_label: dict = {}
+    try:
+        from alibi.patterns.familiarity import plate_labels
+        _plate_to_label = plate_labels()
+    except Exception:
+        pass
+
     def _vehicle_evidence(entity_id):
-        """A real photo + colour/type + visit-count for one ReID cluster, cached."""
+        """A real photo + colour/type + plate + visit-count for one ReID cluster."""
         if entity_id in veh_evidence:
             return veh_evidence[entity_id]
         cols, bodies, furl, bbx = _Ctr(), _Ctr(), None, None
@@ -1566,9 +1591,13 @@ async def dashboard_overview(range: str = "24h",
                 if furl is None and getattr(m, "snapshot_url", None) and getattr(m, "bbox", None):
                     furl, bbx = m.snapshot_url, list(m.bbox)
         from alibi.patterns.situations import visit_count as _vc
+        from alibi.vehicles.evidence import best_plate as _bp
+        bp = _bp(trail, _plate_idx)
         ev = {"frame_url": furl, "bbox": bbx,
               "colour": cols.most_common(1)[0][0] if cols else None,
               "body": bodies.most_common(1)[0][0] if bodies else None,
+              "plate": bp["plate"] if bp else None,
+              "plate_region": bp["region"] if bp else None,
               "visits": _vc([rr.get("timestamp") for rr in trail])}
         veh_evidence[entity_id] = ev
         return ev
@@ -1584,17 +1613,23 @@ async def dashboard_overview(range: str = "24h",
         ent = get_cross_camera_tracker().entity_summary("vehicle", hours=_VEH_BASELINE_HOURS)
         vlabels = get_vehicle_labels()
 
+        def _owner_of(r):
+            """The name for this cluster — set directly on it, OR inherited from
+            its plate (so naming one fragment names every fragment of that plate)."""
+            ev = _vehicle_evidence(r["entity_id"])
+            return ((vlabels.get(r["entity_id"]) or {}).get("label")
+                    or (_plate_to_label.get(ev.get("plate")) if ev.get("plate") else None))
+
         def _label_for(r):
             ev = _vehicle_evidence(r["entity_id"])
-            owner = (vlabels.get(r["entity_id"]) or {}).get("label")
-            return vehicle_descriptor(ev.get("colour"), ev.get("body"), owner)
+            return vehicle_descriptor(ev.get("colour"), ev.get("body"), _owner_of(r))
 
         if ent:
             vehicles_distinct = len(ent)
             for r in ent[:5]:
                 # NB: `range` is the shadowing query param here — no range() calls
                 busiest = r["hours"].index(max(r["hours"])) if any(r["hours"]) else None
-                owner_r = (vlabels.get(r["entity_id"]) or {}).get("label")
+                owner_r = _owner_of(r)
                 # A vehicle the owner has claimed IS part of the scene — resident.
                 cls = "resident" if owner_r else classify_entity(
                     r["count"], r["first_seen"], r["last_seen"],
@@ -1605,7 +1640,7 @@ async def dashboard_overview(range: str = "24h",
                     "label": desc or "Unnamed vehicle",   # the car's picture carries it
                     "descriptor": desc,
                     "entity_id": r["entity_id"],
-                    "owner_label": (vlabels.get(r["entity_id"]) or {}).get("label"),
+                    "owner_label": owner_r,
                     "familiarity": cls,
                     "count": r["count"],
                     "days": r.get("days", 1),
@@ -1615,6 +1650,7 @@ async def dashboard_overview(range: str = "24h",
                     "busiest_hour_utc": busiest,
                     "frame_url": ev.get("frame_url"), "bbox": ev.get("bbox"),
                     "colour": ev.get("colour"), "body": ev.get("body"),
+                    "plate": ev.get("plate"), "plate_region": ev.get("plate_region"),
                 })
 
         # Explicit findings: what is here all the time, what is new, what has a
@@ -1685,13 +1721,21 @@ async def dashboard_overview(range: str = "24h",
         # honest "how often it came down the road", NOT the raw motion-still
         # count), a photo of the actual car, and a colour/type descriptor.
         try:
+            _kept = []
             for v in out_of_ordinary:
                 ev = _vehicle_evidence(v["entity_id"])
+                # A car whose PLATE the owner already named is not out-of-ordinary,
+                # even as a fresh appearance-cluster — drop it (naming propagates).
+                if ev.get("plate") and _plate_to_label.get(ev["plate"]):
+                    continue
                 v["passes"] = ev.get("visits")
                 v["frame_url"] = ev.get("frame_url")
                 v["bbox"] = ev.get("bbox")
-                owner = (vlabels.get(v["entity_id"]) or {}).get("label")
-                v["descriptor"] = vehicle_descriptor(ev.get("colour"), ev.get("body"), owner)
+                v["plate"] = ev.get("plate")
+                v["plate_region"] = ev.get("plate_region")
+                v["descriptor"] = vehicle_descriptor(ev.get("colour"), ev.get("body"), None)
+                _kept.append(v)
+            out_of_ordinary = _kept
             out_of_ordinary.sort(key=lambda v: (
                 {"new": 0, "occasional": 1}.get(v["familiarity"], 2), -(v["passes"] or 0)))
         except Exception as e:
@@ -1729,15 +1773,17 @@ async def dashboard_overview(range: str = "24h",
                     if v.get("busiest_hour_local") is not None else "")
             times = f"{passes} time{'s' if passes != 1 else ''}" if passes else "once"
             name = v.get("descriptor") or "A vehicle"
+            plate_txt = f" Plate {v['plate']}." if v.get("plate") else ""
             lead = "New here" if v["familiarity"] == "new" else "Not one of the usual cars"
             criteria_rows.append({
                 "kind": "new_vehicle", "tier": "review", "incident_id": None,
                 "entity_id": v["entity_id"], "event_id": None,
-                "title": f"{name} — not one of the usual cars",
-                "description": (f"{lead}. Came past {cams} {times}{when}. Worth a look."),
+                "title": (f"{v['plate']} — not one of the usual cars" if v.get("plate")
+                          else f"{name} — not one of the usual cars"),
+                "description": (f"{lead}. Came past {cams} {times}{when}.{plate_txt} Worth a look."),
                 "camera_name": (v.get("cameras") or [None])[0], "ts": v.get("last_seen"),
                 "snapshot_url": None, "frame_url": v.get("frame_url"), "bbox": v.get("bbox"),
-                "count": passes, "confirmed": None,
+                "plate": v.get("plate"), "count": passes, "confirmed": None,
             })
 
         # Fired posture triggers → situations (after-hours, dwell, repeated passes).
@@ -4024,6 +4070,7 @@ async def update_ai_config_endpoint(
 class VehicleLabelUpdate(BaseModel):
     entity_id: str
     label: str
+    plate: Optional[str] = None
 
 
 @app.put("/vehicles/entity-label", tags=["Vehicles"])
@@ -4032,14 +4079,16 @@ async def set_vehicle_entity_label(
     current_user: User = Depends(require_role([Role.SUPERVISOR, Role.ADMIN])),
 ):
     """Name a recurring vehicle ("Paul's Fortuner") — the owner saying "that
-    one is mine". Identity only ever comes from the owner; empty label removes
-    the name. Audited."""
+    one is mine". A plate, when known, is stored with the name so it follows the
+    plate across appearance-fragments. Identity only ever comes from the owner;
+    empty label removes the name. Audited."""
     from alibi.patterns.familiarity import set_vehicle_label
+    plate = (payload.plate or "").strip() or None
     result = set_vehicle_label(payload.entity_id, payload.label,
-                               set_by=current_user.username)
+                               set_by=current_user.username, plate=plate)
     get_store().append_audit("vehicle_labelled", {
         "user": current_user.username, "entity_id": payload.entity_id,
-        "label": payload.label.strip() or None,
+        "label": payload.label.strip() or None, "plate": plate,
     })
     return {"entity_id": payload.entity_id, **(result or {"label": None})}
 

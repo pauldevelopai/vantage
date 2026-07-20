@@ -77,18 +77,35 @@ def get_vehicle_labels() -> Dict[str, Dict[str, Any]]:
 
 
 def set_vehicle_label(entity_id: str, label: str, set_by: str,
+                      plate: Optional[str] = None,
                       now: Optional[datetime] = None) -> Dict[str, Any]:
-    """Name a recurring vehicle. Empty label removes the name."""
+    """Name a recurring vehicle. Empty label removes the name. A `plate`, when
+    known, is stored with it so the name follows the PLATE across the appearance
+    fragments the ReID clustering splits the same car into (see plate_labels)."""
     labels = get_vehicle_labels()
     label = (label or "").strip()
     if label:
-        labels[entity_id] = {"label": label, "set_by": set_by,
-                             "set_at": (now or datetime.utcnow()).isoformat()}
+        row = {"label": label, "set_by": set_by,
+               "set_at": (now or datetime.utcnow()).isoformat()}
+        if plate:
+            row["plate"] = str(plate).strip()
+        labels[entity_id] = row
     else:
         labels.pop(entity_id, None)
     LABELS_FILE.parent.mkdir(parents=True, exist_ok=True)
     LABELS_FILE.write_text(json.dumps(labels))
     return labels.get(entity_id) or {}
+
+
+def plate_labels() -> Dict[str, str]:
+    """{plate -> label} for every named vehicle that carried a plate — lets a name
+    given to one cluster apply to any other cluster reading the same plate."""
+    out: Dict[str, str] = {}
+    for row in get_vehicle_labels().values():
+        p = (row or {}).get("plate")
+        if p and row.get("label"):
+            out[str(p)] = row["label"]
+    return out
 
 
 # ── Explicit pattern sentences ─────────────────────────────────────────────
