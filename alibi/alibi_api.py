@@ -1054,6 +1054,10 @@ async def get_metrics_summary(range: str = "24h", current_user: User = Depends(g
 # "nothing yet" rather than any placeholder data.
 
 _DASH_RANGES = {"24h": 24, "7d": 24 * 7, "30d": 24 * 30}
+# Vehicle familiarity is judged over the tracker's full retention (7 days), not
+# the dashboard's selected range, so a week-long resident isn't flagged as
+# out-of-ordinary on a quiet day.
+_VEH_BASELINE_HOURS = 24 * 7
 
 
 def _dash_intel(ev) -> dict:
@@ -1547,7 +1551,7 @@ async def dashboard_overview(range: str = "24h",
         cols, bodies, furl, bbx = _Ctr(), _Ctr(), None, None
         try:
             from alibi.cameras.cross_camera import get_cross_camera_tracker as _gcct
-            trail = _gcct().get_entity_trail("vehicle", entity_id, hours=hours)
+            trail = _gcct().get_entity_trail("vehicle", entity_id, hours=_VEH_BASELINE_HOURS)
         except Exception:
             trail = []
         for rr in trail:
@@ -1574,7 +1578,10 @@ async def dashboard_overview(range: str = "24h",
                                                 pattern_findings)
         from alibi.patterns.situations import vehicle_descriptor
         from alibi.cameras.cross_camera import get_cross_camera_tracker
-        ent = get_cross_camera_tracker().entity_summary("vehicle", hours=hours)
+        # Familiarity is judged over the FULL history the tracker keeps (7 days),
+        # not the dashboard's selected range — otherwise a car that is clearly the
+        # scene over a week gets flagged "out of the ordinary" on a quiet day.
+        ent = get_cross_camera_tracker().entity_summary("vehicle", hours=_VEH_BASELINE_HOURS)
         vlabels = get_vehicle_labels()
 
         def _label_for(r):
