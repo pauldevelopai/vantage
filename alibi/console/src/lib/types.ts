@@ -327,6 +327,7 @@ export interface DashboardOverview {
   watching_for: WatchingFor | null;
   patterns: DashboardPatterns | null;
   situations: DashboardSituation[];
+  out_of_ordinary_vehicles?: OutOfOrdinaryVehicle[];
   recurring_vehicles: RecurringVehicle[];
   pattern_findings: PatternFinding[];
   security_suggestions: SecuritySuggestion[];
@@ -364,22 +365,43 @@ export interface RecurringVehicle {
   busiest_hour_utc: number | null;
 }
 
-/** One incident on the Overview's Situations panel. The machine's ceiling is
- *  tier "review" — "confirmed" (and any crime word in its label) only ever
- *  comes from a person, whose name is attached. */
+/** One row on the Overview's Situations panel — the top things worth a look,
+ *  against our criteria. May be a raised incident OR a criteria signal (a new
+ *  vehicle, presence after hours, someone at the parked cars). The machine's
+ *  ceiling is tier "review" — "confirmed" (and any crime word in its label)
+ *  only ever comes from a person, whose name is attached. */
 export interface DashboardSituation {
-  incident_id: string;
+  incident_id: string | null;         // present for incidents; null for criteria rows
+  kind?: 'confirmed' | 'review' | 'noted' | 'after_hours' | 'at_vehicles'
+       | 'repeated_passes' | 'dwell' | 'new_vehicle';
+  entity_id?: string | null;          // vehicle-history click-through (new_vehicle rows)
+  event_id?: string | null;
+  count?: number | null;              // e.g. how many vehicles someone was near
   tier: 'confirmed' | 'review' | 'noted';
   status?: string;
-  severity: number;
+  severity?: number;
   ts: string;
-  camera_id: string | null;
+  camera_id?: string | null;
   camera_name: string | null;
   title: string | null;
-  event_type: string | null;
+  event_type?: string | null;
   description: string;
   snapshot_url: string | null;
   confirmed: { by: string; ts: string; label: string | null; notes?: string } | null;
+}
+
+/** A car that is NOT the usual scene — new or occasional, unnamed — with how
+ *  often it came down the road (count) and when (busiest local hour). The usual
+ *  cars (residents, regulars, owner-named) are excluded by definition. */
+export interface OutOfOrdinaryVehicle {
+  entity_id: string;
+  familiarity: 'new' | 'occasional';
+  count: number;
+  days: number;
+  first_seen: string;
+  last_seen: string;
+  busiest_hour_local: number | null;
+  cameras: string[];
 }
 
 /** Hour-of-day activity per camera (site-local time) — all from real events. */

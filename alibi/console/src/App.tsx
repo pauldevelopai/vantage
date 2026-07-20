@@ -83,6 +83,7 @@ function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const [layoutMode, toggleLayout] = useLayoutMode();
   const isControlRoom = layoutMode === 'control-room';
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   function handleLogout() {
     logout();
@@ -93,7 +94,9 @@ function Layout({ children }: { children: React.ReactNode }) {
 
   const navLink = (to: string, label: string) => (
     <Link
+      key={to}
       to={to}
+      onClick={() => setMobileOpen(false)}
       className={`${
         isActive(to) ? 'bg-indigo-500/[0.35] text-white' : 'text-white/[0.55] hover:text-white/[0.9] hover:bg-white/[0.08]'
       } px-3 py-1.5 rounded-md text-[13px] font-medium whitespace-nowrap transition-all duration-150`}
@@ -102,47 +105,61 @@ function Layout({ children }: { children: React.ReactNode }) {
     </Link>
   );
 
+  // One source of nav truth, rendered both in the desktop row and the mobile
+  // drop-down (below `sm` the row is hidden, so without this there was NO menu
+  // on a phone). Sections mirror the desktop dividers; role-gates match.
+  const sup = hasRole('supervisor') || hasRole('admin');
+  const adm = hasRole('admin');
+  const navSections: { to: string; label: string }[][] = [
+    [{ to: '/overview', label: 'Overview' }],
+    [{ to: '/cameras', label: 'Cameras' }, { to: '/recorders', label: 'Recorders' }, { to: '/sites', label: 'Sites' }],
+    [
+      { to: '/advisor', label: 'Advisor' }, { to: '/incidents', label: 'Incidents' },
+      { to: '/people', label: 'People' }, { to: '/patterns', label: 'Patterns' },
+      { to: '/reports', label: 'Reports' }, { to: '/search', label: 'Search' },
+      { to: '/metrics', label: 'Metrics' }, { to: '/vehicle-search', label: 'Vehicles' },
+      ...(sup ? [{ to: '/vehicle-review', label: 'Review' }, { to: '/hotlist', label: 'Hotlist' }, { to: '/faces', label: 'Faces' }] : []),
+    ],
+    [
+      { to: '/intel', label: 'Intel' },
+      ...(adm ? [{ to: '/costs', label: 'Costs' }, { to: '/settings', label: 'Settings' }] : []),
+    ],
+  ];
+
   return (
     <div className="min-h-screen vg-app">
       {/* Top Navigation */}
       <nav className="fixed top-0 left-0 right-0 z-50 bg-gray-900/95 backdrop-blur-xl border-b border-white/[0.08]">
         <div className={isControlRoom ? 'w-full px-8' : 'max-w-7xl mx-auto px-4'}>
           <div className="flex items-center h-[52px] gap-1">
-            <Link to="/" className="text-white font-bold text-base mr-4 whitespace-nowrap tracking-tight no-underline">
+            {/* Hamburger — only below sm, where the link row is hidden */}
+            <button
+              onClick={() => setMobileOpen(o => !o)}
+              className="sm:hidden text-white/70 hover:text-white p-1.5 -ml-1 rounded-md hover:bg-white/[0.08]"
+              aria-label="Menu" aria-expanded={mobileOpen}
+            >
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                {mobileOpen
+                  ? <><line x1="6" y1="6" x2="18" y2="18" /><line x1="6" y1="18" x2="18" y2="6" /></>
+                  : <><line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" /></>}
+              </svg>
+            </button>
+            <Link to="/" onClick={() => setMobileOpen(false)} className="text-white font-bold text-base mr-4 whitespace-nowrap tracking-tight no-underline">
               Vantage
             </Link>
             <div className="hidden sm:flex items-center gap-0.5 overflow-x-auto flex-1 pr-3" style={{ scrollbarWidth: 'none' }}>
-              {/* The at-a-glance view of everything the cameras have seen */}
-              {navLink('/overview', 'Overview')}
-              <div className="w-px h-5 bg-white/10 mx-1.5 flex-shrink-0" />
-              {/* Setup — your cameras, recorders, and what you're protecting */}
-              {navLink('/cameras', 'Cameras')}
-              {navLink('/recorders', 'Recorders')}
-              {navLink('/sites', 'Sites')}
-              <div className="w-px h-5 bg-white/10 mx-1.5 flex-shrink-0" />
-              {/* Intelligence — AI analysis of the footage */}
-              {navLink('/advisor', 'Advisor')}
-              {navLink('/incidents', 'Incidents')}
-              {navLink('/people', 'People')}
-              {navLink('/patterns', 'Patterns')}
-              {navLink('/reports', 'Reports')}
-              {navLink('/search', 'Search')}
-              {navLink('/metrics', 'Metrics')}
-              {navLink('/vehicle-search', 'Vehicles')}
-              {(hasRole('supervisor') || hasRole('admin')) && navLink('/vehicle-review', 'Review')}
-              {(hasRole('supervisor') || hasRole('admin')) && navLink('/hotlist', 'Hotlist')}
-              {(hasRole('supervisor') || hasRole('admin')) && navLink('/faces', 'Faces')}
-              <div className="w-px h-5 bg-white/10 mx-1.5 flex-shrink-0" />
-              {/* Data & configuration */}
-              {navLink('/intel', 'Intel')}
-              {hasRole('admin') && navLink('/costs', 'Costs')}
-              {hasRole('admin') && navLink('/settings', 'Settings')}
+              {navSections.map((sec, si) => (
+                <div key={si} className="flex items-center gap-0.5">
+                  {si > 0 && <div className="w-px h-5 bg-white/10 mx-1.5 flex-shrink-0" />}
+                  {sec.map(item => navLink(item.to, item.label))}
+                </div>
+              ))}
             </div>
             <div className="flex items-center gap-2.5 ml-auto flex-shrink-0 pl-3 border-l border-white/10 bg-gray-900/95 backdrop-blur-xl">
               <ThemeToggle />
               <button
                 onClick={toggleLayout}
-                className="text-white/40 hover:text-white text-xs px-2.5 py-1 rounded-md border border-white/10 hover:border-white/30 hover:bg-white/5 transition-all duration-150"
+                className="hidden sm:inline-flex text-white/40 hover:text-white text-xs px-2.5 py-1 rounded-md border border-white/10 hover:border-white/30 hover:bg-white/5 transition-all duration-150"
                 title={isControlRoom ? 'Switch to standard layout' : 'Switch to control room layout'}
               >
                 {isControlRoom ? 'Standard' : 'Control Room'}
@@ -164,6 +181,20 @@ function Layout({ children }: { children: React.ReactNode }) {
             </div>
           </div>
         </div>
+        {/* Mobile menu — the link row is hidden below sm, so a phone reaches
+            every page through this drop-down. Tapping a link closes it. */}
+        {mobileOpen && (
+          <div className="sm:hidden border-t border-white/10 bg-gray-900/98 backdrop-blur-xl max-h-[75vh] overflow-y-auto">
+            <div className="px-4 py-3 flex flex-col gap-1">
+              {navSections.map((sec, si) => (
+                <div key={si} className="flex flex-col gap-1">
+                  {si > 0 && <div className="h-px bg-white/10 my-1.5" />}
+                  {sec.map(item => navLink(item.to, item.label))}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </nav>
 
       {/* Main Content — pushed below fixed nav */}
