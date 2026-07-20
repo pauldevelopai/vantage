@@ -24,10 +24,34 @@ a look", never as an accusation.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from alibi.patterns.familiarity import classify_entity
+
+VISIT_GAP_MINUTES = 10        # sightings this far apart belong to separate visits
+
+
+def visit_count(timestamps: List[str], gap_minutes: int = VISIT_GAP_MINUTES) -> int:
+    """How many distinct VISITS a run of sightings represents — the honest "how
+    often it came down the road". A parked car re-detected every minute is ONE
+    visit, not hundreds of sightings; a car that passes twice with hours between
+    is two. A gap larger than `gap_minutes` starts a new visit. Pure."""
+    parsed = []
+    for t in timestamps or []:
+        try:
+            parsed.append(datetime.fromisoformat(str(t)[:19]))
+        except (ValueError, TypeError):
+            continue
+    if not parsed:
+        return 0
+    parsed.sort()
+    gap = timedelta(minutes=gap_minutes)
+    visits = 1
+    for a, b in zip(parsed, parsed[1:]):
+        if b - a > gap:
+            visits += 1
+    return visits
 
 # Lower rank = higher up the list. A person's confirmation always wins; a routine
 # "noted" incident always loses to a live criteria signal worth looking at.
@@ -42,11 +66,6 @@ PRIORITY: Dict[str, int] = {
     "noted": 9,
 }
 
-# Criteria kinds get the "review" tier so the panel shows them as cards worth a
-# look; only real incidents can carry "confirmed"/"noted".
-_CRITERIA_TIER = "review"
-
-
 def priority_of(kind: str) -> int:
     return PRIORITY.get(kind, 8)
 
@@ -54,6 +73,7 @@ def priority_of(kind: str) -> int:
 def out_of_ordinary_vehicles(entities: List[Dict[str, Any]],
                              labels: Optional[Dict[str, Dict[str, Any]]] = None,
                              names: Optional[Dict[str, str]] = None,
+                             visits_by_entity: Optional[Dict[str, int]] = None,
                              tz_offset_hours: int = 2, limit: int = 8,
                              now: Optional[datetime] = None) -> List[Dict[str, Any]]:
     """The cars that are NOT the usual scene, with how often + when.
@@ -61,10 +81,15 @@ def out_of_ordinary_vehicles(entities: List[Dict[str, Any]],
     `entities`: cross-camera vehicle entity summaries — each needs
     entity_id, count, first_seen, last_seen, days, active_hours, hours[24],
     cameras. Residents, regulars and owner-named vehicles are the scene and are
-    excluded; what remains is new/occasional and unnamed. Ordered new-first,
-    then by how often it was seen."""
+    excluded; what remains is new/occasional and unnamed.
+
+    `visits_by_entity`: entity_id -> distinct VISITS (see visit_count). This is
+    the honest "how often it came down the road"; the raw sighting `count` is
+    motion-stills (a parked car makes hundreds) and is NOT surfaced as passes.
+    Ordered new-first, then by visits."""
     labels = labels or {}
     names = names or {}
+    visits_by_entity = visits_by_entity or {}
     rows: List[Dict[str, Any]] = []
     for e in entities:
         eid = e.get("entity_id")
@@ -77,10 +102,12 @@ def out_of_ordinary_vehicles(entities: List[Dict[str, Any]],
         hours = e.get("hours") or [0] * 24
         busiest = hours.index(max(hours)) if any(hours) else None
         busiest_local = (busiest + tz_offset_hours) % 24 if busiest is not None else None
+        passes = visits_by_entity.get(eid)
         rows.append({
             "entity_id": eid,
             "familiarity": cls,                       # "new" or "occasional"
-            "count": int(e.get("count") or 0),        # how often it came down the road
+            "passes": passes,                         # distinct visits (honest "how often")
+            "sightings": int(e.get("count") or 0),    # raw motion-stills (not shown as passes)
             "days": int(e.get("days") or 1),
             "first_seen": e.get("first_seen"),
             "last_seen": e.get("last_seen"),
@@ -88,39 +115,8 @@ def out_of_ordinary_vehicles(entities: List[Dict[str, Any]],
             "cameras": [names.get(c, c) for c in (e.get("cameras") or [])],
         })
     order = {"new": 0, "occasional": 1}
-    rows.sort(key=lambda r: (order.get(r["familiarity"], 2), -r["count"]))
+    rows.sort(key=lambda r: (order.get(r["familiarity"], 2), -(r["passes"] or 0)))
     return rows[:limit]
-
-
-def new_vehicle_situations(ooo_vehicles: List[Dict[str, Any]],
-                           min_count: int = 1) -> List[Dict[str, Any]]:
-    """Turn the most notable out-of-ordinary vehicles into situation rows —
-    a NEW car that has already come down the road more than once is worth a
-    mention on its own, even with no incident."""
-    out: List[Dict[str, Any]] = []
-    for v in ooo_vehicles:
-        if v["familiarity"] != "new" or v["count"] < min_count:
-            continue
-        when = (f", mostly around {v['busiest_hour_local']:02d}:00"
-                if v.get("busiest_hour_local") is not None else "")
-        cams = ", ".join(v.get("cameras") or []) or "the cameras"
-        times = f"{v['count']} time{'s' if v['count'] != 1 else ''}"
-        out.append({
-            "kind": "new_vehicle",
-            "tier": _CRITERIA_TIER,
-            "entity_id": v["entity_id"],
-            "incident_id": None,
-            "event_id": None,
-            "title": f"A vehicle that isn't one of the usual ones — seen {times}",
-            "description": (f"Not a resident or regular here. Came past {cams} "
-                            f"{times}{when}. Worth a look."),
-            "camera_name": (v.get("cameras") or [None])[0],
-            "ts": v.get("last_seen"),
-            "snapshot_url": None,
-            "count": v["count"],
-            "confirmed": None,
-        })
-    return out
 
 
 def rank_situations(rows: List[Dict[str, Any]], limit: int = 5) -> List[Dict[str, Any]]:

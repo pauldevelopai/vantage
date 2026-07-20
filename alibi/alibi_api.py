@@ -1612,25 +1612,42 @@ async def dashboard_overview(range: str = "24h",
     # never an accusation, so the top-5 reflects the site's real state.
     out_of_ordinary: list = []
     try:
-        from alibi.patterns.situations import (out_of_ordinary_vehicles,
-                                               new_vehicle_situations, rank_situations)
+        from alibi.patterns.situations import out_of_ordinary_vehicles, rank_situations, visit_count
         out_of_ordinary = out_of_ordinary_vehicles(ent, labels=vlabels, names=names)
+        # Honest "how often it came down the road" = distinct VISITS from the
+        # entity's sighting trail, NOT the raw motion-still count (a parked car
+        # makes hundreds). Only the few survivors need a trail lookup.
+        try:
+            from alibi.cameras.cross_camera import get_cross_camera_tracker
+            _tr = get_cross_camera_tracker()
+            for v in out_of_ordinary:
+                trail = _tr.get_entity_trail("vehicle", v["entity_id"], hours=hours)
+                v["passes"] = visit_count([r.get("timestamp") for r in trail])
+            out_of_ordinary.sort(key=lambda v: (
+                {"new": 0, "occasional": 1}.get(v["familiarity"], 2), -(v["passes"] or 0)))
+        except Exception as e:
+            print(f"[dashboard] vehicle visit-count unavailable: {e}")
 
         events_by_id = {e.event_id: e for e in events}
+        frame_by_cam_ts = {(e.camera_id, e.ts.isoformat()): e
+                           for e in events if e.snapshot_url}
 
-        def _frame_at(camera_id, ts_iso):
-            """Best evidence still for a criteria situation: the event whose id we
-            were handed, else the newest event at that camera with a snapshot."""
-            for e in events:
-                if e.camera_id == camera_id and e.snapshot_url:
-                    return e.snapshot_url, e.event_id
-            return None, None
+        def _frame_for(event_id=None, camera_id=None, ts_iso=None):
+            """The ACTUAL evidence still a criteria signal fired on — by event id,
+            else by exact (camera, timestamp). Never a substitute "newest" frame:
+            a wrong picture is worse than none, so we return None if we can't tie
+            it to the real event."""
+            if event_id and event_id in events_by_id and events_by_id[event_id].snapshot_url:
+                e = events_by_id[event_id]
+                return e.snapshot_url, e.event_id
+            e = frame_by_cam_ts.get((camera_id, ts_iso)) if camera_id and ts_iso else None
+            return (e.snapshot_url, e.event_id) if e else (None, None)
 
         criteria_rows: list = []
-        # New vehicles get their own card (entity-linked, no incident needed).
-        criteria_rows.extend(new_vehicle_situations(out_of_ordinary))
-
         # Fired posture triggers → situations (after-hours, dwell, repeated passes).
+        # Out-of-ordinary vehicles are NOT injected here — they have no evidence
+        # frame in the ReID store, so they live in their own list panel, never as
+        # a frameless "situation" card.
         _TRIGGER_TITLES = {
             "after_hours": "Presence after hours",
             "dwell": "Someone stayed in view",
@@ -1640,12 +1657,8 @@ async def dashboard_overview(range: str = "24h",
             if not t.get("fired") or t.get("kind") not in _TRIGGER_TITLES:
                 continue
             cam_id = t.get("camera_id")
-            eid = t.get("event_id")
-            snap, snap_eid = (None, None)
-            if eid and eid in events_by_id and events_by_id[eid].snapshot_url:
-                snap, snap_eid = events_by_id[eid].snapshot_url, eid
-            else:
-                snap, snap_eid = _frame_at(cam_id, t.get("ts"))
+            snap, snap_eid = _frame_for(event_id=t.get("event_id"),
+                                        camera_id=cam_id, ts_iso=t.get("ts"))
             criteria_rows.append({
                 "kind": t["kind"], "tier": "review", "incident_id": None,
                 "entity_id": None, "event_id": snap_eid,
@@ -1655,20 +1668,23 @@ async def dashboard_overview(range: str = "24h",
                 "snapshot_url": snap, "count": None, "confirmed": None,
             })
 
-        # Someone at / moving between the parked vehicles (the honest "checking
-        # car doors" signal) — a concrete action, evaluated over the same events.
+        # Someone LINGERING at the parked vehicles (the honest "checking car doors"
+        # signal) — a sustained, concrete action, shown with the ACTUAL frame it
+        # fired on. A single still near two adjacent cars no longer fires this.
         try:
             from alibi.site_profile import get_site_profile_store
             from alibi.patterns.observed_actions import evaluate_at_vehicles
             _sites = get_site_profile_store().list()
             if _sites:
                 av = evaluate_at_vehicles(_sites[0], events)
-                if av.get("fired"):
-                    snap, snap_eid = _frame_at(av.get("camera_id"), av.get("ts"))
+                snap, snap_eid = _frame_for(event_id=av.get("event_id"),
+                                            camera_id=av.get("camera_id"), ts_iso=av.get("ts"))
+                # Only surface it if we have the real frame — no evidence, no card.
+                if av.get("fired") and snap:
                     criteria_rows.append({
                         "kind": "at_vehicles", "tier": "review", "incident_id": None,
                         "entity_id": None, "event_id": snap_eid,
-                        "title": "Someone at the parked vehicles",
+                        "title": "Someone lingering at the parked vehicles",
                         "description": av.get("note") or "Worth a look.",
                         "camera_name": names.get(av.get("camera_id"), av.get("camera_id")),
                         "ts": av.get("ts"), "snapshot_url": snap,

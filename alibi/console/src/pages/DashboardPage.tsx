@@ -1082,6 +1082,11 @@ function OutOfOrdinaryPanel({ vehicles, onOpen }: { vehicles: import('../lib/typ
         const b = FINDING_BADGE[v.familiarity] || FINDING_BADGE.occasional;
         const when = v.busiest_hour_local !== null
           ? `mostly around ${String(v.busiest_hour_local).padStart(2, '0')}:00` : '';
+        // "How often" is distinct visits (passes). Fall back to a plain "seen"
+        // phrasing if we couldn't compute passes — never claim a sighting count.
+        const times = v.passes != null
+          ? `Came past ${v.passes}×`
+          : 'Seen here';
         return (
           <li key={v.entity_id || i} className="flex items-center gap-2 text-xs flex-wrap">
             <span className={`text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded flex-none ${b.cls} ${v.familiarity === 'new' ? 'vg-live' : ''}`}>
@@ -1089,7 +1094,7 @@ function OutOfOrdinaryPanel({ vehicles, onOpen }: { vehicles: import('../lib/typ
             </span>
             <button onClick={() => onOpen(v.entity_id)}
                     className="text-slate-300 hover:text-white text-left underline decoration-dotted underline-offset-2">
-              Came past {v.count}× over {v.days} day{v.days === 1 ? '' : 's'}
+              {times} over {v.days} day{v.days === 1 ? '' : 's'}
               {v.cameras.length > 0 && ` · ${v.cameras.join(', ')}`}
               {when && ` · ${when}`}
             </button>

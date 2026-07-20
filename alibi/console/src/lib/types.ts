@@ -391,12 +391,14 @@ export interface DashboardSituation {
 }
 
 /** A car that is NOT the usual scene — new or occasional, unnamed — with how
- *  often it came down the road (count) and when (busiest local hour). The usual
- *  cars (residents, regulars, owner-named) are excluded by definition. */
+ *  often it came down the road (distinct VISITS, not motion-stills) and when
+ *  (busiest local hour). The usual cars (residents, regulars, owner-named) are
+ *  excluded by definition. */
 export interface OutOfOrdinaryVehicle {
   entity_id: string;
   familiarity: 'new' | 'occasional';
-  count: number;
+  passes: number | null;      // distinct visits — the honest "how often"
+  sightings: number;          // raw motion-stills (not shown as passes)
   days: number;
   first_seen: string;
   last_seen: string;
