@@ -353,7 +353,8 @@ export interface FieldReport {
 /** An appearance-ReID cluster: the SAME vehicle seen repeatedly, linked by our
  *  own cameras' embeddings. Anonymous ("Vehicle A") — continuity, no identity. */
 export interface RecurringVehicle {
-  label: string;
+  label: string;                     // descriptor ("White SUV") or "Unnamed vehicle"
+  descriptor?: string | null;        // colour+type when known, else null (photo carries it)
   entity_id: string;
   owner_label: string | null;        // the owner's own name for it ("Paul's Fortuner")
   familiarity: 'resident' | 'regular' | 'new' | 'occasional';
@@ -363,6 +364,10 @@ export interface RecurringVehicle {
   last_seen: string;
   cameras: string[];
   busiest_hour_utc: number | null;
+  frame_url?: string | null;         // a real photo of the actual car
+  bbox?: number[] | null;            // its box in that frame (for a client-side crop)
+  colour?: string | null;
+  body?: string | null;
 }
 
 /** One row on the Overview's Situations panel — the top things worth a look,
@@ -387,6 +392,8 @@ export interface DashboardSituation {
   event_type?: string | null;
   description: string;
   snapshot_url: string | null;
+  frame_url?: string | null;          // vehicle situations: photo of the car (crop with bbox)
+  bbox?: number[] | null;
   confirmed: { by: string; ts: string; label: string | null; notes?: string } | null;
 }
 
@@ -397,13 +404,16 @@ export interface DashboardSituation {
 export interface OutOfOrdinaryVehicle {
   entity_id: string;
   familiarity: 'new' | 'occasional';
-  passes: number | null;      // distinct visits — the honest "how often"
-  sightings: number;          // raw motion-stills (not shown as passes)
+  descriptor?: string | null;  // colour+type when known ("White SUV"), else null
+  passes: number | null;       // distinct visits — the honest "how often"
+  sightings: number;           // raw motion-stills (not shown as passes)
   days: number;
   first_seen: string;
   last_seen: string;
   busiest_hour_local: number | null;
   cameras: string[];
+  frame_url?: string | null;   // a real photo of the actual car
+  bbox?: number[] | null;      // its box in that frame (for a client-side crop)
 }
 
 /** Hour-of-day activity per camera (site-local time) — all from real events. */
