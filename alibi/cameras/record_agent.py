@@ -54,6 +54,14 @@ class RecordAgent:
         kwargs = {}
         if self.motion_threshold is not None:
             kwargs["motion_threshold"] = self.motion_threshold
+        # Owners on a tight uplink can shrink the motion-still width (plates need
+        # the default 1280; smaller = less bandwidth, no plate reads).
+        _sw = os.environ.get("VANTAGE_STILL_WIDTH")
+        if _sw:
+            try:
+                kwargs["still_width"] = int(_sw)
+            except ValueError:
+                pass
         return CameraRecorder(
             camera_id=target["camera_id"],
             record_url=target["record_url"],
