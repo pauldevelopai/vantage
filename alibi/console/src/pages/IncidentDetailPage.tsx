@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { canPerformAction, hasRole } from '../lib/auth';
+import { AuthImg } from '../components/AuthImg';
 import type { IncidentDetail, IncidentExplanation } from '../lib/types';
 
 export function IncidentDetailPage() {
@@ -451,6 +452,35 @@ export function IncidentDetailPage() {
         </div>
       )}
 
+      {/* Evidence frame beside the info — you clicked a picture to get here, so
+          the picture is shown, not just linked. The primary evidence still is
+          the first event that captured one. */}
+      {(() => {
+        const hero = incident.events.find(e => e.snapshot_url);
+        if (!hero?.snapshot_url) return null;
+        const desc = (hero.metadata && (hero.metadata.description as string)) || '';
+        return (
+          <div className="bg-white shadow rounded-lg overflow-hidden mb-6 grid grid-cols-1 md:grid-cols-2">
+            <div className="bg-black flex items-center justify-center">
+              <AuthImg src={hero.snapshot_url} alt="incident evidence"
+                       className="w-full h-full max-h-[420px] object-contain" />
+            </div>
+            <div className="p-6">
+              <h2 className="text-lg font-medium text-gray-900 mb-2">Evidence</h2>
+              <p className="text-sm text-gray-500 font-mono">
+                📹 {hero.camera_id} · 🕐 {new Date(hero.ts).toLocaleString()}
+              </p>
+              <p className="text-sm text-gray-600 mt-1">{hero.event_type} · confidence {(hero.confidence * 100).toFixed(0)}%</p>
+              {desc && <p className="text-sm text-gray-700 mt-3 leading-relaxed">{desc}</p>}
+              <a href={hero.snapshot_url} target="_blank" rel="noopener noreferrer"
+                 className="inline-block mt-4 text-sm text-blue-600 hover:text-blue-800 font-medium">
+                Open full frame →
+              </a>
+            </div>
+          </div>
+        );
+      })()}
+
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Events Timeline (Replay Timeline) */}
         <div className="bg-white shadow rounded-lg p-6">
@@ -488,18 +518,18 @@ export function IncidentDetailPage() {
                     )}
                   </div>
                 </div>
-                {(event.clip_url || event.snapshot_url) && (
-                  <div className="mt-2 flex gap-3">
-                    {event.clip_url && (
-                      <a href={event.clip_url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:text-blue-800 font-medium">
-                        📹 View Clip →
-                      </a>
-                    )}
-                    {event.snapshot_url && (
-                      <a href={event.snapshot_url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:text-blue-800 font-medium">
-                        📷 View Snapshot →
-                      </a>
-                    )}
+                {event.snapshot_url && (
+                  <a href={event.snapshot_url} target="_blank" rel="noopener noreferrer"
+                     className="mt-2 block w-full max-w-xs rounded overflow-hidden border border-gray-200 bg-black">
+                    <AuthImg src={event.snapshot_url} alt="event frame"
+                             className="w-full h-auto object-contain max-h-56" />
+                  </a>
+                )}
+                {event.clip_url && (
+                  <div className="mt-2">
+                    <a href={event.clip_url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:text-blue-800 font-medium">
+                      📹 View Clip →
+                    </a>
                   </div>
                 )}
               </div>

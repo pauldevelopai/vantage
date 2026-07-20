@@ -198,8 +198,23 @@ export function DashboardPage() {
                       <Link to="/incidents" className="text-[10px] text-indigo-400 hover:text-indigo-300 no-underline">all incidents →</Link>
                     </div>
                   </div>
-                  <SituationsPanel situations={data.situations || []} onChanged={() => load(range)} />
+                  <SituationsPanel situations={data.situations || []} onChanged={() => load(range)}
+                                   onOpenVehicle={(eid) => setVehicleHistory(eid)} />
                 </Panel>
+
+                {/* Out of the ordinary — the cars that are NOT the usual scene,
+                    with how often each came down the road and when. Residents,
+                    regulars and named vehicles are excluded by definition. */}
+                {(data.out_of_ordinary_vehicles?.length ?? 0) > 0 && (
+                  <Panel className="mb-4" delay={195}>
+                    <div className="flex items-center justify-between mb-3">
+                      <h2 className="text-[11px] font-semibold text-slate-300 uppercase tracking-[0.14em]">Out of the ordinary</h2>
+                      <span className="text-[10px] text-slate-600 font-mono hidden sm:inline">not one of the usual cars · how often &amp; when</span>
+                    </div>
+                    <OutOfOrdinaryPanel vehicles={data.out_of_ordinary_vehicles || []}
+                                        onOpen={(eid) => setVehicleHistory(eid)} />
+                  </Panel>
+                )}
 
                 {/* What we're watching for — up top, because "what is this
                     system looking for" is the first client question. Never
@@ -768,21 +783,32 @@ const TIER_META = {
   noted:     { label: 'NOTED', badge: 'bg-slate-700 text-slate-300', border: 'border-slate-800', glow: '' },
 } as const;
 
+// Criteria-signal badges — things the system surfaces "worth a look" against our
+// own criteria (not raised incidents). All carry the amber "review" styling; the
+// label just names WHICH criterion. Never red — red is a human confirmation only.
+const KIND_META: Record<string, string> = {
+  new_vehicle: 'OUT-OF-ORDINARY VEHICLE',
+  after_hours: 'AFTER HOURS',
+  at_vehicles: 'AT THE VEHICLES',
+  repeated_passes: 'REPEATED PASSES',
+  dwell: 'LINGERING',
+};
+
 /**
  * Situations: every incident in the window, big and visual. Tier ceiling for
  * the MACHINE is "needs review". "CONFIRMED · <their words>" appears only when
  * an operator confirms — the label is a quoted human judgment with a name on
  * it, which is what makes a red banner defensible.
  */
-function SituationsPanel({ situations, onChanged }: { situations: import('../lib/types').DashboardSituation[]; onChanged: () => void }) {
+function SituationsPanel({ situations, onChanged, onOpenVehicle }: { situations: import('../lib/types').DashboardSituation[]; onChanged: () => void; onOpenVehicle?: (entityId: string) => void }) {
   const canConfirm = hasRole('operator') || hasRole('supervisor') || hasRole('admin');
   const [confirming, setConfirming] = useState<string | null>(null);
   const [label, setLabel] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  async function confirm(incidentId: string) {
-    if (!label.trim()) return;
+  async function confirm(incidentId: string | null) {
+    if (!incidentId || !label.trim()) return;
     setBusy(true);
     setErr(null);
     try {
@@ -830,19 +856,28 @@ function SituationsPanel({ situations, onChanged }: { situations: import('../lib
     <div className="space-y-3">
       {urgent.map((s, i) => {
         const m = TIER_META[s.tier] || TIER_META.noted;
+        const badgeLabel = (s.kind && KIND_META[s.kind]) || m.label;
+        const key = s.incident_id || s.entity_id || `${s.kind || 'sit'}-${s.ts}-${i}`;
+        // Media/click target: an incident links to its full evidence page; a
+        // criteria vehicle row opens that vehicle's history; otherwise the frame
+        // is shown but isn't a link.
+        const media = s.snapshot_url
+          ? <AuthImg src={s.snapshot_url} alt={s.event_type || 'evidence'} className="w-full h-full object-cover min-h-[96px]" />
+          : <div className="w-full h-full min-h-[96px] flex items-center justify-center text-[10px] text-slate-700">no frame</div>;
+        const mediaCls = "relative w-40 sm:w-52 flex-none bg-slate-900 no-underline";
         return (
-          <div key={s.incident_id}
+          <div key={key}
                className={`vg-rise flex gap-3 rounded-lg overflow-hidden bg-black/40 border ${m.border} ${m.glow} transition-all duration-300`}
                style={{ animationDelay: `${210 + i * 60}ms` }}>
-            <Link to={`/incidents/${s.incident_id}`} className="relative w-40 sm:w-52 flex-none bg-slate-900 no-underline">
-              {s.snapshot_url
-                ? <AuthImg src={s.snapshot_url} alt={s.event_type || 'evidence'} className="w-full h-full object-cover min-h-[96px]" />
-                : <div className="w-full h-full min-h-[96px] flex items-center justify-center text-[10px] text-slate-700">no frame</div>}
-            </Link>
+            {s.incident_id
+              ? <Link to={`/incidents/${s.incident_id}`} className={mediaCls}>{media}</Link>
+              : s.entity_id && onOpenVehicle
+                ? <button onClick={() => onOpenVehicle(s.entity_id!)} className={`${mediaCls} cursor-pointer`}>{media}</button>
+                : <div className={mediaCls}>{media}</div>}
             <div className="flex-1 min-w-0 py-2.5 pr-3">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className={`text-[9px] font-bold tracking-wider px-1.5 py-0.5 rounded ${m.badge} ${s.tier === 'confirmed' ? 'vg-live' : ''}`}>
-                  {m.label}
+                  {badgeLabel}
                 </span>
                 <span className="text-[10px] text-slate-500">{s.camera_name || ''} · {timeAgo(s.ts)}</span>
               </div>
@@ -855,18 +890,25 @@ function SituationsPanel({ situations, onChanged }: { situations: import('../lib
                 <p className="mt-0.5 text-xs text-slate-500 line-clamp-2">{s.description}</p>
               )}
               <div className="mt-1.5 flex items-center gap-3">
-                <Link to={`/incidents/${s.incident_id}`}
-                      className="text-[10px] text-indigo-400 hover:text-indigo-300 no-underline">
-                  evidence & why flagged →
-                </Link>
-                {canConfirm && !s.confirmed && confirming !== s.incident_id && (
+                {s.incident_id
+                  ? <Link to={`/incidents/${s.incident_id}`}
+                          className="text-[10px] text-indigo-400 hover:text-indigo-300 no-underline">
+                      evidence & why flagged →
+                    </Link>
+                  : s.entity_id && onOpenVehicle
+                    ? <button onClick={() => onOpenVehicle(s.entity_id!)}
+                              className="text-[10px] text-indigo-400 hover:text-indigo-300">
+                        see this vehicle's history →
+                      </button>
+                    : null}
+                {s.incident_id && canConfirm && !s.confirmed && confirming !== s.incident_id && (
                   <button onClick={() => { setConfirming(s.incident_id); setLabel(''); setErr(null); }}
                           className="text-[10px] text-slate-400 hover:text-white border border-slate-700 hover:border-slate-500 rounded px-1.5 py-0.5">
                     Confirm what happened…
                   </button>
                 )}
               </div>
-              {confirming === s.incident_id && (
+              {s.incident_id && confirming === s.incident_id && (
                 <div className="mt-2 flex items-center gap-1.5">
                   <input autoFocus value={label}
                          onChange={e => setLabel(e.target.value)}
@@ -1025,6 +1067,39 @@ function FindingsList({ findings }: { findings: PatternFinding[] }) {
           </li>
         );
       })}
+    </ul>
+  );
+}
+
+/** The cars that are NOT the usual scene — new or occasional, unnamed — each
+ *  saying how often it came down the road and when. New cars lead. Every row
+ *  clicks through to that vehicle's full history (every sighting, with times). */
+function OutOfOrdinaryPanel({ vehicles, onOpen }: { vehicles: import('../lib/types').OutOfOrdinaryVehicle[]; onOpen: (entityId: string) => void }) {
+  if (!vehicles.length) return null;
+  return (
+    <ul className="space-y-1.5">
+      {vehicles.map((v, i) => {
+        const b = FINDING_BADGE[v.familiarity] || FINDING_BADGE.occasional;
+        const when = v.busiest_hour_local !== null
+          ? `mostly around ${String(v.busiest_hour_local).padStart(2, '0')}:00` : '';
+        return (
+          <li key={v.entity_id || i} className="flex items-center gap-2 text-xs flex-wrap">
+            <span className={`text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded flex-none ${b.cls} ${v.familiarity === 'new' ? 'vg-live' : ''}`}>
+              {b.label}
+            </span>
+            <button onClick={() => onOpen(v.entity_id)}
+                    className="text-slate-300 hover:text-white text-left underline decoration-dotted underline-offset-2">
+              Came past {v.count}× over {v.days} day{v.days === 1 ? '' : 's'}
+              {v.cameras.length > 0 && ` · ${v.cameras.join(', ')}`}
+              {when && ` · ${when}`}
+            </button>
+            <span className="text-slate-600 ml-auto font-mono text-[10px]">{timeAgo(v.last_seen)}</span>
+          </li>
+        );
+      })}
+      <li className="text-[10px] text-slate-600 pt-1">
+        The usual cars — your own, the regulars, anything you've named — are left out on purpose. Click a row for every sighting and time.
+      </li>
     </ul>
   );
 }

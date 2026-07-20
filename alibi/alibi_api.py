@@ -1500,6 +1500,7 @@ async def dashboard_overview(range: str = "24h",
                 desc = str((getattr(newest, "metadata", None) or {}).get("description") or "")
             situations.append({
                 "incident_id": inc["incident_id"],
+                "kind": tier,                    # confirmed | review | noted (for ranking)
                 "tier": tier,
                 "status": inc.get("status"),
                 "severity": sev,
@@ -1512,11 +1513,6 @@ async def dashboard_overview(range: str = "24h",
                 "snapshot_url": newest.snapshot_url if newest else None,
                 "confirmed": confirmed,
             })
-        # newest first within each tier; confirmed > review > noted
-        tier_rank = {"confirmed": 0, "review": 1, "noted": 2}
-        situations.sort(key=lambda s: s["ts"], reverse=True)
-        situations.sort(key=lambda s: tier_rank.get(s["tier"], 3))
-        situations = situations[:8]
     except Exception as e:
         print(f"[dashboard] situations unavailable: {e}")
 
@@ -1527,6 +1523,8 @@ async def dashboard_overview(range: str = "24h",
     vehicles_distinct = None
     recurring_vehicles = []
     pattern_findings_rows = []
+    ent: list = []
+    vlabels: dict = {}
     try:
         from alibi.cameras.cross_camera import get_cross_camera_tracker
         from alibi.patterns.familiarity import (classify_entity, get_vehicle_labels,
@@ -1583,8 +1581,8 @@ async def dashboard_overview(range: str = "24h",
     # Incidents store event_ids; build event_id -> incident_id once (cheap now
     # that list_incidents is O(file)). Face-people rows carry a frame_url whose
     # frame_id ties to the "frm_<id>" event.
+    ev_to_incident: dict = {}
     try:
-        ev_to_incident: dict = {}
         for inc in store.list_incidents(limit=2000):
             for eid in [ev.event_id for ev in inc.events]:
                 ev_to_incident.setdefault(eid, inc.incident_id)
@@ -1603,6 +1601,97 @@ async def dashboard_overview(range: str = "24h",
             _attach_incident(p)
     except Exception as e:
         print(f"[dashboard] incident linkage unavailable: {e}")
+
+    # Out-of-the-ordinary vehicles + criteria-based situations. The Situations
+    # panel used to be populated ONLY by raised incidents, so a quiet site showed
+    # an empty panel even while the cameras were seeing genuinely unusual things.
+    # Here we surface, against our own criteria: cars that are NOT the usual scene
+    # (new/occasional, unnamed) with how often + when they came down the road; and
+    # criteria situations (a new vehicle, presence after hours, someone at the
+    # parked vehicles, a lingering person, repeated passes) — each "worth a look",
+    # never an accusation, so the top-5 reflects the site's real state.
+    out_of_ordinary: list = []
+    try:
+        from alibi.patterns.situations import (out_of_ordinary_vehicles,
+                                               new_vehicle_situations, rank_situations)
+        out_of_ordinary = out_of_ordinary_vehicles(ent, labels=vlabels, names=names)
+
+        events_by_id = {e.event_id: e for e in events}
+
+        def _frame_at(camera_id, ts_iso):
+            """Best evidence still for a criteria situation: the event whose id we
+            were handed, else the newest event at that camera with a snapshot."""
+            for e in events:
+                if e.camera_id == camera_id and e.snapshot_url:
+                    return e.snapshot_url, e.event_id
+            return None, None
+
+        criteria_rows: list = []
+        # New vehicles get their own card (entity-linked, no incident needed).
+        criteria_rows.extend(new_vehicle_situations(out_of_ordinary))
+
+        # Fired posture triggers → situations (after-hours, dwell, repeated passes).
+        _TRIGGER_TITLES = {
+            "after_hours": "Presence after hours",
+            "dwell": "Someone stayed in view",
+            "repeated_passes": "Same person, repeated passes",
+        }
+        for t in (watching_for or {}).get("triggers", []) if watching_for else []:
+            if not t.get("fired") or t.get("kind") not in _TRIGGER_TITLES:
+                continue
+            cam_id = t.get("camera_id")
+            eid = t.get("event_id")
+            snap, snap_eid = (None, None)
+            if eid and eid in events_by_id and events_by_id[eid].snapshot_url:
+                snap, snap_eid = events_by_id[eid].snapshot_url, eid
+            else:
+                snap, snap_eid = _frame_at(cam_id, t.get("ts"))
+            criteria_rows.append({
+                "kind": t["kind"], "tier": "review", "incident_id": None,
+                "entity_id": None, "event_id": snap_eid,
+                "title": _TRIGGER_TITLES[t["kind"]],
+                "description": t.get("note") or "Worth a look.",
+                "camera_name": names.get(cam_id, cam_id), "ts": t.get("ts"),
+                "snapshot_url": snap, "count": None, "confirmed": None,
+            })
+
+        # Someone at / moving between the parked vehicles (the honest "checking
+        # car doors" signal) — a concrete action, evaluated over the same events.
+        try:
+            from alibi.site_profile import get_site_profile_store
+            from alibi.patterns.observed_actions import evaluate_at_vehicles
+            _sites = get_site_profile_store().list()
+            if _sites:
+                av = evaluate_at_vehicles(_sites[0], events)
+                if av.get("fired"):
+                    snap, snap_eid = _frame_at(av.get("camera_id"), av.get("ts"))
+                    criteria_rows.append({
+                        "kind": "at_vehicles", "tier": "review", "incident_id": None,
+                        "entity_id": None, "event_id": snap_eid,
+                        "title": "Someone at the parked vehicles",
+                        "description": av.get("note") or "Worth a look.",
+                        "camera_name": names.get(av.get("camera_id"), av.get("camera_id")),
+                        "ts": av.get("ts"), "snapshot_url": snap,
+                        "count": av.get("vehicles_touched"), "confirmed": None,
+                    })
+        except Exception as e:
+            print(f"[dashboard] at-vehicles unavailable: {e}")
+
+        # Resolve each criteria row's incident (most fired events raised one) so
+        # the card can still click through to the full evidence + why-flagged.
+        for r in criteria_rows:
+            if r.get("incident_id") is None and r.get("event_id"):
+                r["incident_id"] = ev_to_incident.get(r["event_id"])
+
+        # Top-5 things worth attention = confirmed/review incidents + criteria,
+        # ranked by how much they warrant a look; routine "noted" incidents keep
+        # their place below (the UI collapses them to a single line).
+        noted_rows = [s for s in situations if s.get("kind") == "noted"]
+        attention = [s for s in situations if s.get("kind") != "noted"] + criteria_rows
+        situations = rank_situations(attention, limit=5) + noted_rows
+    except Exception as e:
+        print(f"[dashboard] criteria situations unavailable: {e}")
+        situations = situations[:8]
 
     return {
         "range": range,
@@ -1624,6 +1713,7 @@ async def dashboard_overview(range: str = "24h",
         "watching_for": watching_for,
         "patterns": patterns,
         "situations": situations,
+        "out_of_ordinary_vehicles": out_of_ordinary,
         "recurring_vehicles": recurring_vehicles,
         "pattern_findings": pattern_findings_rows,
         "security_suggestions": _security_suggestions_payload(names),
