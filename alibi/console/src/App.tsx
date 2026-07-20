@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Link, Navigate, useNavigate, useLocation } from 'react-router-dom';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { IncidentsPage } from './pages/IncidentsPage';
 import { IncidentDetailPage } from './pages/IncidentDetailPage';
 import { ReportsPage } from './pages/ReportsPage';
@@ -84,6 +84,7 @@ function Layout({ children }: { children: React.ReactNode }) {
   const [layoutMode, toggleLayout] = useLayoutMode();
   const isControlRoom = layoutMode === 'control-room';
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [openMenu, setOpenMenu] = useState<string | null>(null);   // which desktop dropdown is open
 
   function handleLogout() {
     logout();
@@ -105,26 +106,28 @@ function Layout({ children }: { children: React.ReactNode }) {
     </Link>
   );
 
-  // One source of nav truth, rendered both in the desktop row and the mobile
-  // drop-down (below `sm` the row is hidden, so without this there was NO menu
-  // on a phone). Sections mirror the desktop dividers; role-gates match.
+  // One source of nav truth. 18 destinations don't fit on one row (they clipped),
+  // so on desktop they collapse into a few labelled dropdown groups, and on a
+  // phone into the hamburger drawer. Role-gates drop items an operator can't see.
   const sup = hasRole('supervisor') || hasRole('admin');
   const adm = hasRole('admin');
-  const navSections: { to: string; label: string }[][] = [
-    [{ to: '/overview', label: 'Overview' }],
-    [{ to: '/cameras', label: 'Cameras' }, { to: '/recorders', label: 'Recorders' }, { to: '/sites', label: 'Sites' }],
-    [
+  type NavItem = { to: string; label: string };
+  const navGroups: { title: string | null; items: NavItem[] }[] = [
+    { title: null, items: [{ to: '/overview', label: 'Overview' }] },
+    { title: 'Setup', items: [{ to: '/cameras', label: 'Cameras' }, { to: '/recorders', label: 'Recorders' }, { to: '/sites', label: 'Sites' }] },
+    { title: 'Intelligence', items: [
       { to: '/advisor', label: 'Advisor' }, { to: '/incidents', label: 'Incidents' },
       { to: '/people', label: 'People' }, { to: '/patterns', label: 'Patterns' },
       { to: '/reports', label: 'Reports' }, { to: '/search', label: 'Search' },
       { to: '/metrics', label: 'Metrics' }, { to: '/vehicle-search', label: 'Vehicles' },
-      ...(sup ? [{ to: '/vehicle-review', label: 'Review' }, { to: '/hotlist', label: 'Hotlist' }, { to: '/faces', label: 'Faces' }] : []),
-    ],
-    [
       { to: '/intel', label: 'Intel' },
-      ...(adm ? [{ to: '/costs', label: 'Costs' }, { to: '/settings', label: 'Settings' }] : []),
-    ],
-  ];
+    ] },
+    { title: 'Watchlist', items: sup ? [{ to: '/vehicle-review', label: 'Review' }, { to: '/hotlist', label: 'Hotlist' }, { to: '/faces', label: 'Faces' }] : [] },
+    { title: 'Admin', items: adm ? [{ to: '/costs', label: 'Costs' }, { to: '/settings', label: 'Settings' }] : [] },
+  ].filter(g => g.title === null || g.items.length > 0);
+
+  // Close any open dropdown / the mobile drawer whenever the route changes.
+  useEffect(() => { setOpenMenu(null); setMobileOpen(false); }, [location.pathname]);
 
   return (
     <div className="min-h-screen vg-app">
@@ -147,13 +150,36 @@ function Layout({ children }: { children: React.ReactNode }) {
             <Link to="/" onClick={() => setMobileOpen(false)} className="text-white font-bold text-base mr-4 whitespace-nowrap tracking-tight no-underline">
               Vantage
             </Link>
-            <div className="hidden sm:flex items-center gap-0.5 overflow-x-auto flex-1 pr-3" style={{ scrollbarWidth: 'none' }}>
-              {navSections.map((sec, si) => (
-                <div key={si} className="flex items-center gap-0.5">
-                  {si > 0 && <div className="w-px h-5 bg-white/10 mx-1.5 flex-shrink-0" />}
-                  {sec.map(item => navLink(item.to, item.label))}
-                </div>
-              ))}
+            <div className="hidden sm:flex items-center gap-0.5 flex-1">
+              {navGroups.map(g => g.title === null
+                ? g.items.map(item => navLink(item.to, item.label))
+                : (
+                  <div key={g.title} className="relative">
+                    <button
+                      onClick={() => setOpenMenu(openMenu === g.title ? null : g.title)}
+                      className={`flex items-center gap-1 px-3 py-1.5 rounded-md text-[13px] font-medium whitespace-nowrap transition-all duration-150 ${
+                        g.items.some(it => isActive(it.to)) || openMenu === g.title
+                          ? 'bg-indigo-500/[0.35] text-white'
+                          : 'text-white/[0.55] hover:text-white/[0.9] hover:bg-white/[0.08]'
+                      }`}
+                    >
+                      {g.title}
+                      <svg width="9" height="9" viewBox="0 0 12 12" className="opacity-60"><path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.6" fill="none" /></svg>
+                    </button>
+                    {openMenu === g.title && (
+                      <div className="absolute left-0 top-full mt-1 min-w-[180px] rounded-lg bg-gray-900 border border-white/10 shadow-xl py-1 z-50 flex flex-col">
+                        {g.items.map(item => (
+                          <Link key={item.to} to={item.to} onClick={() => setOpenMenu(null)}
+                                className={`px-3 py-1.5 text-[13px] whitespace-nowrap no-underline ${
+                                  isActive(item.to) ? 'text-white bg-indigo-500/20' : 'text-white/70 hover:text-white hover:bg-white/[0.08]'
+                                }`}>
+                            {item.label}
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
             </div>
             <div className="flex items-center gap-2.5 ml-auto flex-shrink-0 pl-3 border-l border-white/10 bg-gray-900/95 backdrop-blur-xl">
               <ThemeToggle />
@@ -181,15 +207,18 @@ function Layout({ children }: { children: React.ReactNode }) {
             </div>
           </div>
         </div>
+        {/* Click-away layer that closes an open desktop dropdown. */}
+        {openMenu && <div className="hidden sm:block fixed inset-0 z-40" onClick={() => setOpenMenu(null)} />}
         {/* Mobile menu — the link row is hidden below sm, so a phone reaches
-            every page through this drop-down. Tapping a link closes it. */}
+            every page through this drawer, grouped by section. Tapping closes it. */}
         {mobileOpen && (
           <div className="sm:hidden border-t border-white/10 bg-gray-900/98 backdrop-blur-xl max-h-[75vh] overflow-y-auto">
             <div className="px-4 py-3 flex flex-col gap-1">
-              {navSections.map((sec, si) => (
-                <div key={si} className="flex flex-col gap-1">
-                  {si > 0 && <div className="h-px bg-white/10 my-1.5" />}
-                  {sec.map(item => navLink(item.to, item.label))}
+              {navGroups.map((g, gi) => (
+                <div key={g.title ?? 'main'} className="flex flex-col gap-1">
+                  {gi > 0 && <div className="h-px bg-white/10 my-1.5" />}
+                  {g.title && <div className="text-[10px] uppercase tracking-wider text-white/30 px-3 pt-1">{g.title}</div>}
+                  {g.items.map(item => navLink(item.to, item.label))}
                 </div>
               ))}
             </div>

@@ -1713,26 +1713,28 @@ async def dashboard_overview(range: str = "24h",
             return (e.snapshot_url, e.event_id) if e else (None, None)
 
         criteria_rows: list = []
-        # A vehicle that is NEW and not one of the usual cars is a genuine "worth
-        # a look" — surface it in Situations WITH its actual photo (frame + bbox,
-        # so the card crops to the car) and a real descriptor, click-through to
-        # its full history. Only NEW ones (occasional/older visitors stay in the
-        # list panel below), and only when we have a real frame — no empty cards.
+        # A vehicle that is NOT one of the usual cars is a genuine "worth a look" —
+        # surface it in Situations WITH its actual photo (frame + bbox, so the card
+        # crops to the car) and click-through to its full history. New ones lead
+        # (rank first); we only ever show a card when a real frame exists — no
+        # empty cards — and cap to a few so vehicles don't crowd out incidents.
+        _veh_sit = 0
         for v in out_of_ordinary:
-            if v["familiarity"] != "new" or not v.get("frame_url"):
+            if not v.get("frame_url") or _veh_sit >= 4:
                 continue
+            _veh_sit += 1
             passes = v.get("passes") or 0
             cams = ", ".join(v.get("cameras") or []) or "the cameras"
             when = (f", mostly around {v['busiest_hour_local']:02d}:00"
                     if v.get("busiest_hour_local") is not None else "")
             times = f"{passes} time{'s' if passes != 1 else ''}" if passes else "once"
             name = v.get("descriptor") or "A vehicle"
+            lead = "New here" if v["familiarity"] == "new" else "Not one of the usual cars"
             criteria_rows.append({
                 "kind": "new_vehicle", "tier": "review", "incident_id": None,
                 "entity_id": v["entity_id"], "event_id": None,
                 "title": f"{name} — not one of the usual cars",
-                "description": (f"Not a resident or regular here. Came past {cams} "
-                                f"{times}{when}. Worth a look."),
+                "description": (f"{lead}. Came past {cams} {times}{when}. Worth a look."),
                 "camera_name": (v.get("cameras") or [None])[0], "ts": v.get("last_seen"),
                 "snapshot_url": None, "frame_url": v.get("frame_url"), "bbox": v.get("bbox"),
                 "count": passes, "confirmed": None,
