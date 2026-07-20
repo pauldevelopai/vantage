@@ -208,13 +208,14 @@ class FrameUploader:
     model. Motion-gated (no motion -> no frames -> no AI). Dependency-injected."""
 
     def __init__(self, base_dir, upload, interval=8, lister=None, reader=None,
-                 clock=time.time):
+                 clock=time.time, describe=None):
         self.base_dir = base_dir
-        self._upload = upload                      # upload(camera_id, jpeg) -> bool
+        self._upload = upload                      # upload(camera_id, jpeg, description) -> bool
         self.interval = interval
         self._lister = lister or (lambda d: os.listdir(d) if os.path.isdir(d) else [])
         self._reader = reader or (lambda p: open(p, "rb").read())
         self._clock = clock
+        self._describe = describe                  # describe(jpeg) -> str|None (local Ollama), or None
         self._seen = {}                            # camera_id -> last filename sent
         self._last_sent = {}                       # camera_id -> ts
 
@@ -236,7 +237,15 @@ class FrameUploader:
                 data = self._reader(os.path.join(motion_dir, newest))
             except OSError:
                 continue
-            if self._upload(cid, data):
+            # Describe the frame LOCALLY (free Ollama on this PC) when available,
+            # and ship the description with it so the cloud needn't pay to narrate.
+            description = None
+            if self._describe is not None:
+                try:
+                    description = self._describe(data)
+                except Exception:
+                    description = None
+            if self._upload(cid, data, description):
                 self._seen[cid] = newest
                 self._last_sent[cid] = now
 
@@ -431,19 +440,41 @@ def main(argv=None):  # pragma: no cover
     ).start()
 
     # --- frame AI (phase 4): ship motion stills for cloud analysis ---------- #
-    def upload_frame(camera_id, data):
+    def upload_frame(camera_id, data, description=None):
         url = ba.VANTAGE_URL.rstrip("/") + f"/api/cameras/bridge/frame?camera_id={camera_id}"
-        req = ba.urlrequest.Request(
-            url, data=data, method="POST",
-            headers={**headers, "Content-Type": "application/octet-stream"},
-        )
+        hdrs = {**headers, "Content-Type": "application/octet-stream"}
+        if description:
+            # Local (free) scene description travels with the frame — the cloud
+            # uses it instead of a paid call. Header-safe: one line, ASCII.
+            hdrs["X-Vantage-Scene"] = " ".join(str(description).split())[:1500].encode(
+                "ascii", "ignore").decode("ascii")
+        req = ba.urlrequest.Request(url, data=data, method="POST", headers=hdrs)
         try:
             with ba.urlrequest.urlopen(req, timeout=20):
                 return True
         except Exception:
             return False
 
-    frame_uploader = FrameUploader(base_dir=args.dir, upload=upload_frame)
+    # Free offline vision: if Ollama with a vision model is running on THIS PC,
+    # describe every motion still locally and ship the words with the frame.
+    local_describe = None
+    try:
+        try:
+            from alibi.cameras import local_vision as lv
+        except ImportError:
+            import local_vision as lv        # flat zipapp layout
+        model = os.environ.get("VANTAGE_LOCAL_VISION_MODEL", lv.DEFAULT_MODEL)
+        if lv.ollama_has_model(model):
+            local_describe = lambda jpeg: lv.describe(jpeg, model=model)
+            print(f"[record-agent] local vision ON — describing frames with Ollama '{model}' (free, on-site)")
+        else:
+            lv.pull_model(model)             # kick off a background pull if Ollama is up
+            print(f"[record-agent] local vision available but model '{model}' not ready; "
+                  f"install Ollama + run 'ollama pull {model}' for free descriptions")
+    except Exception as e:
+        print(f"[record-agent] local vision unavailable ({e}); cloud will narrate")
+
+    frame_uploader = FrameUploader(base_dir=args.dir, upload=upload_frame, describe=local_describe)
     threading.Thread(
         target=frame_loop, args=(frame_uploader, time.sleep), daemon=True,
     ).start()

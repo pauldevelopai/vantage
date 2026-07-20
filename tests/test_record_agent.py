@@ -238,7 +238,7 @@ def _frame_uploader(interval=8):
     def reader(p):
         import os as _os
         return files[_os.path.dirname(p)][_os.path.basename(p)]
-    def upload(cid, data): uploaded.append((cid, data)); return True
+    def upload(cid, data, description=None): uploaded.append((cid, data)); return True
     up = FrameUploader(base_dir="/rec", upload=upload, interval=interval,
                        lister=lister, reader=reader, clock=lambda: t["now"])
     return up, uploaded, files, t
@@ -336,3 +336,29 @@ def test_derive_substream_hikvision():
 def test_derive_substream_unknown_returns_none():
     assert derive_substream_url("rtsp://admin:pw@10.0.0.1:554/live") is None
     assert derive_substream_url("") is None
+
+
+def test_frame_uploader_attaches_local_description():
+    """When a local describer is provided, its text is passed to upload()."""
+    uploaded = []
+    files = {"/rec/cam1/motion": {"a.jpg": b"JPG"}}
+    lister = lambda d: list(files.get(d, {}).keys()) if d in files else (["cam1"] if d == "/rec" else [])
+    reader = lambda p: files["/rec/cam1/motion"][p.split("/")[-1]]
+    def upload(cid, data, description=None): uploaded.append((cid, data, description)); return True
+    up = FrameUploader(base_dir="/rec", upload=upload, lister=lister, reader=reader,
+                       clock=lambda: 1000.0, describe=lambda jpeg: "one person at the gate")
+    up.tick()
+    assert uploaded and uploaded[0][2] == "one person at the gate"
+
+
+def test_frame_uploader_local_describe_failure_is_ignored():
+    uploaded = []
+    files = {"/rec/cam1/motion": {"a.jpg": b"JPG"}}
+    lister = lambda d: list(files.get(d, {}).keys()) if d in files else (["cam1"] if d == "/rec" else [])
+    reader = lambda p: files["/rec/cam1/motion"][p.split("/")[-1]]
+    def boom(jpeg): raise RuntimeError("ollama down")
+    def upload(cid, data, description=None): uploaded.append((cid, description)); return True
+    up = FrameUploader(base_dir="/rec", upload=upload, lister=lister, reader=reader,
+                       clock=lambda: 1000.0, describe=boom)
+    up.tick()
+    assert uploaded and uploaded[0][1] is None       # frame still uploaded, no description

@@ -2888,11 +2888,13 @@ def _build_recorder_zipapp(base_url: str, code: str) -> bytes:
     __main__), URL & pairing code baked in. Returns the .pyz bytes."""
     import io
     import zipfile
-    from alibi.cameras import recorder, bridge_agent, record_agent, onvif
+    from alibi.cameras import recorder, bridge_agent, record_agent, onvif, local_vision
     with open(recorder.__file__) as f:
         recorder_src = f.read()
     with open(onvif.__file__) as f:
         onvif_src = f.read()
+    with open(local_vision.__file__) as f:
+        local_vision_src = f.read()
     with open(record_agent.__file__) as f:
         record_agent_src = f.read()
     with open(bridge_agent.__file__) as f:
@@ -2902,6 +2904,7 @@ def _build_recorder_zipapp(base_url: str, code: str) -> bytes:
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("recorder.py", recorder_src)
         z.writestr("onvif.py", onvif_src)          # ONVIF stream-URL lookup
+        z.writestr("local_vision.py", local_vision_src)   # free offline scene description
         z.writestr("bridge_agent.py", bridge_agent_src)
         z.writestr("record_agent.py", record_agent_src)
         z.writestr("__main__.py", main_src)
@@ -3259,6 +3262,12 @@ async def bridge_ingest_frame(camera_id: str, request: Request,
     if not fa.should_analyze(camera_id, _time.time()):
         return {"analyzed": False, "reason": "throttled"}
 
+    # The recorder may describe the frame LOCALLY (free Ollama on the PC) and
+    # send the description with it — use that instead of a paid Claude call.
+    agent_scene = request.headers.get("X-Vantage-Scene") or None
+    if agent_scene:
+        agent_scene = agent_scene.strip()[:1500] or None
+
     now = datetime.utcnow()
     # Store the evidence frame FIRST so sightings can reference it — a face
     # sighting is far more useful to a reviewer when it points at the still it
@@ -3326,8 +3335,19 @@ async def bridge_ingest_frame(camera_id: str, request: Request,
                     worth_paying = False
             except Exception as e:
                 print(f"[frame-ai] ai_config unavailable: {e}")
-        analysis_ = (fa.analyze_frame(frame, want_vehicle_attrs=wants_attrs) or {}
-                     if worth_paying else {})
+        if worth_paying and agent_scene:
+            # The recorder already described it locally (free) — use that; no
+            # paid call. Derive the same lightweight fields the cloud path adds.
+            objs = [o for o in ("person", "car", "truck", "motorcycle", "bike", "dog", "cat")
+                    if o in agent_scene.lower()]
+            analysis_ = {"description": agent_scene, "detected_objects": objs,
+                         "safety_concern": any(w in agent_scene.lower() for w in
+                                               ("fight", "weapon", "attack", "suspicious",
+                                                "intruder", "danger", "emergency")),
+                         "method": "agent_local_ollama"}
+        else:
+            analysis_ = (fa.analyze_frame(frame, want_vehicle_attrs=wants_attrs) or {}
+                         if worth_paying else {})
         # Validate VLM-claimed badges against the reference catalog — an
         # unknown make is downgraded so the UI never shows a doubtful badge.
         if analysis_.get("vehicles"):
