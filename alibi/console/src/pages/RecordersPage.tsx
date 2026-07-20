@@ -320,6 +320,15 @@ export function RecordersPage() {
                 </div>
                 <span className="text-xs text-gray-500">You should see <code className="bg-gray-100 px-1 rounded">paired as brg_…</code>. Leave the window open — it appears under “Your recorders” above.</span>
               </li>
+              <li>
+                <span className="font-medium">4. Optional — free scene descriptions</span> (no AI cost).{' '}
+                Install <a href="https://ollama.com/download" target="_blank" rel="noreferrer" className="text-indigo-600 underline">Ollama</a>
+                {isMac ? <> (or <code className="bg-gray-100 px-1 rounded">brew install ollama</code>)</> : null}, then pull the vision model once:
+                <div className="mt-1">
+                  <pre className="bg-gray-900 text-gray-100 text-xs rounded-md p-3 overflow-x-auto whitespace-pre">ollama pull llama3.2-vision</pre>
+                </div>
+                <span className="text-xs text-gray-500">The recorder auto-detects it and describes every camera shot on this computer — free and private. Without it, the cloud narrates as before.</span>
+              </li>
             </ol>
             <p className="mt-3 text-xs text-gray-400">
               Prefer not to use Terminal?{' '}
