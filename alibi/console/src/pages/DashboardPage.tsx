@@ -699,6 +699,7 @@ function PersonCard({ p, i, onEnrolled }: { p: DashboardPerson; i: number; onEnr
   const canEnroll = isFace && (hasRole('supervisor') || hasRole('admin'));
   const [naming, setNaming] = useState(false);
   const [name, setName] = useState('');
+  const [details, setDetails] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -707,7 +708,7 @@ function PersonCard({ p, i, onEnrolled }: { p: DashboardPerson; i: number; onEnr
     setBusy(true);
     setErr(null);
     try {
-      await api.enrollFaceFromSighting(p.sighting_id, name.trim());
+      await api.enrollFaceFromSighting(p.sighting_id, name.trim(), details.trim());
       setNaming(false);
       onEnrolled();
     } catch (e: any) {
@@ -758,6 +759,11 @@ function PersonCard({ p, i, onEnrolled }: { p: DashboardPerson; i: number; onEnr
                    onChange={e => setName(e.target.value)}
                    onKeyDown={e => { if (e.key === 'Enter') enrol(); if (e.key === 'Escape') setNaming(false); }}
                    placeholder="Their name"
+                   className="w-full bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-[10px] text-slate-200 placeholder:text-slate-600 focus:border-indigo-500 outline-none" />
+            <input value={details}
+                   onChange={e => setDetails(e.target.value)}
+                   onKeyDown={e => { if (e.key === 'Enter') enrol(); if (e.key === 'Escape') setNaming(false); }}
+                   placeholder="Details (optional)"
                    className="w-full bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-[10px] text-slate-200 placeholder:text-slate-600 focus:border-indigo-500 outline-none" />
             <div className="flex gap-1">
               <button onClick={enrol} disabled={busy || !name.trim()}

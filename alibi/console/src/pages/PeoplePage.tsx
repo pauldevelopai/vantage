@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
+import { hasRole } from '../lib/auth';
 import { AuthImg } from '../components/AuthImg';
 import { CropImg } from '../components/CropImg';
 import type { PersonRow, PersonHistoryResult } from '../lib/types';
@@ -117,16 +118,41 @@ export function PeoplePage() {
         </div>
       )}
 
-      {selected && <HistoryPanel person={selected} onClose={() => setSelected(null)} />}
+      {selected && <HistoryPanel person={selected} onClose={() => setSelected(null)}
+                                 onEnrolled={() => { setSelected(null); load(); }} />}
     </div>
   );
 }
 
-/** "Where have they been?" — the person-history engine over our own sightings. */
-function HistoryPanel({ person, onClose }: { person: PersonRow; onClose: () => void }) {
+/** "Where have they been?" — the person-history engine over our own sightings,
+ *  plus the enrolment control: give an unknown face a name + details and it goes
+ *  into the recognition DB, so the next time they come up the cameras say who it
+ *  is. Enrolment needs a face embedding, which every clickable row here has. */
+function HistoryPanel({ person, onClose, onEnrolled }: { person: PersonRow; onClose: () => void; onEnrolled: () => void }) {
   const [h, setH] = useState<PersonHistoryResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const enrolled = !!person.matched_label;
+  const canEnrol = !enrolled && !!person.sighting_id && (hasRole('supervisor') || hasRole('admin'));
+  const [name, setName] = useState('');
+  const [details, setDetails] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState<string | null>(null);
+
+  async function enrol() {
+    if (!name.trim() || !person.sighting_id) return;
+    setSaving(true);
+    setSaveErr(null);
+    try {
+      await api.enrollFaceFromSighting(person.sighting_id, name.trim(), details.trim());
+      onEnrolled();
+    } catch (e: any) {
+      setSaveErr(e?.message || 'Could not save');
+    } finally {
+      setSaving(false);
+    }
+  }
 
   useEffect(() => {
     setLoading(true);
@@ -155,6 +181,45 @@ function HistoryPanel({ person, onClose }: { person: PersonRow; onClose: () => v
         </div>
 
         <div className="p-4">
+          {/* Recognised — show who they are and the details on file. */}
+          {enrolled && (
+            <div className="mb-4 rounded-md bg-emerald-50 border border-emerald-200 p-3">
+              <p className="text-sm font-medium text-emerald-900">Recognised as {person.matched_label}</p>
+              {person.matched_details
+                ? <p className="text-xs text-emerald-800 mt-1 whitespace-pre-wrap">{person.matched_details}</p>
+                : <p className="text-xs text-emerald-700/70 mt-1">No details on file. Manage this person on the Faces page.</p>}
+            </div>
+          )}
+
+          {/* Not recognised — name them and add details to build the DB. */}
+          {canEnrol && (
+            <div className="mb-4 rounded-md bg-indigo-50 border border-indigo-200 p-3">
+              <p className="text-sm font-medium text-indigo-900">Name this person</p>
+              <p className="text-[11px] text-indigo-700/80 mb-2">
+                Adds their face to your recognition database — next time they appear, the cameras will say who it is.
+              </p>
+              <input autoFocus value={name} onChange={e => setName(e.target.value)}
+                     onKeyDown={e => { if (e.key === 'Enter') enrol(); }}
+                     placeholder="Name (e.g. Thabo — gardener)"
+                     className="w-full bg-white border border-indigo-200 rounded px-2 py-1.5 text-sm text-gray-800 placeholder:text-gray-400 focus:border-indigo-500 outline-none" />
+              <textarea value={details} onChange={e => setDetails(e.target.value)} rows={2}
+                        placeholder="Details (optional) — who they are, why they're here, anything worth noting"
+                        className="mt-2 w-full bg-white border border-indigo-200 rounded px-2 py-1.5 text-sm text-gray-800 placeholder:text-gray-400 focus:border-indigo-500 outline-none resize-y" />
+              <div className="mt-2 flex items-center gap-2">
+                <button onClick={enrol} disabled={saving || !name.trim()}
+                        className="text-xs font-medium bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded px-3 py-1.5">
+                  {saving ? 'Saving…' : 'Save to recognition database'}
+                </button>
+                {saveErr && <span className="text-xs text-red-600">{saveErr}</span>}
+              </div>
+            </div>
+          )}
+          {!enrolled && !canEnrol && (
+            <p className="mb-4 text-[11px] text-gray-400">
+              Naming a person requires the supervisor or admin role.
+            </p>
+          )}
+
           <div className="flex gap-4">
             <div className="w-40 flex-none">
               {person.image_url && (
