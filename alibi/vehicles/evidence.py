@@ -19,7 +19,10 @@ from typing import Any, Dict, List, Optional
 
 
 def _second(ts: Any) -> str:
-    return str(ts)[:19]
+    # Normalise to "YYYY-MM-DD HH:MM:SS" so datetime values (str → space) and ISO
+    # strings (T separator) key identically — without this, event timestamps
+    # (datetimes) never line up with the ReID trail's ISO strings.
+    return str(ts)[:19].replace("T", " ")
 
 
 def sightings_index(store=None, limit: int = 5000) -> Dict[tuple, list]:
