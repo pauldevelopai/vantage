@@ -867,9 +867,13 @@ function SituationsPanel({ situations, onChanged, onOpenVehicle }: { situations:
         // Media/click target: an incident links to its full evidence page; a
         // criteria vehicle row opens that vehicle's history; otherwise the frame
         // is shown but isn't a link.
-        const media = s.snapshot_url
-          ? <AuthImg src={s.snapshot_url} alt={s.event_type || 'evidence'} className="w-full h-full object-cover min-h-[96px]" />
-          : <div className="w-full h-full min-h-[96px] flex items-center justify-center text-[10px] text-slate-700">no frame</div>;
+        const media = (s.frame_url && s.bbox)
+          ? <CropImg src={s.frame_url} alt={s.title || 'vehicle'}
+                     bbox={s.bbox as [number, number, number, number]} pad={0.25}
+                     className="w-full h-full min-h-[96px]" />
+          : s.snapshot_url
+            ? <AuthImg src={s.snapshot_url} alt={s.event_type || 'evidence'} className="w-full h-full object-cover min-h-[96px]" />
+            : <div className="w-full h-full min-h-[96px] flex items-center justify-center text-[10px] text-slate-700">no frame</div>;
         const mediaCls = "relative w-40 sm:w-52 flex-none bg-slate-900 no-underline";
         return (
           <div key={key}
@@ -1095,12 +1099,19 @@ function OutOfOrdinaryPanel({ vehicles, onOpen }: { vehicles: import('../lib/typ
           : 'Seen here';
         return (
           <li key={v.entity_id || i} className="flex items-center gap-2 text-xs flex-wrap">
+            {v.frame_url && v.bbox
+              ? <button onClick={() => onOpen(v.entity_id)} className="w-9 h-9 flex-none rounded overflow-hidden bg-slate-900 border border-slate-700 hover:border-indigo-500">
+                  <CropImg src={v.frame_url} alt={v.descriptor || 'vehicle'}
+                           bbox={v.bbox as [number, number, number, number]} pad={0.3}
+                           className="w-full h-full" />
+                </button>
+              : null}
             <span className={`text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded flex-none ${b.cls} ${v.familiarity === 'new' ? 'vg-live' : ''}`}>
               {b.label}
             </span>
             <button onClick={() => onOpen(v.entity_id)}
                     className="text-slate-300 hover:text-white text-left underline decoration-dotted underline-offset-2">
-              {times} over {v.days} day{v.days === 1 ? '' : 's'}
+              {v.descriptor ? `${v.descriptor} · ` : ''}{times} over {v.days} day{v.days === 1 ? '' : 's'}
               {v.cameras.length > 0 && ` · ${v.cameras.join(', ')}`}
               {when && ` · ${when}`}
             </button>
@@ -1135,6 +1146,13 @@ function RecurringVehicleRow({ v, onSaved, onOpen }: { v: RecurringVehicle; onSa
   const fam = FINDING_BADGE[v.familiarity] || FINDING_BADGE.occasional;
   return (
     <li className="flex items-center gap-2 text-xs flex-wrap">
+      {v.frame_url && v.bbox
+        ? <button onClick={onOpen} className="w-9 h-9 flex-none rounded overflow-hidden bg-slate-900 border border-slate-700 hover:border-indigo-500">
+            <CropImg src={v.frame_url} alt={v.label}
+                     bbox={v.bbox as [number, number, number, number]} pad={0.3}
+                     className="w-full h-full" />
+          </button>
+        : null}
       <span className={`text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded flex-none ${fam.cls}`}>{fam.label}</span>
       <button onClick={onOpen} className="text-slate-300 font-medium hover:text-white underline decoration-dotted underline-offset-2">
         {v.owner_label ? `“${v.owner_label}”` : v.label}

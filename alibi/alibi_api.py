@@ -1525,21 +1525,75 @@ async def dashboard_overview(range: str = "24h",
     pattern_findings_rows = []
     ent: list = []
     vlabels: dict = {}
+    veh_evidence: dict = {}          # entity_id -> {frame_url,bbox,colour,body,visits}
+
+    # Link each ReID appearance-cluster to REAL evidence: a photo of the actual
+    # car + its colour/type when we can read them, matched from vehicle sightings
+    # by camera + second. This is what lets a recurring vehicle read as its
+    # picture + "White SUV" instead of an anonymous "Vehicle A".
+    from collections import Counter as _Ctr
+    _veh_index: dict = {}
     try:
-        from alibi.cameras.cross_camera import get_cross_camera_tracker
+        from alibi.vehicles.sightings_store import VehicleSightingsStore
+        for _v in VehicleSightingsStore().load_all(limit=5000):
+            _veh_index.setdefault((_v.camera_id, str(_v.ts)[:19]), []).append(_v)
+    except Exception as e:
+        print(f"[dashboard] vehicle sightings index unavailable: {e}")
+
+    def _vehicle_evidence(entity_id):
+        """A real photo + colour/type + visit-count for one ReID cluster, cached."""
+        if entity_id in veh_evidence:
+            return veh_evidence[entity_id]
+        cols, bodies, furl, bbx = _Ctr(), _Ctr(), None, None
+        try:
+            from alibi.cameras.cross_camera import get_cross_camera_tracker as _gcct
+            trail = _gcct().get_entity_trail("vehicle", entity_id, hours=hours)
+        except Exception:
+            trail = []
+        for rr in trail:
+            for m in _veh_index.get((rr.get("camera_id"), str(rr.get("timestamp"))[:19]), []):
+                c = getattr(m, "color", None)
+                if c and c != "unknown":
+                    cols[c] += 1
+                md = getattr(m, "metadata", None) or {}
+                b = md.get("det_class") or md.get("body")
+                if b:
+                    bodies[b] += 1
+                if furl is None and getattr(m, "snapshot_url", None) and getattr(m, "bbox", None):
+                    furl, bbx = m.snapshot_url, list(m.bbox)
+        from alibi.patterns.situations import visit_count as _vc
+        ev = {"frame_url": furl, "bbox": bbx,
+              "colour": cols.most_common(1)[0][0] if cols else None,
+              "body": bodies.most_common(1)[0][0] if bodies else None,
+              "visits": _vc([rr.get("timestamp") for rr in trail])}
+        veh_evidence[entity_id] = ev
+        return ev
+
+    try:
         from alibi.patterns.familiarity import (classify_entity, get_vehicle_labels,
                                                 pattern_findings)
+        from alibi.patterns.situations import vehicle_descriptor
+        from alibi.cameras.cross_camera import get_cross_camera_tracker
         ent = get_cross_camera_tracker().entity_summary("vehicle", hours=hours)
         vlabels = get_vehicle_labels()
+
+        def _label_for(r):
+            ev = _vehicle_evidence(r["entity_id"])
+            owner = (vlabels.get(r["entity_id"]) or {}).get("label")
+            return vehicle_descriptor(ev.get("colour"), ev.get("body"), owner)
+
         if ent:
             vehicles_distinct = len(ent)
-            for i, r in enumerate(ent[:5]):
+            for r in ent[:5]:
                 # NB: `range` is the shadowing query param here — no range() calls
                 busiest = r["hours"].index(max(r["hours"])) if any(r["hours"]) else None
                 cls = classify_entity(r["count"], r["first_seen"], r["last_seen"],
                                       r.get("days", 1), r.get("active_hours", 1))
+                ev = _vehicle_evidence(r["entity_id"])
+                desc = _label_for(r)
                 recurring_vehicles.append({
-                    "label": f"Vehicle {chr(65 + i)}",       # anonymous cluster, honest
+                    "label": desc or "Unnamed vehicle",   # the car's picture carries it
+                    "descriptor": desc,
                     "entity_id": r["entity_id"],
                     "owner_label": (vlabels.get(r["entity_id"]) or {}).get("label"),
                     "familiarity": cls,
@@ -1549,6 +1603,8 @@ async def dashboard_overview(range: str = "24h",
                     "last_seen": r["last_seen"],
                     "cameras": [names.get(c, c) for c in r["cameras"]],
                     "busiest_hour_utc": busiest,
+                    "frame_url": ev.get("frame_url"), "bbox": ev.get("bbox"),
+                    "colour": ev.get("colour"), "body": ev.get("body"),
                 })
 
         # Explicit findings: what is here all the time, what is new, what has a
@@ -1570,7 +1626,7 @@ async def dashboard_overview(range: str = "24h",
             off = 2  # Africa/Johannesburg
             people_hours_utc = [local[(i + off) % 24] for i, _ in enumerate(local)]
         pattern_findings_rows = pattern_findings(
-            [dict(r, label=f"Vehicle {chr(65 + i)}") for i, r in enumerate(ent[:5])],
+            [dict(r, label=(_label_for(r) or "A vehicle")) for r in ent[:5]],
             labels=vlabels, camera_normals=camera_normals,
             people_by_hour=people_hours_utc)
     except Exception as e:
@@ -1612,21 +1668,24 @@ async def dashboard_overview(range: str = "24h",
     # never an accusation, so the top-5 reflects the site's real state.
     out_of_ordinary: list = []
     try:
-        from alibi.patterns.situations import out_of_ordinary_vehicles, rank_situations, visit_count
+        from alibi.patterns.situations import (out_of_ordinary_vehicles, rank_situations,
+                                               vehicle_descriptor)
         out_of_ordinary = out_of_ordinary_vehicles(ent, labels=vlabels, names=names)
-        # Honest "how often it came down the road" = distinct VISITS from the
-        # entity's sighting trail, NOT the raw motion-still count (a parked car
-        # makes hundreds). Only the few survivors need a trail lookup.
+        # Attach real evidence to each out-of-ordinary car: distinct VISITS (the
+        # honest "how often it came down the road", NOT the raw motion-still
+        # count), a photo of the actual car, and a colour/type descriptor.
         try:
-            from alibi.cameras.cross_camera import get_cross_camera_tracker
-            _tr = get_cross_camera_tracker()
             for v in out_of_ordinary:
-                trail = _tr.get_entity_trail("vehicle", v["entity_id"], hours=hours)
-                v["passes"] = visit_count([r.get("timestamp") for r in trail])
+                ev = _vehicle_evidence(v["entity_id"])
+                v["passes"] = ev.get("visits")
+                v["frame_url"] = ev.get("frame_url")
+                v["bbox"] = ev.get("bbox")
+                owner = (vlabels.get(v["entity_id"]) or {}).get("label")
+                v["descriptor"] = vehicle_descriptor(ev.get("colour"), ev.get("body"), owner)
             out_of_ordinary.sort(key=lambda v: (
                 {"new": 0, "occasional": 1}.get(v["familiarity"], 2), -(v["passes"] or 0)))
         except Exception as e:
-            print(f"[dashboard] vehicle visit-count unavailable: {e}")
+            print(f"[dashboard] vehicle evidence attach unavailable: {e}")
 
         events_by_id = {e.event_id: e for e in events}
         frame_by_cam_ts = {(e.camera_id, e.ts.isoformat()): e
@@ -1644,10 +1703,32 @@ async def dashboard_overview(range: str = "24h",
             return (e.snapshot_url, e.event_id) if e else (None, None)
 
         criteria_rows: list = []
+        # A vehicle that is NEW and not one of the usual cars is a genuine "worth
+        # a look" — surface it in Situations WITH its actual photo (frame + bbox,
+        # so the card crops to the car) and a real descriptor, click-through to
+        # its full history. Only NEW ones (occasional/older visitors stay in the
+        # list panel below), and only when we have a real frame — no empty cards.
+        for v in out_of_ordinary:
+            if v["familiarity"] != "new" or not v.get("frame_url"):
+                continue
+            passes = v.get("passes") or 0
+            cams = ", ".join(v.get("cameras") or []) or "the cameras"
+            when = (f", mostly around {v['busiest_hour_local']:02d}:00"
+                    if v.get("busiest_hour_local") is not None else "")
+            times = f"{passes} time{'s' if passes != 1 else ''}" if passes else "once"
+            name = v.get("descriptor") or "A vehicle"
+            criteria_rows.append({
+                "kind": "new_vehicle", "tier": "review", "incident_id": None,
+                "entity_id": v["entity_id"], "event_id": None,
+                "title": f"{name} — not one of the usual cars",
+                "description": (f"Not a resident or regular here. Came past {cams} "
+                                f"{times}{when}. Worth a look."),
+                "camera_name": (v.get("cameras") or [None])[0], "ts": v.get("last_seen"),
+                "snapshot_url": None, "frame_url": v.get("frame_url"), "bbox": v.get("bbox"),
+                "count": passes, "confirmed": None,
+            })
+
         # Fired posture triggers → situations (after-hours, dwell, repeated passes).
-        # Out-of-ordinary vehicles are NOT injected here — they have no evidence
-        # frame in the ReID store, so they live in their own list panel, never as
-        # a frameless "situation" card.
         _TRIGGER_TITLES = {
             "after_hours": "Presence after hours",
             "dwell": "Someone stayed in view",

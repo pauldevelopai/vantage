@@ -119,6 +119,26 @@ def out_of_ordinary_vehicles(entities: List[Dict[str, Any]],
     return rows[:limit]
 
 
+def vehicle_descriptor(colour: Optional[str], body: Optional[str],
+                       owner_label: Optional[str] = None) -> Optional[str]:
+    """A real, human descriptor for a recurring vehicle instead of "Vehicle A".
+
+    Priority: the owner's own name > what we can actually see (colour + body) >
+    None (the caller shows the vehicle's photo + camera instead — a picture beats
+    a letter). "unknown" colour and missing body are treated as not-known, never
+    guessed."""
+    if owner_label:
+        return owner_label
+    parts: List[str] = []
+    c = (colour or "").strip().lower()
+    if c and c != "unknown":
+        parts.append(c.capitalize())
+    b = (body or "").strip()
+    if b:
+        parts.append(b)
+    return " ".join(parts) if parts else None
+
+
 def rank_situations(rows: List[Dict[str, Any]], limit: int = 5) -> List[Dict[str, Any]]:
     """Merge incident + criteria situation rows into the top-N worth attention.
 

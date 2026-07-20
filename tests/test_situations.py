@@ -9,8 +9,26 @@ routine note, and nothing here may promote a machine signal to "confirmed".
 from datetime import datetime, timedelta
 
 from alibi.patterns.situations import (
-    out_of_ordinary_vehicles, rank_situations, priority_of, visit_count,
+    out_of_ordinary_vehicles, rank_situations, priority_of, visit_count, vehicle_descriptor,
 )
+
+
+# ── vehicle_descriptor (real description, never "Vehicle A") ─────────────────
+
+def test_descriptor_prefers_owner_name():
+    assert vehicle_descriptor("white", "SUV", owner_label="Paul's Fortuner") == "Paul's Fortuner"
+
+
+def test_descriptor_from_colour_and_body():
+    assert vehicle_descriptor("white", "SUV") == "White SUV"
+    assert vehicle_descriptor("silver", None) == "Silver"
+    assert vehicle_descriptor(None, "sedan") == "sedan"
+
+
+def test_descriptor_none_when_nothing_known():
+    # "unknown" colour + no body = no honest descriptor (caller shows the photo)
+    assert vehicle_descriptor("unknown", None) is None
+    assert vehicle_descriptor(None, None) is None
 
 NOW = datetime(2026, 7, 20, 12, 0, 0)
 
