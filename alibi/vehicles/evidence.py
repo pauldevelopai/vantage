@@ -60,6 +60,39 @@ def entity_evidence(trail: List[Dict[str, Any]], index: Dict[tuple, list]) -> Di
     }
 
 
+def plate_index(events) -> Dict[tuple, list]:
+    """Index the (rare) plate reads by (camera, second). Plates live on the camera
+    EVENTS' intel, not on vehicle sightings, so this is the bridge to a cluster's
+    trail. Reads are sparse and noisy — callers vote across them (see best_plate)."""
+    idx: Dict[tuple, list] = {}
+    for e in events:
+        intel = ((getattr(e, "metadata", None) or {}).get("intel") or {})
+        for p in intel.get("plates") or []:
+            text = p.get("display") or p.get("text")
+            if text:
+                idx.setdefault((e.camera_id, _second(e.ts)), []).append(
+                    {"plate": text, "region": p.get("region")})
+    return idx
+
+
+def best_plate(trail: List[Dict[str, Any]], index: Dict[tuple, list]) -> Optional[Dict[str, Any]]:
+    """The most-read plate across a cluster's sightings — a majority vote beats a
+    single noisy OCR pass (CSM40008 vs QFM40008 vs GFM40008 → the winner). Returns
+    None when no sighting of this cluster ever yielded a plate (the common case at
+    these camera angles), never a guess."""
+    votes: Counter = Counter()
+    region_by: Dict[str, Any] = {}
+    for r in trail:
+        for p in index.get((r.get("camera_id"), _second(r.get("timestamp"))), []):
+            votes[p["plate"]] += 1
+            if p.get("region"):
+                region_by[p["plate"]] = p["region"]
+    if not votes:
+        return None
+    plate = votes.most_common(1)[0][0]
+    return {"plate": plate, "region": region_by.get(plate), "reads": votes[plate]}
+
+
 def trail_frames(trail: List[Dict[str, Any]], index: Dict[tuple, list],
                  max_frames: int = 12) -> List[Dict[str, Any]]:
     """Per-sighting evidence frames (newest first) so the history view can show

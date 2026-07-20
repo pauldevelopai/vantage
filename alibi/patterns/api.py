@@ -82,27 +82,45 @@ async def vehicle_history(
                             detail="No sightings for this vehicle in the window")
 
     trail = tracker.get_entity_trail("vehicle", entity_id, hours=hours)
+
+    # Real evidence photos + the plate: a representative frame, per-sighting frames
+    # (from vehicle sightings by camera+second), and the most-read plate (from the
+    # camera events — rare + noisy, so a majority vote).
+    frame_url, bbox, colour, body, frames, plate, plate_region = None, None, None, None, [], None, None
+    try:
+        from alibi.vehicles.evidence import (sightings_index, entity_evidence,
+                                             trail_frames, plate_index, best_plate)
+        idx = sightings_index()
+        ev = entity_evidence(trail, idx)
+        frame_url, bbox, colour, body = ev["frame_url"], ev["bbox"], ev["colour"], ev["body"]
+        frames = trail_frames(trail, idx)
+        try:
+            from datetime import timedelta as _td
+            from alibi.alibi_store import get_store
+            pcut = _dt.utcnow() - _td(hours=hours)
+            pev = [e for e in get_store().list_events(limit=8000)
+                   if getattr(e, "ts", None) and e.ts >= pcut]
+            bp = best_plate(trail, plate_index(pev))
+            if bp:
+                plate, plate_region = bp["plate"], bp["region"]
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    # The name may be set directly on this cluster OR inherited from its plate, so
+    # naming one appearance-fragment names every fragment that reads the plate.
     label = (get_vehicle_labels().get(entity_id) or {}).get("label")
+    if not label and plate:
+        from alibi.patterns.familiarity import plate_labels
+        label = plate_labels().get(plate)
     # A vehicle the owner has CLAIMED is theirs is, by definition, part of the
-    # scene — treat it as resident regardless of how the raw maths would class
-    # this particular ReID fragment.
+    # scene — resident, regardless of how the raw maths would class this fragment.
     if label:
         cls = "resident"
     else:
         cls = classify_entity(summary["count"], summary["first_seen"], summary["last_seen"],
                               summary.get("days", 1), summary.get("active_hours", 1))
-
-    # Real evidence photos: a representative frame + per-sighting frames, linked
-    # from the vehicle-sightings store by (camera, second).
-    frame_url, bbox, colour, body, frames = None, None, None, None, []
-    try:
-        from alibi.vehicles.evidence import sightings_index, entity_evidence, trail_frames
-        idx = sightings_index()
-        ev = entity_evidence(trail, idx)
-        frame_url, bbox, colour, body = ev["frame_url"], ev["bbox"], ev["colour"], ev["body"]
-        frames = trail_frames(trail, idx)
-    except Exception:
-        pass
 
     # Per-day counts for a sparkline (site-local via UTC buckets).
     per_day: dict = {}
@@ -124,6 +142,8 @@ async def vehicle_history(
         "hours": summary["hours"],
         "colour": colour,
         "body": body,
+        "plate": plate,               # most-read plate for this cluster (or null)
+        "plate_region": plate_region,
         "frame_url": frame_url,
         "bbox": bbox,
         "frames": frames,      # per-sighting evidence photos (newest first)
