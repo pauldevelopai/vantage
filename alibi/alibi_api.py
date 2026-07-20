@@ -2039,6 +2039,7 @@ async def enroll_face_from_sighting(
 
     sighting_id = str(payload.get("sighting_id") or "").strip()
     label = str(payload.get("label") or "").strip()
+    details = str(payload.get("details") or "").strip()[:2000] or None
     if not sighting_id or not label:
         raise HTTPException(status_code=400, detail="sighting_id and label are required")
 
@@ -2067,6 +2068,7 @@ async def enroll_face_from_sighting(
             "face_bbox": {"x": int(sighting.bbox[0]), "y": int(sighting.bbox[1]),
                           "w": int(sighting.bbox[2]), "h": int(sighting.bbox[3])},
             "frame_url": sighting.image_path,
+            "notes": details,               # operator's free-text details about this person
         },
     ))
 
@@ -2075,8 +2077,9 @@ async def enroll_face_from_sighting(
         "person_id": person_id,
         "label": label,
         "source": f"sighting:{sighting_id}",
+        "has_details": bool(details),
     })
-    return {"status": "enrolled", "person_id": person_id, "label": label}
+    return {"status": "enrolled", "person_id": person_id, "label": label, "details": details}
 
 
 @app.post("/watchlist/enroll")
@@ -4429,10 +4432,14 @@ async def people_recent(limit: int = 60, hours: int = 168,
         sightings = []
 
     names = _display_names()
-    labels = {}
+    labels, details = {}, {}
     try:
         from alibi.watchlist.watchlist_store import WatchlistStore
-        labels = {e.person_id: e.label for e in WatchlistStore().load_all()}
+        for e in WatchlistStore().load_all():
+            labels[e.person_id] = e.label
+            note = (e.metadata or {}).get("notes")
+            if note:
+                details[e.person_id] = note
     except Exception:
         pass
 
@@ -4440,6 +4447,7 @@ async def people_recent(limit: int = 60, hours: int = 168,
     for s in sightings:
         if s.ts < cutoff:
             continue
+        pid = s.matched_person_id
         rows.append({
             "sighting_id": s.sighting_id,
             "source": "face",
@@ -4448,8 +4456,9 @@ async def people_recent(limit: int = 60, hours: int = 168,
             "ts": s.ts,
             "bbox": list(s.bbox) if s.bbox else None,
             "image_url": s.image_path,              # the real evidence still
-            "matched_person_id": s.matched_person_id,
-            "matched_label": labels.get(s.matched_person_id) if s.matched_person_id else None,
+            "matched_person_id": pid,
+            "matched_label": labels.get(pid) if pid else None,
+            "matched_details": details.get(pid) if pid else None,   # their stored notes
             "match_score": s.match_score,
         })
     rows.sort(key=lambda r: r["ts"], reverse=True)

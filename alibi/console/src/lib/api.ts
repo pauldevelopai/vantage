@@ -604,12 +604,13 @@ export const api = {
     return res.json();
   },
 
-  /** One-click enrol from a face the cameras already saw — a name and a button. */
-  async enrollFaceFromSighting(sightingId: string, label: string): Promise<any> {
+  /** Enrol from a face the cameras already saw — a name, optional details, and a
+   *  button. Builds the recognition DB: future sightings say the name (+ notes). */
+  async enrollFaceFromSighting(sightingId: string, label: string, details?: string): Promise<any> {
     const res = await fetchWithAuth(`${API_BASE}/watchlist/enroll-sighting`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sighting_id: sightingId, label }),
+      body: JSON.stringify({ sighting_id: sightingId, label, details: details || '' }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));

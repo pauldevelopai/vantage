@@ -428,6 +428,7 @@ export interface PersonRow {
   image_url?: string | null;
   matched_person_id?: string | null;
   matched_label?: string | null;
+  matched_details?: string | null;   // operator's stored notes about this enrolled person
   match_score?: number | null;
 }
 
