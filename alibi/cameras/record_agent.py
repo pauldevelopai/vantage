@@ -26,13 +26,17 @@ try:  # in-repo (tests, the cloud box)
     from alibi.cameras.recorder import (
         CameraRecorder, RetentionPolicy, ffmpeg_available, build_hls_command,
         choose_video_args, DEFAULT_MOTION_THRESHOLD,
-        default_retention_policy, DEFAULT_MIN_FREE_FRACTION, DEFAULT_MAX_AGE_DAYS,
+        default_retention_policy, default_video_retention_policy,
+        DEFAULT_MIN_FREE_FRACTION, DEFAULT_MAX_AGE_DAYS,
+        DEFAULT_VIDEO_MAX_GB, DEFAULT_VIDEO_MAX_DAYS,
     )
 except ImportError:  # flat zipapp layout on the user's PC
     from recorder import (
         CameraRecorder, RetentionPolicy, ffmpeg_available, build_hls_command,
         choose_video_args, DEFAULT_MOTION_THRESHOLD,
-        default_retention_policy, DEFAULT_MIN_FREE_FRACTION, DEFAULT_MAX_AGE_DAYS,
+        default_retention_policy, default_video_retention_policy,
+        DEFAULT_MIN_FREE_FRACTION, DEFAULT_MAX_AGE_DAYS,
+        DEFAULT_VIDEO_MAX_GB, DEFAULT_VIDEO_MAX_DAYS,
     )
 
 
@@ -41,9 +45,12 @@ class RecordAgent:
     record-target list."""
 
     def __init__(self, base_dir, retention=None, recorder_factory=None,
-                 clock=time.time, motion_threshold=None):
+                 clock=time.time, motion_threshold=None,
+                 video_retention=None, record_video=True):
         self.base_dir = base_dir
-        self.retention = retention
+        self.retention = retention                 # stills budget (generous)
+        self.video_retention = video_retention     # video budget (tight)
+        self.record_video = record_video           # False → stills + intel only
         self.motion_threshold = motion_threshold
         self._recorders = {}        # camera_id -> CameraRecorder
         self._urls = {}             # camera_id -> (record_url, motion_url)
@@ -68,6 +75,8 @@ class RecordAgent:
             motion_url=target.get("motion_url"),
             base_dir=self.base_dir,
             retention=self.retention,
+            video_retention=self.video_retention,
+            record_video=self.record_video,
             **kwargs,
         )
 
@@ -376,8 +385,20 @@ def main(argv=None):  # pragma: no cover
 
     p = argparse.ArgumentParser(description="Vantage recording agent (always-on PC).")
     p.add_argument("--dir", default=os.environ.get("VANTAGE_REC_DIR", "./vantage-recordings"))
-    p.add_argument("--max-gb", type=float, default=float(os.environ.get("VANTAGE_MAX_GB", "0")) or None)
-    p.add_argument("--max-days", type=float, default=float(os.environ.get("VANTAGE_MAX_DAYS", "0")) or None)
+    p.add_argument("--max-gb", type=float, default=float(os.environ.get("VANTAGE_MAX_GB", "0")) or None,
+                   help="Total stills budget (GB). Stills are tiny; usually leave unset.")
+    p.add_argument("--max-days", type=float, default=float(os.environ.get("VANTAGE_MAX_DAYS", "0")) or None,
+                   help=f"Age cap for motion stills (days; default {DEFAULT_MAX_AGE_DAYS})")
+    # Continuous VIDEO is the disk hog — cap it tightly, separate from stills.
+    p.add_argument("--video-max-gb", type=float,
+                   default=float(os.environ.get("VANTAGE_VIDEO_MAX_GB", "0")) or None,
+                   help=f"Per-camera cap on recorded VIDEO (GB; default {DEFAULT_VIDEO_MAX_GB}). 0 lifts the GB cap.")
+    p.add_argument("--video-max-days", type=float,
+                   default=float(os.environ.get("VANTAGE_VIDEO_MAX_DAYS", "0")) or None,
+                   help=f"Video age cap (days; default {DEFAULT_VIDEO_MAX_DAYS})")
+    p.add_argument("--no-video", action="store_true",
+                   default=os.environ.get("VANTAGE_NO_VIDEO", "").lower() in ("1", "true", "yes"),
+                   help="Don't record continuous video — keep only motion stills + cloud intelligence (smallest footprint)")
     p.add_argument("--min-free-percent", type=float,
                    default=float(os.environ.get("VANTAGE_MIN_FREE_PCT", str(DEFAULT_MIN_FREE_FRACTION * 100))),
                    help="Always keep at least this %% of the disk free (0 disables)")
@@ -492,6 +513,10 @@ def main(argv=None):  # pragma: no cover
         "max_gb": args.max_gb,
         "max_days": args.max_days or DEFAULT_MAX_AGE_DAYS,
         "min_free_percent": args.min_free_percent or None,
+        "record_video": not args.no_video,
+        "video_max_gb": (None if args.no_video else
+                         (args.video_max_gb if args.video_max_gb is not None else DEFAULT_VIDEO_MAX_GB)),
+        "video_max_days": (None if args.no_video else (args.video_max_days or DEFAULT_VIDEO_MAX_DAYS)),
     }
 
     def report_storage(stats):
@@ -527,14 +552,27 @@ def main(argv=None):  # pragma: no cover
     except OSError:
         _total = None
     min_free_fraction = (args.min_free_percent / 100.0) if args.min_free_percent else None
+    # Stills keep a generous age cap (they're tiny); video gets its OWN tight
+    # budget so the continuous stream can't eat the drive.
     retention = default_retention_policy(
         disk_total_bytes=_total, max_gb=args.max_gb, max_days=args.max_days,
         min_free_fraction=min_free_fraction,
     )
+    video_retention = default_video_retention_policy(
+        disk_total_bytes=_total, max_gb=args.video_max_gb, max_days=args.video_max_days,
+        min_free_fraction=min_free_fraction,
+    )
 
     agent = RecordAgent(base_dir=args.dir, retention=retention,
+                        video_retention=video_retention, record_video=not args.no_video,
                         motion_threshold=args.motion_threshold)
     print(f"[record-agent] paired as {creds['bridge_id']}; recording to {args.dir}")
+    if args.no_video:
+        print("[record-agent] continuous video OFF — keeping only motion stills + cloud intelligence")
+    else:
+        _vg = args.video_max_gb if args.video_max_gb is not None else DEFAULT_VIDEO_MAX_GB
+        print(f"[record-agent] video capped at {_vg}GB / {args.video_max_days or DEFAULT_VIDEO_MAX_DAYS}d per camera; "
+              f"stills kept {args.max_days or DEFAULT_MAX_AGE_DAYS}d")
     print(f"[record-agent] motion trigger at {args.motion_threshold or DEFAULT_MOTION_THRESHOLD} "
           f"(motion stills are what feed the AI)")
     try:
