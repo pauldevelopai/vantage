@@ -26,8 +26,9 @@ from typing import Any, Dict, List, Optional
 VEHICLE_CLASSES = ("car", "truck", "bus", "motorcycle")
 HALO_FRAC = 0.4              # grow each vehicle box by this fraction of its size
 MAX_GAP_SECONDS = 120        # a person's "at the cars" chain breaks after this
-MIN_DISTINCT_VEHICLES = 2    # near this many different cars = moving between them
-MIN_DWELL_MINUTES = 1.5      # or lingering at the cars at least this long
+MIN_SIGHTINGS = 3            # a real presence spans several stills, not one frame
+MIN_DWELL_MINUTES = 1.5      # ...and lingers at the cars at least this long
+MIN_DISTINCT_VEHICLES = 2    # near this many different cars over the span
 
 
 def _inside_halo(person, vehicle, halo_frac: float = HALO_FRAC) -> bool:
@@ -73,7 +74,7 @@ def vehicle_contact_spans(detections: List[Dict[str, Any]],
                     contacts.append(_vehicle_key(v))
         if contacts:
             by_cam.setdefault(d["camera_id"], []).append(
-                {"ts": d["ts"], "keys": set(contacts)})
+                {"ts": d["ts"], "keys": set(contacts), "eid": d.get("event_id")})
 
     gap = timedelta(seconds=max_gap_seconds)
     spans: List[Dict[str, Any]] = []
@@ -85,11 +86,12 @@ def vehicle_contact_spans(detections: List[Dict[str, Any]],
                 cur["end"] = r["ts"]
                 cur["n"] += 1
                 cur["keys"] |= r["keys"]
+                cur["end_eid"] = r["eid"]
             else:
                 if cur is not None:
                     spans.append(cur)
                 cur = {"camera_id": cam, "start": r["ts"], "end": r["ts"],
-                       "n": 1, "keys": set(r["keys"])}
+                       "n": 1, "keys": set(r["keys"]), "end_eid": r["eid"]}
         if cur is not None:
             spans.append(cur)
 
@@ -100,6 +102,7 @@ def vehicle_contact_spans(detections: List[Dict[str, Any]],
         "minutes": round((s["end"] - s["start"]).total_seconds() / 60.0, 1),
         "sightings": s["n"],
         "vehicles_touched": len(s["keys"]),
+        "event_id": s["end_eid"],           # the still the span ended on (for the frame)
     } for s in spans]
     out.sort(key=lambda s: (-s["vehicles_touched"], -s["minutes"]))
     return out
@@ -123,33 +126,37 @@ def detections_from_events(events, camera_ids=None) -> List[Dict[str, Any]]:
             elif d.get("class") in VEHICLE_CLASSES:
                 vehicles.append(bbox)
         if persons and vehicles:
-            out.append({"camera_id": e.camera_id, "ts": e.ts,
+            out.append({"camera_id": e.camera_id, "ts": e.ts, "event_id": e.event_id,
                         "persons": persons, "vehicles": vehicles})
     return out
 
 
 def evaluate_at_vehicles(site, events,
                          min_distinct: int = MIN_DISTINCT_VEHICLES,
-                         min_dwell_minutes: float = MIN_DWELL_MINUTES) -> Dict[str, Any]:
-    """Fired when a person was among the parked vehicles at the site's cameras —
-    either near several distinct vehicles, or lingering at them. Honest, factual,
-    never accusatory. Returns the watching-for style {evaluated, fired, …}."""
+                         min_dwell_minutes: float = MIN_DWELL_MINUTES,
+                         min_sightings: int = MIN_SIGHTINGS) -> Dict[str, Any]:
+    """Fired only when a person LINGERED among the parked vehicles at the site's
+    cameras — a real, sustained presence (several stills across a real span), not
+    a single frame where one person box happened to sit near two adjacent cars.
+    Honest, factual, never accusatory. Returns the triggering still's event_id so
+    the caller shows the ACTUAL frame, not just the newest one at that camera."""
     cam_ids = getattr(site, "camera_ids", None)
     spans = vehicle_contact_spans(detections_from_events(events, cam_ids))
     for s in spans:
+        # A situation needs sustained presence: enough stills AND real dwell. A
+        # lone still (sightings==1, 0 min) touching two adjacent parked cars is
+        # NOT "moving between vehicles" — it's one detection, and must not fire.
+        if s["sightings"] < min_sightings or s["minutes"] < min_dwell_minutes:
+            continue
         touched = s["vehicles_touched"]
-        lingered = s["minutes"] >= min_dwell_minutes
-        if touched >= min_distinct or lingered:
-            if touched >= min_distinct and lingered:
-                note = (f"a person moved between {touched} of the parked vehicles "
-                        f"over ~{s['minutes']:g} min — worth a look")
-            elif touched >= min_distinct:
-                note = (f"a person was near {touched} different parked vehicles "
-                        f"— worth a look")
-            else:
-                note = (f"a person lingered at a parked vehicle ~{s['minutes']:g} min "
-                        f"— worth a look")
-            return {"evaluated": True, "fired": True, "ts": s["end"],
-                    "camera_id": s["camera_id"], "minutes": s["minutes"],
-                    "vehicles_touched": touched, "note": note}
+        if touched >= min_distinct:
+            note = (f"a person lingered among {touched} of the parked vehicles for "
+                    f"~{s['minutes']:g} min — worth a look")
+        else:
+            note = (f"a person lingered at a parked vehicle ~{s['minutes']:g} min "
+                    f"— worth a look")
+        return {"evaluated": True, "fired": True, "ts": s["end"],
+                "camera_id": s["camera_id"], "minutes": s["minutes"],
+                "vehicles_touched": touched, "event_id": s.get("event_id"),
+                "note": note}
     return {"evaluated": True, "fired": False}

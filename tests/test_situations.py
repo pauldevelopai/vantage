@@ -9,7 +9,7 @@ routine note, and nothing here may promote a machine signal to "confirmed".
 from datetime import datetime, timedelta
 
 from alibi.patterns.situations import (
-    out_of_ordinary_vehicles, new_vehicle_situations, rank_situations, priority_of,
+    out_of_ordinary_vehicles, rank_situations, priority_of, visit_count,
 )
 
 NOW = datetime(2026, 7, 20, 12, 0, 0)
@@ -26,18 +26,26 @@ def _entity(eid, count, first_days_ago, days, active_hours, busiest_hour=8, cams
 
 # ── out_of_ordinary_vehicles ────────────────────────────────────────────────
 
-def test_residents_and_regulars_are_excluded():
+def test_the_scene_is_excluded_even_within_one_day():
+    # THE production bug: a car seen 1050×/day across 11 hours is the SCENE, not
+    # out-of-ordinary — even though its ReID cluster is < 24h old.
     ent = [
-        _entity("v_res", 1500, 5, 5, 12),      # resident (own car)
-        _entity("v_reg", 40, 4, 3, 2),         # regular (rhythm)
-        _entity("v_new", 3, 0.1, 1, 1),        # new to the scene
-        _entity("v_occ", 2, 6, 1, 1),          # occasional
+        _entity("v_parked", 1050, 0.5, 1, 11),   # constant presence -> resident
+        _entity("v_reg", 40, 4, 3, 2),           # regular (rhythm)
+        _entity("v_new", 3, 0.1, 1, 1),          # a genuine new visitor
+        _entity("v_occ", 2, 6, 1, 1),            # occasional visitor
     ]
     out = out_of_ordinary_vehicles(ent, now=NOW)
     ids = [r["entity_id"] for r in out]
-    assert "v_res" not in ids and "v_reg" not in ids       # the usual cars are gone
+    assert "v_parked" not in ids and "v_reg" not in ids    # the usual cars are gone
     assert ids[0] == "v_new"                               # new leads
     assert "v_occ" in ids
+
+
+def test_high_sighting_count_alone_marks_the_scene():
+    # active_hours below 6 but hundreds of sightings = still the scene, excluded
+    out = out_of_ordinary_vehicles([_entity("v_busy", 335, 0.5, 1, 5)], now=NOW)
+    assert out == []
 
 
 def test_owner_named_vehicle_is_never_out_of_ordinary():
@@ -47,10 +55,12 @@ def test_owner_named_vehicle_is_never_out_of_ordinary():
     assert out == []                                       # named = known = not flagged
 
 
-def test_row_reports_how_often_and_when():
-    out = out_of_ordinary_vehicles([_entity("v_new", 4, 0.1, 1, 1, busiest_hour=6)],
-                                   now=NOW)
-    assert out[0]["count"] == 4                            # how often it came down the road
+def test_row_reports_passes_not_sightings():
+    out = out_of_ordinary_vehicles(
+        [_entity("v_new", 12, 0.1, 1, 1, busiest_hour=6)],
+        visits_by_entity={"v_new": 2}, now=NOW)
+    assert out[0]["passes"] == 2                           # honest "how often": 2 visits
+    assert out[0]["sightings"] == 12                       # raw stills kept, not shown as passes
     assert out[0]["busiest_hour_local"] == 8              # 06:00 UTC + 2h = 08:00 local
 
 
@@ -60,22 +70,22 @@ def test_camera_ids_are_display_named():
     assert out[0]["cameras"] == ["Driveway"]
 
 
-# ── new_vehicle_situations ──────────────────────────────────────────────────
+# ── visit_count (passes, not sightings) ─────────────────────────────────────
 
-def test_new_vehicle_becomes_a_worth_a_look_situation():
-    ooo = out_of_ordinary_vehicles([_entity("v_new", 3, 0.1, 1, 1)], now=NOW)
-    sits = new_vehicle_situations(ooo)
-    assert len(sits) == 1
-    s = sits[0]
-    assert s["kind"] == "new_vehicle" and s["tier"] == "review"
-    assert s["entity_id"] == "v_new"
-    assert "worth a look" in s["description"].lower()
-    assert s["confirmed"] is None                          # never machine-confirmed
+def test_parked_car_is_one_visit():
+    # re-detected every minute for 10 minutes = ONE visit, not 11 sightings
+    ts = [(NOW + timedelta(minutes=i)).isoformat() for i in range(11)]
+    assert visit_count(ts) == 1
 
 
-def test_occasional_vehicle_is_not_a_standalone_situation():
-    ooo = out_of_ordinary_vehicles([_entity("v_occ", 2, 6, 1, 1)], now=NOW)
-    assert new_vehicle_situations(ooo) == []               # only 'new' gets its own card
+def test_two_separated_passes_count_as_two():
+    ts = [NOW.isoformat(), (NOW + timedelta(minutes=1)).isoformat(),
+          (NOW + timedelta(hours=3)).isoformat()]
+    assert visit_count(ts) == 2
+
+
+def test_no_timestamps_is_zero_visits():
+    assert visit_count([]) == 0
 
 
 # ── rank_situations ─────────────────────────────────────────────────────────

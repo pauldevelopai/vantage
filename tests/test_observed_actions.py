@@ -29,6 +29,17 @@ def _event(ts, persons, vehicles, cam="cam-a", eid="e"):
                            metadata={"intel": {"detections": dets}})
 
 
+def _linger(seconds, persons, vehicles, cam="cam-a", start=BASE):
+    """A person present near vehicles across a run of stills (one every ~20s)."""
+    from datetime import timedelta as td
+    out = []
+    n = max(1, int(seconds // 20) + 1)
+    for i in range(n):
+        out.append(_event(start + td(seconds=i * 20), persons, vehicles,
+                          cam=cam, eid=f"{cam}-{i}"))
+    return out
+
+
 # ── halo geometry ───────────────────────────────────────────────────────────
 
 def test_person_at_car_door_is_inside_halo():
@@ -79,29 +90,34 @@ def test_no_person_near_any_vehicle_yields_nothing():
 
 # ── evaluator ───────────────────────────────────────────────────────────────
 
-def test_evaluate_fires_on_several_vehicles():
-    events = [
-        _event(BASE, [[90, 100, 20, 60]], [[120, 100, 80, 50]]),
-        _event(BASE + timedelta(seconds=60), [[290, 100, 20, 60]], [[320, 100, 80, 50]]),
-    ]
+def test_evaluate_fires_only_on_a_sustained_linger():
+    # a person present near two parked cars across a real span (~2 min, many stills)
+    events = _linger(120, [[290, 100, 20, 60]], [[120, 100, 80, 50], [320, 100, 80, 50]])
     res = evaluate_at_vehicles(_site(), events)
-    assert res["fired"] is True and res["vehicles_touched"] == 2
-    assert "worth a look" in res["note"]
+    assert res["fired"] is True
+    assert res["event_id"] == events[-1].event_id      # the ACTUAL triggering still
+    assert "lingered" in res["note"] and "worth a look" in res["note"]
     assert "suspect" not in res["note"].lower()
 
 
-def test_evaluate_quiet_on_single_passerby():
-    # one person near one car for a single still — a passer-by, not a situation
-    events = [_event(BASE, [[90, 100, 20, 60]], [[120, 100, 80, 50]])]
+def test_evaluate_does_NOT_fire_on_single_frame_touching_two_cars():
+    # the exact false positive seen in production: ONE still where a person box
+    # sits near two ADJACENT parked cars. sightings==1, 0 min — must stay quiet.
+    events = [_event(BASE, [[290, 100, 20, 60]], [[280, 100, 80, 50], [360, 100, 80, 50]])]
     assert evaluate_at_vehicles(_site(), events)["fired"] is False
 
 
-def test_evaluate_respects_site_cameras():
+def test_evaluate_quiet_on_brief_two_still_pass():
     events = [
-        _event(BASE, [[90, 100, 20, 60]], [[120, 100, 80, 50]], cam="elsewhere"),
-        _event(BASE + timedelta(seconds=60), [[290, 100, 20, 60]], [[320, 100, 80, 50]],
-               cam="elsewhere"),
+        _event(BASE, [[90, 100, 20, 60]], [[120, 100, 80, 50]]),
+        _event(BASE + timedelta(seconds=20), [[90, 100, 20, 60]], [[120, 100, 80, 50]]),
     ]
+    assert evaluate_at_vehicles(_site(), events)["fired"] is False   # <3 stills
+
+
+def test_evaluate_respects_site_cameras():
+    events = _linger(120, [[290, 100, 20, 60]], [[120, 100, 80, 50], [320, 100, 80, 50]],
+                     cam="elsewhere")
     assert evaluate_at_vehicles(_site(), events)["fired"] is False
 
 

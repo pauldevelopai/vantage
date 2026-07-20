@@ -27,7 +27,8 @@ LABELS_FILE = Path("alibi/data/vehicle_labels.json")
 
 NEW_WINDOW_HOURS = 24          # first seen within this = "new to the scene"
 RESIDENT_MIN_DAYS = 3          # seen on this many distinct days = lives here
-RESIDENT_MIN_HOURS_ACTIVE = 6  # ...and across this many different hours of day
+RESIDENT_MIN_HOURS_ACTIVE = 6  # ...OR across this many different hours of one day
+RESIDENT_MIN_SIGHTINGS = 60    # ...OR this many sightings = a constant presence
 REGULAR_MIN_DAYS = 2
 
 
@@ -35,22 +36,28 @@ def classify_entity(count: int, first_seen: str, last_seen: str, days: int,
                     active_hours: int, now: Optional[datetime] = None) -> str:
     """resident | regular | new | occasional — from the sighting record alone.
 
-    resident: on camera across several days AND many hours of the day (a parked
-              own car is seen morning-to-night). It IS the scene.
-    regular:  returns across days but in concentrated hours (the gardener, the
+    resident: the SCENE — a parked/constant vehicle. Recognised by PRESENCE, not
+              tenure: seen across many hours of the day, OR with a high total
+              sighting count. This is checked FIRST and deliberately: with only a
+              day or two of data every ReID cluster's first sighting is recent, so
+              without a persistence check a car seen 1000× in a day would be
+              mislabeled "new" just because its cluster is young.
+    new:      genuinely just appeared — first sighting within NEW_WINDOW_HOURS AND
+              not already a constant presence.
+    regular:  returns across several days in concentrated hours (the gardener, the
               school run) — a rhythm, not furniture.
-    new:      first ever sighting within the last NEW_WINDOW_HOURS.
-    occasional: everything else.
+    occasional: everything else (a rare visitor).
     """
     now = now or datetime.utcnow()
     try:
         first = datetime.fromisoformat(first_seen)
     except (ValueError, TypeError):
         first = now
+    # Persistence FIRST — present all day, or seen a great many times = the scene.
+    if active_hours >= RESIDENT_MIN_HOURS_ACTIVE or count >= RESIDENT_MIN_SIGHTINGS:
+        return "resident"
     if (now - first) <= timedelta(hours=NEW_WINDOW_HOURS):
         return "new"
-    if days >= RESIDENT_MIN_DAYS and active_hours >= RESIDENT_MIN_HOURS_ACTIVE:
-        return "resident"
     if days >= REGULAR_MIN_DAYS:
         return "regular"
     return "occasional"
