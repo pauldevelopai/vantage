@@ -88,50 +88,97 @@ def _run_detection(mce, frame) -> List[Any]:
         return []
 
 
-def _run_plates(mce, frame, camera_id: str, ts: datetime, out: Dict[str, Any]) -> None:
-    """Detect + OCR plates; write a VehicleSighting, check the hotlist, and record
-    a cross-camera + impossible-travel sighting. Mirrors the phone endpoint."""
-    from alibi.plates.normalize import normalize_plate, format_plate_display
-    from alibi.vehicles.sightings_store import VehicleSighting
+PLATE_MIN_OCR_CONF = 0.5      # OCR mean-char-prob floor to accept a read
+_PLATE_CROP_MIN_W = 60        # skip vehicles too small/distant to hold a readable plate
+_PLATE_CROP_TARGET_W = 400    # upscale a small vehicle crop to about this width
+_PLATE_MAX_VEHICLE_CROPS = 3  # bound the extra detector runs per frame
+
+
+def _plate_regions(frame, detections):
+    """The wide frame PLUS an upscaled crop of each sizeable vehicle.
+
+    A plate is ~20px and unreadable at a distance in a 1080p garden shot, but is
+    large and legible in the vehicle's own crop — so running the detector on the
+    upscaled crop is the biggest lever on plate coverage. Biggest (closest)
+    vehicles first; tiny/distant ones are skipped."""
+    regions = [frame]
     try:
-        raw_plates = mce._plate_detector.detect(frame)
-    except Exception as e:  # pragma: no cover
-        print(f"[frame-intel] plate detect failed: {e}")
-        return
-    for plate in raw_plates or []:
-        try:
-            text, ocr_conf = mce._plate_ocr.read_plate(plate.plate_image)
-        except Exception:
+        import cv2
+    except Exception:
+        return regions
+    h, w = frame.shape[:2]
+    vehicles = [d for d in (detections or []) if getattr(d, "class_name", None) in _VEHICLE_CLASSES]
+    vehicles.sort(key=lambda d: (d.bbox[2] * d.bbox[3]), reverse=True)
+    for d in vehicles[:_PLATE_MAX_VEHICLE_CROPS]:
+        x, y, bw, bh = (int(v) for v in d.bbox)
+        if bw < _PLATE_CROP_MIN_W:
             continue
-        if not text or ocr_conf < 0.5:
+        px, py = int(bw * 0.08), int(bh * 0.08)          # small pad; plates hug edges
+        x0, y0 = max(0, x - px), max(0, y - py)
+        x1, y1 = min(w, x + bw + px), min(h, y + bh + py)
+        crop = frame[y0:y1, x0:x1]
+        if crop is None or crop.size == 0:
             continue
-        normalized = normalize_plate(text)
-        display_text = format_plate_display(normalized) if normalized else text
-        plate_key = normalized or text
-        is_hotlist = mce._hotlist_store.is_on_hotlist(normalized) if normalized else False
-        hl_reason = None
-        if is_hotlist:
-            entry = mce._hotlist_store.get_by_plate(normalized)
-            hl_reason = entry.reason if entry else "unknown"
-            out["hotlist_hit"] = True
-            out["hotlist_reason"] = hl_reason
+        if crop.shape[1] < _PLATE_CROP_TARGET_W:
+            scale = _PLATE_CROP_TARGET_W / max(1, crop.shape[1])
+            try:
+                crop = cv2.resize(crop, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+            except Exception:
+                pass
+        regions.append(crop)
+    return regions
 
-        # Decode the plate's REGISTRATION region — where the vehicle is
-        # registered (province/town), never where a person is "from". A
-        # deterministic, free signal; out-of-province plates are worth a look.
-        region = None
+
+def _run_plates(mce, frame, camera_id: str, ts: datetime, out: Dict[str, Any],
+                detections: Optional[List] = None) -> None:
+    """Detect + OCR plates across the wide frame AND each vehicle's upscaled crop,
+    merged and deduped by normalised plate, hotlist-checked. Reading the crop is
+    what lets the reader catch plates it misses at distance in the wide shot."""
+    from alibi.plates.normalize import normalize_plate, format_plate_display
+    from alibi.vehicles.plate_region import registration_note
+
+    seen: set = set()
+    for region in _plate_regions(frame, detections):
         try:
-            from alibi.vehicles.plate_region import registration_note
-            region = registration_note(plate_key)
-        except Exception:
-            region = None
+            raw_plates = mce._plate_detector.detect(region)
+        except Exception as e:  # pragma: no cover
+            print(f"[frame-intel] plate detect failed: {e}")
+            continue
+        for plate in raw_plates or []:
+            try:
+                text, ocr_conf = mce._plate_ocr.read_plate(plate.plate_image)
+            except Exception:
+                continue
+            if not text or ocr_conf < PLATE_MIN_OCR_CONF:
+                continue
+            normalized = normalize_plate(text)
+            plate_key = normalized or text
+            if plate_key in seen:                        # same plate found in another region
+                continue
+            seen.add(plate_key)
+            display_text = format_plate_display(normalized) if normalized else text
+            is_hotlist = mce._hotlist_store.is_on_hotlist(normalized) if normalized else False
+            hl_reason = None
+            if is_hotlist:
+                entry = mce._hotlist_store.get_by_plate(normalized)
+                hl_reason = entry.reason if entry else "unknown"
+                out["hotlist_hit"] = True
+                out["hotlist_reason"] = hl_reason
 
-        out["plates"].append({
-            "text": plate_key, "display": display_text,
-            "confidence": round(min(plate.confidence, ocr_conf), 2),
-            "hotlist_match": is_hotlist, "hotlist_reason": hl_reason,
-            "region": region,
-        })
+            # Decode the plate's REGISTRATION region — where the vehicle is
+            # registered (province/town), never where a person is "from". A
+            # deterministic, free signal; out-of-province plates are worth a look.
+            try:
+                region_note = registration_note(plate_key)
+            except Exception:
+                region_note = None
+
+            out["plates"].append({
+                "text": plate_key, "display": display_text,
+                "confidence": round(min(plate.confidence, ocr_conf), 2),
+                "hotlist_match": is_hotlist, "hotlist_reason": hl_reason,
+                "region": region_note,
+            })
 
         try:
             plate_meta = {"plate_text": plate_key, "ocr_confidence": ocr_conf}
@@ -335,7 +382,7 @@ def analyze_and_record(frame, camera_id: str, ts: datetime,
     out["person_count"] = sum(1 for d in detections if d.class_name == "person")
     out["vehicle_count"] = sum(1 for d in detections if d.class_name in _VEHICLE_CLASSES)
 
-    _run_plates(mce, frame, camera_id, ts, out)
+    _run_plates(mce, frame, camera_id, ts, out, detections=detections)
     person_boxes = [tuple(d.bbox) for d in detections if d.class_name == "person"]
     _run_faces(mce, frame, camera_id, ts, out, frame_id=frame_id, person_boxes=person_boxes)
     _run_vehicle_reid(mce, frame, detections, camera_id, ts, out)
