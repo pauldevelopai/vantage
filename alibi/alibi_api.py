@@ -4335,6 +4335,76 @@ async def ml_status(current_user: User = Depends(get_current_user)):
             "generated_at": datetime.utcnow().isoformat()}
 
 
+@app.get("/vehicles/distinct", tags=["Vehicles"])
+async def list_distinct_vehicles(window: str = "7d",
+                                 current_user: User = Depends(get_current_user)):
+    """EVERY distinct vehicle the cameras have clustered by appearance — exactly
+    the number the Overview's "distinct vehicles" KPI counts — each with its own
+    photo, plate, how often it came past and when. Continuity, never identity."""
+    from datetime import timedelta
+    from alibi.cameras.cross_camera import get_cross_camera_tracker
+    from alibi.patterns.familiarity import classify_entity, get_vehicle_labels, plate_labels
+    from alibi.patterns.situations import vehicle_descriptor, visit_count
+    from alibi.vehicles.evidence import (sightings_index, entity_evidence,
+                                         plate_index, best_plate)
+
+    hours = {"24h": 24, "7d": 24 * 7, "30d": 24 * 30}.get(window, _VEH_BASELINE_HOURS)
+    tracker = get_cross_camera_tracker()
+    ent = tracker.entity_summary("vehicle", hours=hours)
+    vlabels = get_vehicle_labels()
+    try:
+        plabels = plate_labels()
+    except Exception:
+        plabels = {}
+    names = _display_names()
+
+    try:
+        idx = sightings_index()
+    except Exception:
+        idx = {}
+    pidx: dict = {}
+    try:
+        cut = datetime.utcnow() - timedelta(hours=hours)
+        pev = [e for e in get_store().list_events(limit=8000)
+               if getattr(e, "ts", None) and e.ts >= cut]
+        pidx = plate_index(pev)
+    except Exception:
+        pass
+
+    rows = []
+    for e in ent:
+        try:
+            trail = tracker.get_entity_trail("vehicle", e["entity_id"], hours=hours)
+        except Exception:
+            trail = []
+        ev = entity_evidence(trail, idx) if idx else {}
+        bp = best_plate(trail, pidx) if pidx else None
+        plate = bp["plate"] if bp else None
+        owner = ((vlabels.get(e["entity_id"]) or {}).get("label")
+                 or (plabels.get(plate) if plate else None))
+        # A car the owner has claimed IS the scene, whatever the raw maths says.
+        cls = "resident" if owner else classify_entity(
+            e["count"], e["first_seen"], e["last_seen"],
+            e.get("days", 1), e.get("active_hours", 1))
+        rows.append({
+            "entity_id": e["entity_id"],
+            "owner_label": owner,
+            "descriptor": vehicle_descriptor(ev.get("colour"), ev.get("body"), owner),
+            "familiarity": cls,
+            "plate": plate,
+            "plate_region": (bp or {}).get("region"),
+            "frame_url": ev.get("frame_url"), "bbox": ev.get("bbox"),
+            "colour": ev.get("colour"), "body": ev.get("body"),
+            "passes": visit_count([r.get("timestamp") for r in trail]),
+            "sightings": e["count"],
+            "days": e.get("days", 1),
+            "first_seen": e["first_seen"], "last_seen": e["last_seen"],
+            "cameras": [names.get(c, c) for c in e.get("cameras") or []],
+        })
+    rows.sort(key=lambda r: str(r.get("last_seen") or ""), reverse=True)
+    return {"window": window, "count": len(rows), "vehicles": rows}
+
+
 @app.get("/vehicles/review", tags=["Vehicles"])
 async def list_vehicle_review(limit: int = 40,
                               current_user: User = Depends(get_current_user)):
