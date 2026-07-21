@@ -134,8 +134,10 @@ export const api = {
     return res.json();
   },
 
-  async getVehicleHistory(entityId: string, window: string = '7d'): Promise<VehicleHistory> {
-    const res = await fetchWithAuth(`${API_BASE}/patterns/vehicle/${encodeURIComponent(entityId)}?window=${window}`);
+  async getVehicleHistory(entityId: string, window: string = '7d',
+                          framesOffset: number = 0, framesLimit: number = 12): Promise<VehicleHistory> {
+    const res = await fetchWithAuth(`${API_BASE}/patterns/vehicle/${encodeURIComponent(entityId)}`
+      + `?window=${window}&frames_offset=${framesOffset}&frames_limit=${framesLimit}`);
     if (!res.ok) throw new Error('Failed to fetch vehicle history');
     return res.json();
   },
@@ -726,6 +728,43 @@ export const api = {
   async getRecentPeople(hours: number = 168): Promise<{ people: PersonRow[]; count: number; window_hours: number }> {
     const res = await fetchWithAuth(`${API_BASE}/people/recent?hours=${hours}`);
     if (!res.ok) throw new Error('Failed to load people');
+    return res.json();
+  },
+
+  /** Per-snapshot context: what the AI read in the frame + the owner's own note. */
+  async getFrameContext(frameId: string): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/frames/${encodeURIComponent(frameId)}/context`);
+    if (!res.ok) throw new Error('Failed to load snapshot context');
+    return res.json();
+  },
+  async setFrameNote(frameId: string, note: string): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/frames/${encodeURIComponent(frameId)}/note`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note }),
+    });
+    if (!res.ok) throw new Error('Failed to save note');
+    return res.json();
+  },
+  /** Run the vision model over ONE snapshot, on demand. */
+  async describeFrame(frameId: string): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/frames/${encodeURIComponent(frameId)}/describe`, {
+      method: 'POST',
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Could not analyse that snapshot');
+    }
+    return res.json();
+  },
+
+  /** Rename / edit an ALREADY-enrolled person — updates every sighting of that face. */
+  async updateWatchlistPerson(personId: string, patch: { label?: string; details?: string }): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/watchlist/${encodeURIComponent(personId)}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to update this person');
+    }
     return res.json();
   },
 

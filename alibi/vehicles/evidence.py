@@ -97,21 +97,41 @@ def best_plate(trail: List[Dict[str, Any]], index: Dict[tuple, list]) -> Optiona
 
 
 def trail_frames(trail: List[Dict[str, Any]], index: Dict[tuple, list],
-                 max_frames: int = 12) -> List[Dict[str, Any]]:
-    """Per-sighting evidence frames (newest first) so the history view can show
-    the car across its appearances — a human checks it with their eyes."""
+                 max_frames: int = 12, offset: int = 0) -> List[Dict[str, Any]]:
+    """One page of per-sighting evidence frames (newest first) so the history view
+    can show the car across its appearances — a human checks it with their eyes.
+    Paged rather than truncated: see trail_frames_total for the full count."""
     rows: List[Dict[str, Any]] = []
     seen_keys = set()
+    skipped = 0
     for r in sorted(trail, key=lambda x: str(x.get("timestamp") or ""), reverse=True):
         key = (r.get("camera_id"), _second(r.get("timestamp")))
         if key in seen_keys:
             continue
         for m in index.get(key, []):
             if getattr(m, "snapshot_url", None) and getattr(m, "bbox", None):
-                rows.append({"ts": r.get("timestamp"), "camera_id": r.get("camera_id"),
-                             "frame_url": m.snapshot_url, "bbox": list(m.bbox)})
                 seen_keys.add(key)
+                if skipped < offset:
+                    skipped += 1
+                else:
+                    rows.append({"ts": r.get("timestamp"), "camera_id": r.get("camera_id"),
+                                 "frame_url": m.snapshot_url, "bbox": list(m.bbox)})
                 break
         if len(rows) >= max_frames:
             break
     return rows
+
+
+def trail_frames_total(trail: List[Dict[str, Any]], index: Dict[tuple, list]) -> int:
+    """How many distinct appearances actually have a snapshot — so the UI can page
+    honestly instead of silently cutting the list off."""
+    seen_keys = set()
+    for r in trail:
+        key = (r.get("camera_id"), _second(r.get("timestamp")))
+        if key in seen_keys:
+            continue
+        for m in index.get(key, []):
+            if getattr(m, "snapshot_url", None) and getattr(m, "bbox", None):
+                seen_keys.add(key)
+                break
+    return len(seen_keys)

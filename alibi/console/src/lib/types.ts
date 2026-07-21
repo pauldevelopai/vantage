@@ -631,7 +631,14 @@ export interface VehicleHistory {
   plate_region?: string | null;
   frame_url?: string | null;                                   // representative photo
   bbox?: number[] | null;
-  frames?: Array<{ ts: string; camera_id: string; frame_url: string; bbox: number[] }>;
+  frames?: Array<{
+    ts: string; camera_id: string; frame_url: string; bbox: number[];
+    frame_id?: string;
+    description?: string | null;   // what the AI read in THIS snapshot
+    note?: string | null;          // the owner's own words about it
+  }>;
+  frames_total?: number;
+  frames_offset?: number;
   per_day: Array<{ day: string; count: number }>;
   trail: Array<{ camera_id: string; ts: string }>;
 }

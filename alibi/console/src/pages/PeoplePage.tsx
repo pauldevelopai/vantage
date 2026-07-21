@@ -134,11 +134,28 @@ function HistoryPanel({ person, onClose, onEnrolled }: { person: PersonRow; onCl
   const [loading, setLoading] = useState(true);
 
   const enrolled = !!person.matched_label;
-  const canEnrol = !enrolled && !!person.sighting_id && (hasRole('supervisor') || hasRole('admin'));
+  const canEditPerson = hasRole('supervisor') || hasRole('admin');
+  const canEnrol = !enrolled && !!person.sighting_id && canEditPerson;
   const [name, setName] = useState('');
   const [details, setDetails] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState<string | null>(null);
+  const [editingPerson, setEditingPerson] = useState(false);
+
+  async function updatePerson() {
+    if (!name.trim() || !person.matched_person_id) return;
+    setSaving(true);
+    setSaveErr(null);
+    try {
+      await api.updateWatchlistPerson(person.matched_person_id,
+                                      { label: name.trim(), details: details.trim() });
+      onEnrolled();
+    } catch (e: any) {
+      setSaveErr(e?.message || 'Could not save');
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function enrol() {
     if (!name.trim() || !person.sighting_id) return;
@@ -181,13 +198,47 @@ function HistoryPanel({ person, onClose, onEnrolled }: { person: PersonRow; onCl
         </div>
 
         <div className="p-4">
-          {/* Recognised — show who they are and the details on file. */}
-          {enrolled && (
+          {/* Recognised — who they are, the details on file, and ALWAYS editable.
+              Renaming re-appends the same face embedding, so the new name shows
+              on this face and every past and future sighting of it at once. */}
+          {enrolled && !editingPerson && (
             <div className="mb-4 rounded-md bg-emerald-50 border border-emerald-200 p-3">
-              <p className="text-sm font-medium text-emerald-900">Recognised as {person.matched_label}</p>
-              {person.matched_details
-                ? <p className="text-xs text-emerald-800 mt-1 whitespace-pre-wrap">{person.matched_details}</p>
-                : <p className="text-xs text-emerald-700/70 mt-1">No details on file. Manage this person on the Faces page.</p>}
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-emerald-900">Recognised as {person.matched_label}</p>
+                  {person.matched_details
+                    ? <p className="text-xs text-emerald-800 mt-1 whitespace-pre-wrap">{person.matched_details}</p>
+                    : <p className="text-xs text-emerald-700/70 mt-1">No details on file yet.</p>}
+                </div>
+                {canEditPerson && (
+                  <button onClick={() => { setEditingPerson(true); setName(person.matched_label || ''); setDetails(person.matched_details || ''); }}
+                          className="flex-none text-xs text-emerald-800 hover:text-emerald-900 border border-emerald-300 rounded px-2 py-1">
+                    Edit
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+          {enrolled && editingPerson && (
+            <div className="mb-4 rounded-md bg-emerald-50 border border-emerald-300 p-3">
+              <p className="text-sm font-medium text-emerald-900 mb-2">Edit this person</p>
+              <input autoFocus value={name} onChange={e => setName(e.target.value)}
+                     placeholder="Name"
+                     className="w-full bg-white border border-emerald-200 rounded px-2 py-1.5 text-sm text-gray-800 focus:border-emerald-500 outline-none" />
+              <textarea value={details} onChange={e => setDetails(e.target.value)} rows={2}
+                        placeholder="Details — who they are, why they're here, anything worth noting"
+                        className="mt-2 w-full bg-white border border-emerald-200 rounded px-2 py-1.5 text-sm text-gray-800 focus:border-emerald-500 outline-none resize-y" />
+              <div className="mt-2 flex items-center gap-2">
+                <button onClick={updatePerson} disabled={saving || !name.trim()}
+                        className="text-xs font-medium bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white rounded px-3 py-1.5">
+                  {saving ? 'Saving…' : 'Save'}
+                </button>
+                <button onClick={() => setEditingPerson(false)} className="text-xs text-gray-500">Cancel</button>
+                {saveErr && <span className="text-xs text-red-600">{saveErr}</span>}
+              </div>
+              <p className="mt-1.5 text-[11px] text-emerald-800/70">
+                The new name applies to this face everywhere — every past and future sighting of it.
+              </p>
             </div>
           )}
 
