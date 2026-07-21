@@ -307,10 +307,24 @@ Describe this camera frame in 2-3 clear sentences.
 
 For PEOPLE, always describe:
 - How many people
-- What they're wearing (colors, clothing type)
+- What they're wearing (colors, clothing type — jacket, hoodie, work uniform, hi-vis)
 - What they're doing (walking, sitting, standing, working, etc.)
 - Their approximate position in frame (foreground, background, left, right)
+- Anything they are CARRYING (bag, backpack, box, tools, ladder) and any ANIMAL
+  with them (e.g. walking a dog)
 - Any interactions or activities
+
+For VEHICLES, always describe:
+- Colour and body type (bakkie, SUV, sedan, hatchback, minibus taxi, motorcycle)
+- Distinctive FEATURES: roof rack, towbar, canopy, bull bar, signage or company
+  livery, visible damage, spare wheel, missing hubcap, roof box
+- What it is doing (parked, entering, leaving, passing, reversing)
+- Make/model ONLY if a badge or shape is genuinely readable — otherwise omit it
+  entirely rather than guessing
+
+NEVER state or infer a person's race, ethnicity, nationality or age. Describe only
+what is visibly observable — clothing, colours, actions, items carried, position.
+An identifying detail must be something anyone could verify from the picture.
 
 For OBJECTS and SCENE:
 - Notable objects visible
