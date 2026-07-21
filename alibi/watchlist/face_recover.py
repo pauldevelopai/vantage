@@ -38,6 +38,9 @@ RECOVER_THRESHOLD = 0.35
 # driveway face it made things worse at every step (0.481 at 1x → 0.354 at 6x).
 SCALES = (1.0, 1.5, 2.0, 3.0)
 
+# Size we blow the preview crop up to before showing it to a person to confirm.
+PREVIEW_MIN = 240
+
 
 def crop_person(frame: np.ndarray, bbox, pad: float = CROP_PAD) -> Optional[np.ndarray]:
     """Cut the person's box out of the frame, with padding, in frame pixels."""
@@ -144,7 +147,15 @@ def find_face(frame: np.ndarray, bbox, detector=None, embedder=None) -> Optional
     if emb is None or len(emb) == 0:
         return None
 
-    ok, buf = cv2.imencode(".jpg", face_img)
+    # The preview is for human eyes, so enlarge it — a recovered face can be
+    # 20x24, and "is this a face?" is not a fair question asked of a smudge.
+    # The EMBEDDING above is computed from the original pixels, untouched.
+    preview = face_img
+    short = min(preview.shape[:2])
+    if short > 0 and short < PREVIEW_MIN:
+        f = min(PREVIEW_MIN / short, 12.0)
+        preview = cv2.resize(preview, None, fx=f, fy=f, interpolation=cv2.INTER_CUBIC)
+    ok, buf = cv2.imencode(".jpg", preview)
 
     # Map back: scaled-crop coords → crop coords → frame coords.
     x, y, w, h = (int(v) for v in bbox)

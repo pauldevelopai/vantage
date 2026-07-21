@@ -122,3 +122,23 @@ def test_embedding_is_returned_as_plain_floats():
     r = face_recover.find_face(_frame(), [100, 100, 60, 120], _Detector(), _Embedder())
     assert len(r["embedding"]) == 512
     assert all(isinstance(v, float) for v in r["embedding"][:5])
+
+
+def test_preview_is_enlarged_but_the_embedding_is_not():
+    """A recovered face can be 20x24. Blow the preview up so a person can judge
+    it — but the embedding must come from the original pixels, or every match
+    afterwards is computed against an interpolation."""
+    seen = {}
+
+    class _RecordingEmbedder:
+        def generate_embedding(self, face):
+            seen['shape'] = face.shape[:2]
+            return np.ones(512, dtype=np.float32)
+
+    det = _Detector(at=(5, 5, 20, 24))
+    r = face_recover.find_face(_frame(), [100, 100, 60, 120], det, _RecordingEmbedder())
+    assert seen['shape'] == (24, 20)             # embedded at native size
+    assert len(r["face_jpeg"]) > 0
+    import cv2
+    shown = cv2.imdecode(np.frombuffer(r["face_jpeg"], np.uint8), cv2.IMREAD_COLOR)
+    assert min(shown.shape[:2]) >= face_recover.PREVIEW_MIN - 1   # shown enlarged
