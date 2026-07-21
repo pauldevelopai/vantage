@@ -41,6 +41,110 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
+/**
+ * One snapshot's context. Two clearly separate things:
+ *   ✨ what the AI read in this picture (generated on demand, never invented —
+ *      if no model actually looked, it says so), and
+ *   ✎ the owner's own note about it, with their name on it.
+ */
+function SnapshotContext({ frameId, canEdit, onChanged, onClose }: {
+  frameId: string; canEdit: boolean; onChanged: () => void; onClose: () => void;
+}) {
+  const [ctx, setCtx] = useState<any>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [note, setNote] = useState('');
+  const [editing, setEditing] = useState(false);
+
+  useEffect(() => {
+    setCtx(null); setMsg(null); setEditing(false);
+    api.getFrameContext(frameId)
+      .then(c => { setCtx(c); setNote(c.note || ''); })
+      .catch(() => setCtx({}));
+  }, [frameId]);
+
+  async function analyse() {
+    setBusy(true); setMsg(null);
+    try {
+      const r = await api.describeFrame(frameId);
+      setCtx((c: any) => ({ ...(c || {}), ...r }));
+      if (!r.description) setMsg(r.reason || 'No vision model produced a description.');
+      onChanged();
+    } catch (e: any) {
+      setMsg(e?.message || 'Could not analyse this snapshot');
+    } finally { setBusy(false); }
+  }
+
+  async function saveNote() {
+    setBusy(true); setMsg(null);
+    try {
+      const r = await api.setFrameNote(frameId, note);
+      setCtx((c: any) => ({ ...(c || {}), ...r, note: r.note ?? null }));
+      setEditing(false);
+      onChanged();
+    } catch (e: any) {
+      setMsg(e?.message || 'Could not save the note');
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="mt-2 rounded-md border border-slate-700 bg-slate-800/50 p-3">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[10px] text-slate-400 uppercase tracking-wide">This snapshot</span>
+        <button onClick={onClose} className="text-[11px] text-slate-500 hover:text-slate-300">close</button>
+      </div>
+
+      {/* AI reading */}
+      <div className="mb-2">
+        <div className="text-[10px] text-slate-500 mb-0.5">✨ What the AI sees</div>
+        {ctx?.description
+          ? <p className="text-xs text-slate-200 whitespace-pre-wrap">{ctx.description}</p>
+          : <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-slate-500">Not analysed yet.</span>
+              {canEdit && (
+                <button onClick={analyse} disabled={busy}
+                        className="text-[11px] font-medium bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded px-2 py-1">
+                  {busy ? 'Analysing…' : 'Analyse this snapshot'}
+                </button>
+              )}
+            </div>}
+      </div>
+
+      {/* Owner's note */}
+      <div>
+        <div className="text-[10px] text-slate-500 mb-0.5">✎ Your note</div>
+        {!editing ? (
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-xs text-slate-300 whitespace-pre-wrap min-w-0">
+              {ctx?.note || <span className="text-slate-500">Nothing recorded.</span>}
+              {ctx?.note_by && <span className="text-[10px] text-slate-500"> — {ctx.note_by}</span>}
+            </p>
+            <button onClick={() => setEditing(true)}
+                    className="flex-none text-[11px] text-indigo-400 hover:text-indigo-300">
+              {ctx?.note ? 'Edit' : 'Add'}
+            </button>
+          </div>
+        ) : (
+          <div>
+            <textarea value={note} onChange={e => setNote(e.target.value)} rows={2} autoFocus
+                      placeholder="What do you know about this moment?"
+                      className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 placeholder:text-slate-600 focus:border-indigo-500 outline-none resize-y" />
+            <div className="mt-1 flex items-center gap-2">
+              <button onClick={saveNote} disabled={busy}
+                      className="text-[11px] font-medium bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded px-2 py-1">
+                {busy ? 'Saving…' : 'Save'}
+              </button>
+              <button onClick={() => { setEditing(false); setNote(ctx?.note || ''); }}
+                      className="text-[11px] text-slate-500">Cancel</button>
+            </div>
+          </div>
+        )}
+      </div>
+      {msg && <p className="mt-1.5 text-[10px] text-amber-400">{msg}</p>}
+    </div>
+  );
+}
+
 export function VehicleHistoryModal({ entityId, onClose, onSaved }: {
   entityId: string; onClose: () => void; onSaved: () => void;
 }) {
@@ -55,16 +159,26 @@ export function VehicleHistoryModal({ entityId, onClose, onSaved }: {
   const [busy, setBusy] = useState(false);
   const [saveErr, setSaveErr] = useState<string | null>(null);
 
+  const PAGE = 12;
+  const [framesOffset, setFramesOffset] = useState(0);
+  const [openFrame, setOpenFrame] = useState<string | null>(null);
+
+  useEffect(() => { setFramesOffset(0); }, [entityId, win]);
+
   useEffect(() => {
     setH(null); setErr(null);
-    api.getVehicleHistory(entityId, win)
+    api.getVehicleHistory(entityId, win, framesOffset, PAGE)
       .then(r => {
         setH(r);
         setName(r.owner_label || '');
         setDetails(r.owner_details || '');
       })
       .catch(e => setErr(e?.message || 'Could not load history'));
-  }, [entityId, win]);
+  }, [entityId, win, framesOffset]);
+
+  function refreshFrames() {
+    api.getVehicleHistory(entityId, win, framesOffset, PAGE).then(setH).catch(() => {});
+  }
 
   async function save(label: string) {
     if (!label.trim()) return;
@@ -199,19 +313,44 @@ export function VehicleHistoryModal({ entityId, onClose, onSaved }: {
               )}
 
               {/* EVERY appearance — its own snapshot, camera and time. */}
-              {h.frames && h.frames.length > 0 && (
+              {h.frames && h.frames.length > 0 && (() => {
+                const total = h.frames_total ?? h.frames.length;
+                const from = (h.frames_offset ?? 0) + 1;
+                const to = (h.frames_offset ?? 0) + h.frames.length;
+                return (
                 <div className="mb-3">
-                  <div className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">
-                    Its appearances <span className="normal-case tracking-normal text-slate-600">— {h.frames.length} shown, newest first</span>
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="text-[10px] text-slate-500 uppercase tracking-wide">
+                      Its appearances{' '}
+                      <span className="normal-case tracking-normal text-slate-600">
+                        — {from}–{to} of {total}, newest first
+                      </span>
+                    </div>
+                    {total > PAGE && (
+                      <div className="flex items-center gap-1">
+                        <button disabled={(h.frames_offset ?? 0) <= 0}
+                                onClick={() => setFramesOffset(o => Math.max(0, o - PAGE))}
+                                className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 disabled:opacity-40">‹ newer</button>
+                        <button disabled={to >= total}
+                                onClick={() => setFramesOffset(o => o + PAGE)}
+                                className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 disabled:opacity-40">older ›</button>
+                      </div>
+                    )}
                   </div>
-                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-64 overflow-y-auto pr-1">
+                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                     {h.frames.map((f, i) => (
-                      <a key={i} href={f.frame_url} target="_blank" rel="noreferrer"
-                         className="rounded overflow-hidden border border-slate-800 bg-slate-900 no-underline hover:border-indigo-500">
-                        <div className="aspect-square">
+                      <button key={f.frame_id || i} onClick={() => setOpenFrame(f.frame_id || null)}
+                              className={`text-left rounded overflow-hidden border bg-slate-900 hover:border-indigo-500 ${
+                                openFrame && openFrame === f.frame_id ? 'border-indigo-500' : 'border-slate-800'}`}>
+                        <div className="aspect-square relative">
                           <CropImg src={f.frame_url} alt={f.camera_id}
                                    bbox={f.bbox as [number, number, number, number]} pad={0.3}
                                    className="w-full h-full" />
+                          {(f.description || f.note) && (
+                            <span className="absolute top-1 right-1 text-[8px] px-1 rounded bg-black/80 text-emerald-300">
+                              {f.note ? '✎' : '✨'}
+                            </span>
+                          )}
                         </div>
                         <div className="px-1 py-0.5">
                           <div className="text-[8px] text-slate-400 truncate">
@@ -220,11 +359,17 @@ export function VehicleHistoryModal({ entityId, onClose, onSaved }: {
                           </div>
                           <div className="text-[8px] text-slate-600 truncate">{f.camera_id}</div>
                         </div>
-                      </a>
+                      </button>
                     ))}
                   </div>
+                  {openFrame && (
+                    <SnapshotContext frameId={openFrame} canEdit={canEdit}
+                                     onChanged={refreshFrames}
+                                     onClose={() => setOpenFrame(null)} />
+                  )}
                 </div>
-              )}
+                );
+              })()}
 
               <p className="text-[10px] text-slate-600">
                 Cameras: {h.cameras.join(', ')}. Vehicles are grouped by appearance, which can split

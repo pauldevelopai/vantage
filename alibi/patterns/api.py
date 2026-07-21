@@ -62,6 +62,8 @@ async def person_history(
 async def vehicle_history(
     entity_id: str,
     window: str = "7d",
+    frames_offset: int = 0,
+    frames_limit: int = 12,
     current_user: User = Depends(get_current_user),
 ):
     """How often a recurring vehicle (an appearance-ReID cluster) has been seen
@@ -87,13 +89,26 @@ async def vehicle_history(
     # (from vehicle sightings by camera+second), and the most-read plate (from the
     # camera events — rare + noisy, so a majority vote).
     frame_url, bbox, colour, body, frames, plate, plate_region = None, None, None, None, [], None, None
+    frames_total = 0
     try:
         from alibi.vehicles.evidence import (sightings_index, entity_evidence,
-                                             trail_frames, plate_index, best_plate)
+                                             trail_frames, trail_frames_total,
+                                             plate_index, best_plate)
+        from alibi.cameras import frame_notes
         idx = sightings_index()
         ev = entity_evidence(trail, idx)
         frame_url, bbox, colour, body = ev["frame_url"], ev["bbox"], ev["colour"], ev["body"]
-        frames = trail_frames(trail, idx)
+        frames_total = trail_frames_total(trail, idx)
+        frames = trail_frames(trail, idx, max_frames=max(1, min(int(frames_limit), 48)),
+                              offset=max(0, int(frames_offset)))
+        # Hang each snapshot's context off it: what the AI read in that frame and
+        # anything the owner has written about it.
+        for f in frames:
+            fid = str(f.get("frame_url") or "").rsplit("/", 1)[-1].replace(".jpg", "")
+            f["frame_id"] = fid
+            ctx = frame_notes.get(fid) or {}
+            f["description"] = ctx.get("description")
+            f["note"] = ctx.get("note")
         try:
             from datetime import timedelta as _td
             from alibi.alibi_store import get_store
@@ -152,7 +167,9 @@ async def vehicle_history(
         "plate_region": plate_region,
         "frame_url": frame_url,
         "bbox": bbox,
-        "frames": frames,      # per-sighting evidence photos (newest first)
+        "frames": frames,      # ONE PAGE of appearances (newest first)
+        "frames_total": frames_total,
+        "frames_offset": max(0, int(frames_offset)),
         "per_day": [{"day": d, "count": n} for d, n in sorted(per_day.items())],
         "trail": [{"camera_id": e.get("camera_id"), "ts": e.get("timestamp")}
                   for e in trail],

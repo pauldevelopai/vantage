@@ -4339,6 +4339,142 @@ async def ml_status(current_user: User = Depends(get_current_user)):
             "generated_at": datetime.utcnow().isoformat()}
 
 
+class WatchlistPersonUpdate(BaseModel):
+    label: Optional[str] = None
+    details: Optional[str] = None
+
+
+@app.put("/watchlist/{person_id}", tags=["Watchlist"])
+async def update_watchlist_person(
+    person_id: str, payload: WatchlistPersonUpdate,
+    current_user: User = Depends(require_role([Role.SUPERVISOR, Role.ADMIN])),
+):
+    """Rename an ALREADY-enrolled person, or edit what's known about them.
+
+    The store is last-wins per person_id, so we re-append the SAME face
+    embedding with the new name/notes: the face keeps matching exactly as
+    before, and because every surface resolves the label at read time, the new
+    name shows on this face and every past and future sighting of it at once.
+    """
+    from alibi.watchlist.watchlist_store import WatchlistStore, WatchlistEntry
+    store = WatchlistStore()
+    cur = store.get_by_person_id(person_id)
+    if cur is None or not cur.embedding:
+        raise HTTPException(status_code=404, detail="Person not found")
+
+    label = (payload.label or "").strip() or cur.label
+    meta = dict(cur.metadata or {})
+    if payload.details is not None:
+        note = payload.details.strip()[:2000]
+        if note:
+            meta["notes"] = note
+        else:
+            meta.pop("notes", None)
+    meta["edited_by"] = current_user.username
+    meta["edited_at"] = datetime.utcnow().isoformat()
+
+    store.add_entry(WatchlistEntry(
+        person_id=person_id, label=label, embedding=list(cur.embedding),
+        added_ts=datetime.utcnow().isoformat(),
+        source_ref=cur.source_ref, metadata=meta,
+    ))
+    get_store().append_audit("watchlist_person_updated", {
+        "user": current_user.username, "person_id": person_id, "label": label,
+        "has_details": bool(meta.get("notes")),
+    })
+    return {"person_id": person_id, "label": label, "details": meta.get("notes")}
+
+
+# ── Per-snapshot context: the AI's reading of a frame + the owner's own note ──
+
+class FrameNoteUpdate(BaseModel):
+    note: str = ""
+
+
+def _frame_context(frame_id: str) -> dict:
+    """Stored context for a frame, falling back to the description on the EVENT
+    this frame belongs to (frames are stored as frm_<id> on their event)."""
+    from alibi.cameras import frame_notes
+    row = dict(frame_notes.get(frame_id) or {})
+    if not row.get("description"):
+        try:
+            for e in get_store().get_events_by_ids([f"frm_{frame_id}"]) or []:
+                d = ((getattr(e, "metadata", None) or {}).get("description") or "")
+                if frame_notes.is_real_description(d):
+                    row["description"] = d
+                    row["method"] = row.get("method") or "event"
+                break
+        except Exception:
+            pass
+    return row
+
+
+@app.get("/frames/{frame_id}/context", tags=["Frames"])
+async def get_frame_context(frame_id: str,
+                            current_user: User = Depends(get_current_user)):
+    """What the AI saw in this snapshot, and what the owner has written about it."""
+    return {"frame_id": frame_id, **_frame_context(frame_id)}
+
+
+@app.put("/frames/{frame_id}/note", tags=["Frames"])
+async def set_frame_note(frame_id: str, payload: FrameNoteUpdate,
+                         current_user: User = Depends(get_current_user)):
+    """The owner's own words about this snapshot — kept separate from the AI's
+    reading, with their name on it. Empty clears it."""
+    from alibi.cameras import frame_notes
+    row = frame_notes.set_note(frame_id, payload.note, set_by=current_user.username)
+    get_store().append_audit("frame_note_set", {
+        "user": current_user.username, "frame_id": frame_id,
+        "cleared": not (payload.note or "").strip(),
+    })
+    return {"frame_id": frame_id, **row}
+
+
+@app.post("/frames/{frame_id}/describe", tags=["Frames"])
+async def describe_frame(frame_id: str,
+                         current_user: User = Depends(require_role([Role.SUPERVISOR, Role.ADMIN]))):
+    """Run the vision model over ONE stored snapshot, on demand, and keep the
+    result. This is what lets you read an account of a picture without waiting
+    for a recorder+model to be running — you choose the frame, so the cost is
+    one deliberate call (free when a local model is configured)."""
+    from fastapi.concurrency import run_in_threadpool
+    from alibi.cameras import frame_analyzer as fa, frame_notes
+
+    existing = _frame_context(frame_id)
+    if existing.get("description"):
+        return {"frame_id": frame_id, **existing, "cached": True}
+
+    data = fa.get_frame(frame_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+
+    def _run():
+        frame = fa.decode(data)
+        if frame is None:
+            return None
+        return fa.analyze_frame(frame) or {}
+
+    try:
+        result = await run_in_threadpool(_run)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Vision model unavailable: {e}")
+    if result is None:
+        raise HTTPException(status_code=422, detail="Could not decode that snapshot")
+
+    desc = (result or {}).get("description") or ""
+    if not frame_notes.is_real_description(desc):
+        # Honest: no model actually read the picture (throttled off, or only the
+        # basic-CV fallback ran). Say so rather than storing a pixel statistic.
+        return {"frame_id": frame_id, "description": None, "cached": False,
+                "reason": "no vision model produced a description for this frame"}
+    row = frame_notes.set_description(frame_id, desc, method=(result or {}).get("method"))
+    get_store().append_audit("frame_described", {
+        "user": current_user.username, "frame_id": frame_id,
+        "method": (result or {}).get("method"),
+    })
+    return {"frame_id": frame_id, **row, "cached": False}
+
+
 @app.get("/vehicles/distinct", tags=["Vehicles"])
 async def list_distinct_vehicles(window: str = "7d",
                                  current_user: User = Depends(get_current_user)):
