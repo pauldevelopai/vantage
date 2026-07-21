@@ -61,13 +61,25 @@ export function RecordersPage() {
     } catch { /* none */ }
   }
 
+  const [localVision, setLocalVision] = useState<boolean | null>(null);
+  const [lvBusy, setLvBusy] = useState(false);
+
   useEffect(() => {
     loadBridges();
+    api.getRecorderSettings().then(s => setLocalVision(!!s.local_vision)).catch(() => {});
     const t = setInterval(loadBridges, 5000);
     return () => clearInterval(t);
   }, []);
 
   useEffect(() => { loadCandidates(bridges); }, [bridges]);
+
+  async function toggleLocalVision(next: boolean) {
+    setLvBusy(true);
+    try {
+      const s = await api.setRecorderSettings({ local_vision: next });
+      setLocalVision(!!s.local_vision);
+    } catch { /* keep old */ } finally { setLvBusy(false); }
+  }
 
   async function handleDownload() {
     setDownloading(true);
@@ -154,6 +166,28 @@ export function RecordersPage() {
           The always-on computer on your camera network that records and streams. One per network.
         </p>
       </div>
+
+      {/* Free on-PC scene descriptions (Ollama) — a live on/off the recorder
+          honours within a few seconds. Turn it off if Ollama is slow. */}
+      {localVision !== null && (
+        <div className="bg-white shadow rounded-lg p-4 mb-6 flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-medium text-gray-900">Free scene descriptions (Ollama on your PC)</p>
+            <p className="text-xs text-gray-500">
+              Describes every shot locally at no AI cost. Slow on machines without a GPU — flip it off and the
+              cloud narrates instead. Takes effect on the recorder within a few seconds.
+            </p>
+          </div>
+          <button
+            onClick={() => toggleLocalVision(!localVision)}
+            disabled={lvBusy || !hasRole('supervisor')}
+            title={!hasRole('supervisor') ? 'Supervisor or admin only' : undefined}
+            className={`relative inline-flex h-6 w-11 flex-none items-center rounded-full transition-colors disabled:opacity-50 ${localVision ? 'bg-indigo-600' : 'bg-gray-300'}`}
+          >
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${localVision ? 'translate-x-6' : 'translate-x-1'}`} />
+          </button>
+        </div>
+      )}
 
       {/* Your recorders — the day-to-day view, with storage */}
       <div className="bg-white shadow rounded-lg p-6 mb-6">

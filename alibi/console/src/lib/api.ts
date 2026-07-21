@@ -727,6 +727,20 @@ export const api = {
     return res.json();
   },
 
+  /** Recorder behaviour the agent honours live (e.g. local Ollama vision on/off). */
+  async getRecorderSettings(): Promise<{ local_vision: boolean }> {
+    const res = await fetchWithAuth(`${API_BASE}/recorders/settings`);
+    if (!res.ok) throw new Error('Failed to load recorder settings');
+    return res.json();
+  },
+  async setRecorderSettings(patch: { local_vision?: boolean }): Promise<{ local_vision: boolean }> {
+    const res = await fetchWithAuth(`${API_BASE}/recorders/settings`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
+    });
+    if (!res.ok) throw new Error('Failed to save recorder settings');
+    return res.json();
+  },
+
   async getSiteBrief(siteId: string, windowHours: number = 24): Promise<SiteBrief> {
     const res = await fetchWithAuth(`${API_BASE}/sites/${encodeURIComponent(siteId)}/brief?window_hours=${windowHours}`);
     if (!res.ok) throw new Error('Failed to load the brief');

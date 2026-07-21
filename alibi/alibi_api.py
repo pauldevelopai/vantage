@@ -3454,6 +3454,63 @@ async def bridge_record_targets(bridge_id: str = Depends(_require_bridge)):
     return {"targets": _build_record_targets()}
 
 
+# ── Recorder settings the agent honours live (no re-download to flip) ─────────
+from pathlib import Path as _Path
+_RECORDER_SETTINGS_FILE = _Path("alibi/data/recorder_settings.json")
+
+
+def _get_recorder_settings() -> dict:
+    import json as _json
+    defaults = {"local_vision": True}
+    try:
+        data = _json.loads(_RECORDER_SETTINGS_FILE.read_text())
+        if isinstance(data, dict):
+            return {**defaults, **data}
+    except (OSError, ValueError):
+        pass
+    return defaults
+
+
+def _set_recorder_settings(patch: dict) -> dict:
+    import json as _json
+    cur = _get_recorder_settings()
+    cur.update({k: v for k, v in patch.items() if v is not None})
+    _RECORDER_SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _RECORDER_SETTINGS_FILE.write_text(_json.dumps(cur))
+    return cur
+
+
+@app.get("/cameras/bridge/config", tags=["Camera Bridge"])
+async def bridge_config(bridge_id: str = Depends(_require_bridge)):
+    """The agent polls this so the owner can flip recorder behaviour (e.g. turn
+    the slow local Ollama descriptions off) from the console — no re-download."""
+    s = _get_recorder_settings()
+    return {"local_vision": bool(s.get("local_vision", True))}
+
+
+@app.get("/recorders/settings", tags=["Recorders"])
+async def get_recorder_settings_endpoint(current_user: User = Depends(get_current_user)):
+    return _get_recorder_settings()
+
+
+class RecorderSettingsUpdate(BaseModel):
+    local_vision: Optional[bool] = None
+
+
+@app.put("/recorders/settings", tags=["Recorders"])
+async def set_recorder_settings_endpoint(
+    payload: RecorderSettingsUpdate,
+    current_user: User = Depends(require_role([Role.SUPERVISOR, Role.ADMIN])),
+):
+    """Flip recorder behaviour the agent honours on its next poll (a few seconds).
+    Today: local_vision (free on-PC Ollama scene descriptions) on/off."""
+    saved = _set_recorder_settings({"local_vision": payload.local_vision})
+    get_store().append_audit("recorder_settings_set", {
+        "user": current_user.username, **saved,
+    })
+    return saved
+
+
 # ── Live view (on-demand HLS) ───────────────────────────────────
 #
 # The recording PC streams a camera to the cloud ONLY while a viewer is watching
