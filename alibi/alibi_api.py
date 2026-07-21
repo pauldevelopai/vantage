@@ -5010,6 +5010,77 @@ async def people_recent(limit: int = 60, hours: int = 168,
     return {"people": rows, "count": len(rows), "window_hours": hours}
 
 
+class RecoverFaceRequest(BaseModel):
+    frame_id: str
+    bbox: list                      # person box (x, y, w, h) in frame pixels
+    camera_id: str = ""
+    ts: str = ""
+
+
+@app.post("/people/recover-face", tags=["People"])
+async def recover_face(payload: RecoverFaceRequest,
+                       current_user: User = Depends(require_role([Role.SUPERVISOR, Role.ADMIN]))):
+    """Run the face pass over ONE person detection, on demand.
+
+    Most people on the page are body detections with no face embedding — they
+    could not be named or looked up. This re-examines that person's box: if a
+    readable face is in there we store a real face sighting, so the row becomes
+    nameable and is matched against everyone already enrolled. If there is no
+    face to recover we say so — we never invent one to make the row clickable.
+    """
+    from fastapi.concurrency import run_in_threadpool
+    import uuid as _uuid
+    from alibi.cameras import frame_analyzer as fa
+    from alibi.watchlist import face_recover
+    from alibi.watchlist.face_sighting_store import (FaceSighting,
+                                                     get_face_sighting_store)
+
+    frame_id = payload.frame_id.replace(".jpg", "").strip()
+    if len(payload.bbox or []) != 4:
+        raise HTTPException(status_code=400, detail="bbox must be [x, y, w, h]")
+
+    data = fa.get_frame(frame_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+
+    def _run():
+        frame = fa.decode(data)
+        if frame is None:
+            return "undecodable"
+        return face_recover.find_face(frame, payload.bbox)
+
+    try:
+        found = await run_in_threadpool(_run)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Face model unavailable: {e}")
+    if found == "undecodable":
+        raise HTTPException(status_code=422, detail="Could not decode that snapshot")
+    if not found:
+        return {"found": False,
+                "reason": "No readable face in this shot — too far from the camera, "
+                          "turned away, or too dark. Naming someone needs a face."}
+
+    sighting_id = _uuid.uuid4().hex[:16]
+    get_face_sighting_store().add_sighting(FaceSighting(
+        sighting_id=sighting_id,
+        camera_id=payload.camera_id or "",
+        ts=payload.ts or datetime.utcnow().isoformat(),
+        embedding=found["embedding"],
+        bbox=tuple(found["bbox"]),
+        confidence=float(found["confidence"]),
+        image_path=f"/api/cameras/frames/{frame_id}.jpg",
+        metadata={"recovered_by": current_user.username,
+                  "recovered_from": "person_detection",
+                  "upscale": found["upscale"]},
+    ))
+    get_store().append_audit("face_recovered", {
+        "user": current_user.username, "frame_id": frame_id,
+        "sighting_id": sighting_id, "camera_id": payload.camera_id,
+    })
+    return {"found": True, "sighting_id": sighting_id, "bbox": list(found["bbox"]),
+            "upscale": found["upscale"]}
+
+
 @app.get("/faces/recent")
 async def get_recent_faces(
     camera_id: Optional[str] = None,
