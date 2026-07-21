@@ -952,16 +952,50 @@ function SituationsPanel({ situations, onChanged, onOpenVehicle }: { situations:
   const urgent = situations.filter(s => s.tier !== 'noted');
   const noted = situations.filter(s => s.tier === 'noted');
 
-  if (!situations.length || !urgent.length) {
+  if (!urgent.length) {
+    // Nothing urgent — but if there IS routine activity (common on a 7/30-day
+    // view), SHOW it compactly rather than leaving the panel looking empty.
+    if (noted.length > 0) {
+      const recent = [...noted]
+        .sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')))
+        .slice(0, 8);
+      return (
+        <div>
+          <p className="text-xs text-slate-500 mb-3">
+            Nothing needed your attention in this window — here's the routine activity that was noted.
+          </p>
+          <ul className="space-y-1.5">
+            {recent.map((s, i) => (
+              <li key={s.incident_id || i} className="flex items-center gap-2 text-xs">
+                {s.snapshot_url
+                  ? <Link to={`/incidents/${s.incident_id}`} className="w-9 h-9 flex-none rounded overflow-hidden bg-slate-900 border border-slate-800 no-underline">
+                      <AuthImg src={s.snapshot_url} alt={s.event_type || 'evidence'} className="w-full h-full object-cover" />
+                    </Link>
+                  : <span className="w-9 h-9 flex-none rounded bg-slate-800/60 border border-slate-800" />}
+                <span className="text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded bg-slate-700 text-slate-300 flex-none">NOTED</span>
+                <Link to={`/incidents/${s.incident_id}`}
+                      className="text-slate-300 hover:text-white truncate no-underline">
+                  {s.title || typeMeta(s.event_type || '').label}
+                </Link>
+                <span className="text-slate-600 truncate hidden sm:inline">{s.camera_name}</span>
+                <span className="text-slate-600 ml-auto font-mono text-[10px] flex-none">{timeAgo(s.ts)}</span>
+              </li>
+            ))}
+          </ul>
+          {noted.length > recent.length && (
+            <p className="mt-2 text-[11px]">
+              <Link to="/incidents" className="text-slate-400 hover:text-slate-200 no-underline">
+                + {noted.length - recent.length} more routine event{noted.length - recent.length === 1 ? '' : 's'} →
+              </Link>
+            </p>
+          )}
+        </div>
+      );
+    }
     return (
       <div className="py-5 text-center">
         <p className="text-xs text-slate-600 leading-relaxed">
           Nothing needing your attention in this window.
-          {noted.length > 0 && (
-            <> <Link to="/incidents" className="text-slate-400 hover:text-slate-200">
-              {noted.length} routine event{noted.length === 1 ? '' : 's'} noted →
-            </Link></>
-          )}
         </p>
         <p className="text-xs text-slate-700 mt-1">
           The system is watching — see <span className="text-slate-500">Watching for</span> below for exactly what.
