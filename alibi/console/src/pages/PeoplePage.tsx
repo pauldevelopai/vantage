@@ -54,9 +54,9 @@ export function PeoplePage() {
       <div className="mb-4">
         <h1 className="text-2xl font-semibold text-gray-900">People</h1>
         <p className="text-sm text-gray-500">
-          People your cameras have seen in the last 7 days. Face sightings are clickable —
-          the history engine links appearances by face, so it activates the first time
-          someone comes close enough for one. Until then you'll see person shots with no history.
+          People your cameras have seen in the last 7 days. Click any one of them. Where a face
+          was captured you get their history and can name them; where only a body was detected
+          you can run the face pass over that shot and name them if a face is recoverable.
         </p>
       </div>
 
@@ -103,16 +103,14 @@ export function PeoplePage() {
                 </div>
               </>
             );
-            return isFace ? (
+            // EVERY person is clickable. Rows without a face used to be dead
+            // ends; now opening one lets you run the face pass over that person
+            // and name them if a face can be recovered.
+            return (
               <button key={p.sighting_id || idx} onClick={() => setSelected(p)}
                       className="text-left rounded-lg overflow-hidden bg-white border border-gray-200 hover:border-indigo-500 hover:shadow transition">
                 {inner}
               </button>
-            ) : (
-              <div key={idx} className="rounded-lg overflow-hidden bg-white border border-gray-200"
-                   title="History links by face — appears once someone comes close enough for one">
-                {inner}
-              </div>
             );
           })}
         </div>
@@ -135,12 +133,40 @@ function HistoryPanel({ person, onClose, onEnrolled }: { person: PersonRow; onCl
 
   const enrolled = !!person.matched_label;
   const canEditPerson = hasRole('supervisor') || hasRole('admin');
-  const canEnrol = !enrolled && !!person.sighting_id && canEditPerson;
   const [name, setName] = useState('');
   const [details, setDetails] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState<string | null>(null);
   const [editingPerson, setEditingPerson] = useState(false);
+
+  // A body-only row has no face embedding, so there is nothing to name and no
+  // history to search. Recovering a face from that person's box turns it into a
+  // real face sighting — from then on this panel behaves like any other.
+  const [recoveredId, setRecoveredId] = useState<string | null>(null);
+  const [recovering, setRecovering] = useState(false);
+  const [recoverMsg, setRecoverMsg] = useState<string | null>(null);
+  const sid = person.sighting_id || recoveredId;
+  const canEnrol = !enrolled && !!sid && canEditPerson;
+  const frameId = (person.image_url || '').split('/').pop()?.replace('.jpg', '') || '';
+
+  async function recoverFace() {
+    if (!frameId || !person.bbox) return;
+    setRecovering(true);
+    setRecoverMsg(null);
+    try {
+      const r = await api.recoverFace(frameId, person.bbox as number[], person.camera_id, person.ts);
+      if (r.found) {
+        setRecoveredId(r.sighting_id);
+        setRecoverMsg(null);
+      } else {
+        setRecoverMsg(r.reason || 'No readable face in this shot.');
+      }
+    } catch (e: any) {
+      setRecoverMsg(e?.message || 'Could not check this shot for a face');
+    } finally {
+      setRecovering(false);
+    }
+  }
 
   async function updatePerson() {
     if (!name.trim() || !person.matched_person_id) return;
@@ -158,11 +184,11 @@ function HistoryPanel({ person, onClose, onEnrolled }: { person: PersonRow; onCl
   }
 
   async function enrol() {
-    if (!name.trim() || !person.sighting_id) return;
+    if (!name.trim() || !sid) return;
     setSaving(true);
     setSaveErr(null);
     try {
-      await api.enrollFaceFromSighting(person.sighting_id, name.trim(), details.trim());
+      await api.enrollFaceFromSighting(sid, name.trim(), details.trim());
       onEnrolled();
     } catch (e: any) {
       setSaveErr(e?.message || 'Could not save');
@@ -175,12 +201,12 @@ function HistoryPanel({ person, onClose, onEnrolled }: { person: PersonRow; onCl
     setLoading(true);
     setH(null);
     setErr(null);
-    if (!person.sighting_id) { setLoading(false); return; }
-    api.getPersonHistory(person.sighting_id)
+    if (!sid) { setLoading(false); return; }
+    api.getPersonHistory(sid)
       .then(r => setH(r))
       .catch(e => setErr(e?.message || 'Could not look this person up'))
       .finally(() => setLoading(false));
-  }, [person.sighting_id]);
+  }, [sid]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
@@ -265,11 +291,39 @@ function HistoryPanel({ person, onClose, onEnrolled }: { person: PersonRow; onCl
               </div>
             </div>
           )}
-          {!enrolled && !canEnrol && (
+          {/* Body-only row: no face was captured, so there is nothing to name
+              yet. Run the face pass over just this person's box — if a face is
+              in there the row becomes nameable, and is matched against everyone
+              already enrolled. If not, we say so rather than pretend. */}
+          {!enrolled && !sid && canEditPerson && (
+            <div className="mb-4 rounded-md bg-gray-50 border border-gray-200 p-3">
+              <p className="text-sm font-medium text-gray-800">No face captured in this shot</p>
+              <p className="text-[11px] text-gray-500 mb-2">
+                The cameras detected the person but not a face, so there's nothing to
+                recognise them by yet. Check this shot again — if a face is readable in it,
+                you can name them.
+              </p>
+              <button onClick={recoverFace} disabled={recovering || !frameId || !person.bbox}
+                      className="text-xs font-medium bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-white rounded px-3 py-1.5">
+                {recovering ? 'Looking…' : 'Look for a face in this shot'}
+              </button>
+              {recoverMsg && <p className="mt-2 text-xs text-gray-600">{recoverMsg}</p>}
+            </div>
+          )}
+          {recoveredId && !enrolled && (
+            <p className="mb-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded p-2">
+              Found a face in this shot. You can name them now — and their history is being searched.
+            </p>
+          )}
+          {!enrolled && !canEditPerson && (
             <p className="mb-4 text-[11px] text-gray-400">
               Naming a person requires the supervisor or admin role.
             </p>
           )}
+
+          {/* Context is always available, face or no face — what you know about
+              this shot is worth keeping even when nobody can be identified. */}
+          {frameId && canEditPerson && <FrameNote frameId={frameId} />}
 
           <div className="flex gap-4">
             <div className="w-40 flex-none">
@@ -282,6 +336,12 @@ function HistoryPanel({ person, onClose, onEnrolled }: { person: PersonRow; onCl
             <div className="min-w-0 flex-1">
               {loading && <p className="text-sm text-gray-500">Searching earlier sightings…</p>}
               {err && <p className="text-sm text-red-600">{err}</p>}
+              {!loading && !err && !sid && (
+                <p className="text-sm text-gray-500">
+                  History links people by face, so there's nothing to search on this one yet.
+                  Recover a face from this shot and their earlier appearances will be searched too.
+                </p>
+              )}
               {h && (
                 <>
                   <p className="text-sm text-gray-800">{h.summary}</p>
@@ -335,6 +395,65 @@ function HistoryPanel({ person, onClose, onEnrolled }: { person: PersonRow; onCl
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** What the owner knows about this shot. Kept against the frame, so it stands
+ *  whether or not anyone in it can be identified. */
+function FrameNote({ frameId }: { frameId: string }) {
+  const [note, setNote] = useState('');
+  const [saved, setSaved] = useState('');
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api.getFrameContext(frameId)
+      .then(r => { setSaved(r?.note || ''); setNote(r?.note || ''); })
+      .catch(() => {});
+  }, [frameId]);
+
+  async function save() {
+    setBusy(true);
+    try {
+      await api.setFrameNote(frameId, note.trim());
+      setSaved(note.trim());
+      setEditing(false);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!editing) {
+    return (
+      <div className="mb-4 flex items-start justify-between gap-2 rounded-md border border-gray-200 p-3">
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-gray-700">Your notes on this shot</p>
+          {saved
+            ? <p className="text-xs text-gray-600 mt-1 whitespace-pre-wrap">{saved}</p>
+            : <p className="text-[11px] text-gray-400 mt-1">Nothing noted yet.</p>}
+        </div>
+        <button onClick={() => setEditing(true)}
+                className="flex-none text-xs text-gray-600 hover:text-gray-900 border border-gray-300 rounded px-2 py-1">
+          {saved ? 'Edit' : 'Add'}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-4 rounded-md border border-gray-300 p-3">
+      <p className="text-xs font-medium text-gray-700 mb-2">Your notes on this shot</p>
+      <textarea autoFocus value={note} onChange={e => setNote(e.target.value)} rows={2}
+                placeholder="What you know — who this is, why they were here, anything worth remembering"
+                className="w-full bg-white border border-gray-200 rounded px-2 py-1.5 text-sm text-gray-800 focus:border-indigo-500 outline-none resize-y" />
+      <div className="mt-2 flex items-center gap-2">
+        <button onClick={save} disabled={busy}
+                className="text-xs font-medium bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-white rounded px-3 py-1.5">
+          {busy ? 'Saving…' : 'Save'}
+        </button>
+        <button onClick={() => { setNote(saved); setEditing(false); }} className="text-xs text-gray-500">Cancel</button>
       </div>
     </div>
   );

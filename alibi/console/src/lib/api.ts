@@ -621,6 +621,22 @@ export const api = {
     return res.json();
   },
 
+  /** Run the face pass over one person detection on demand. Most people the
+   *  cameras see are bodies with no face embedding — this tries to recover one
+   *  so the row can be named. Returns {found:false, reason} when there isn't one. */
+  async recoverFace(frameId: string, bbox: number[], cameraId: string, ts: string): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/people/recover-face`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ frame_id: frameId, bbox, camera_id: cameraId, ts }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Could not check this shot for a face');
+    }
+    return res.json();
+  },
+
   async removeWatchlistEntry(personId: string): Promise<any> {
     const res = await fetchWithAuth(`${API_BASE}/watchlist/${encodeURIComponent(personId)}`, {
       method: 'DELETE',
