@@ -617,6 +617,7 @@ export interface VehicleHistory {
   entity_id: string;
   window: string;
   owner_label: string | null;
+  owner_details?: string | null;      // what the owner knows about this vehicle
   familiarity: 'resident' | 'regular' | 'new' | 'occasional';
   count: number;
   days: number;

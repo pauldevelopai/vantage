@@ -110,10 +110,15 @@ async def vehicle_history(
 
     # The name may be set directly on this cluster OR inherited from its plate, so
     # naming one appearance-fragment names every fragment that reads the plate.
-    label = (get_vehicle_labels().get(entity_id) or {}).get("label")
-    if not label and plate:
-        from alibi.patterns.familiarity import plate_labels
-        label = plate_labels().get(plate)
+    _row = get_vehicle_labels().get(entity_id) or {}
+    label = _row.get("label")
+    owner_details = _row.get("details")
+    if plate:
+        from alibi.patterns.familiarity import plate_labels, plate_details
+        if not label:
+            label = plate_labels().get(plate)
+        if not owner_details:
+            owner_details = plate_details().get(plate)
     # A vehicle the owner has CLAIMED is theirs is, by definition, part of the
     # scene — resident, regardless of how the raw maths would class this fragment.
     if label:
@@ -133,6 +138,7 @@ async def vehicle_history(
         "entity_id": entity_id,
         "window": window,
         "owner_label": label,
+        "owner_details": owner_details,
         "familiarity": cls,
         "count": summary["count"],
         "days": summary.get("days", 1),
