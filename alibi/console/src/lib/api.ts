@@ -637,6 +637,21 @@ export const api = {
     return res.json();
   },
 
+  /** Store a recovered face and name the person — only after a human has
+   *  looked at the crop and confirmed it really is a face. */
+  async confirmFace(token: string, label: string, details?: string): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/people/confirm-face`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, label, details: details || '' }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Could not save this person');
+    }
+    return res.json();
+  },
+
   async removeWatchlistEntry(personId: string): Promise<any> {
     const res = await fetchWithAuth(`${API_BASE}/watchlist/${encodeURIComponent(personId)}`, {
       method: 'DELETE',

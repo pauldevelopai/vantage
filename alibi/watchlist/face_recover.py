@@ -20,11 +20,23 @@ from typing import Optional, Tuple
 import numpy as np
 
 # The person box is a body; the face is a small part of it. Pad so a face at
-# the very top edge isn't clipped, then upscale — SCRFD has a minimum size it
-# can resolve, and distant crops land under it.
+# the very top edge isn't clipped.
 CROP_PAD = 0.25
 UPSCALE_TARGET = 320       # shortest side we aim for before detecting
 MAX_UPSCALE = 6.0          # beyond this we are magnifying noise, not detail
+
+# Detection threshold for THIS path only. The live pipeline keeps SCRFD's
+# default 0.5, which is right when nobody is watching. Here a person has
+# deliberately asked about one shot and is shown the face we found before
+# anything is saved, so we can afford to look harder: a driveway face, tilted
+# down at a phone and lit from above, scored 0.481 — a real face, thrown away
+# by a hundredth. The human confirming is the gate, not the threshold.
+RECOVER_THRESHOLD = 0.35
+
+# Try the crop at several sizes and keep the best-scoring face. Upscaling is
+# NOT reliably better: cubic interpolation invents no detail, and on that same
+# driveway face it made things worse at every step (0.481 at 1x → 0.354 at 6x).
+SCALES = (1.0, 1.5, 2.0, 3.0)
 
 
 def crop_person(frame: np.ndarray, bbox, pad: float = CROP_PAD) -> Optional[np.ndarray]:
@@ -73,35 +85,57 @@ def _models():
     global _DETECTOR, _EMBEDDER
     if _DETECTOR is None:
         from alibi.watchlist.face_detect import FaceDetector
-        _DETECTOR = FaceDetector()
+        _DETECTOR = FaceDetector(confidence_threshold=RECOVER_THRESHOLD)
     if _EMBEDDER is None:
         from alibi.watchlist.face_embed import FaceEmbedder
         _EMBEDDER = FaceEmbedder()
     return _DETECTOR, _EMBEDDER
 
 
+def _best_face(detector, crop):
+    """Best-scoring face across several scales: (score, bbox, factor) or None."""
+    import cv2
+
+    best = None
+    for factor in SCALES:
+        img = (crop if factor == 1.0 else
+               cv2.resize(crop, None, fx=factor, fy=factor, interpolation=cv2.INTER_CUBIC))
+        try:
+            scored = detector.detect_scored(img)
+        except Exception:
+            continue
+        for box, score in scored or []:
+            if best is None or score > best[0]:
+                best = (float(score), box, factor, img)
+    return best
+
+
 def find_face(frame: np.ndarray, bbox, detector=None, embedder=None) -> Optional[dict]:
     """Look for one readable face inside a person box.
 
     Returns {"bbox": (x, y, w, h) in FRAME coords, "embedding": [...],
-             "confidence": float, "upscale": float} or None when there is no
-    face to recover — which is the common, honest outcome for distant people.
+             "score": float, "scale": float, "face_jpeg": bytes} or None when
+    there is no face to recover — the honest outcome for a distant or
+    turned-away person. `face_jpeg` is the crop we found, so a human can look
+    at it and say whether it really is a face before anything is stored.
     """
+    import cv2
+
     crop = crop_person(frame, bbox)
     if crop is None:
         return None
 
-    big, factor = upscale(crop)
-
     if detector is None:
-        detector, _cached_embedder = _models()
-        embedder = embedder or _cached_embedder
+        detector, _cached = _models()
+        embedder = embedder or _cached
 
-    found = detector.detect_and_extract(big)
-    if not found:
+    best = _best_face(detector, crop)
+    if best is None:
         return None
-    face_img, (fx, fy, fw, fh) = found
-    if face_img is None or getattr(face_img, "size", 0) == 0:
+    score, (fx, fy, fw, fh), factor, scaled = best
+
+    face_img = scaled[max(0, fy):fy + fh, max(0, fx):fx + fw]
+    if face_img is None or face_img.size == 0:
         return None
 
     if embedder is None:
@@ -110,7 +144,9 @@ def find_face(frame: np.ndarray, bbox, detector=None, embedder=None) -> Optional
     if emb is None or len(emb) == 0:
         return None
 
-    # Map back: enlarged-crop coords → crop coords → frame coords.
+    ok, buf = cv2.imencode(".jpg", face_img)
+
+    # Map back: scaled-crop coords → crop coords → frame coords.
     x, y, w, h = (int(v) for v in bbox)
     p = int(max(w, h) * CROP_PAD)
     ox, oy = max(0, x - p), max(0, y - p)
@@ -118,6 +154,7 @@ def find_face(frame: np.ndarray, bbox, detector=None, embedder=None) -> Optional
         "bbox": (int(ox + fx / factor), int(oy + fy / factor),
                  int(fw / factor), int(fh / factor)),
         "embedding": [float(v) for v in np.asarray(emb).ravel()],
-        "confidence": 1.0 if factor == 1.0 else round(1.0 / factor, 3),
-        "upscale": round(factor, 2),
+        "score": round(score, 3),
+        "scale": factor,
+        "face_jpeg": buf.tobytes() if ok else b"",
     }

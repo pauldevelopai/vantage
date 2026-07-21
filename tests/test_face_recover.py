@@ -15,16 +15,17 @@ def _frame(w=640, h=524):
 
 
 class _Detector:
-    """Stands in for SCRFD: reports a face at a fixed spot in whatever it's given."""
+    """Stands in for SCRFD: reports a face at a fixed spot, same score at every
+    scale, so the scale sweep picks the first (1.0x) and the maths stays checkable."""
 
-    def __init__(self, at=(20, 10, 40, 40)):
+    def __init__(self, at=(20, 10, 40, 40), score=0.48):
         self.at = at
-        self.seen = None
+        self.score = score
+        self.scales_seen = []
 
-    def detect_and_extract(self, img):
-        self.seen = img
-        x, y, w, h = self.at
-        return img[y:y + h, x:x + w], self.at
+    def detect_scored(self, img):
+        self.scales_seen.append(img.shape[:2])
+        return [(self.at, self.score)]
 
 
 class _Embedder:
@@ -70,8 +71,8 @@ def test_found_bbox_is_in_frame_coordinates():
     r = face_recover.find_face(_frame(), [300, 200, 80, 160], det, _Embedder())
     assert r is not None
 
-    # The detector ran on an enlarged copy, so map back by that factor...
-    factor = r["upscale"]
+    # The detector may have run on a resized copy, so map back by that factor...
+    factor = r["scale"]
     pad = int(160 * face_recover.CROP_PAD)
     expected = (300 - pad + int(20 / factor), 200 - pad + int(10 / factor))
     assert r["bbox"][:2] == expected
@@ -79,10 +80,40 @@ def test_found_bbox_is_in_frame_coordinates():
     assert r["bbox"][0] > 250 and r["bbox"][1] > 150
 
 
+def test_tries_several_scales_and_keeps_the_best_scoring():
+    """Bigger is not reliably better — Lorraine's face scored 0.481 at 1x and
+    0.354 at 6x. Whichever scale scores highest is the one we use."""
+
+    class _ScaleFussy:
+        def detect_scored(self, img):
+            # Scores best on the untouched crop, worse the more it's enlarged.
+            short = min(img.shape[:2])          # 200 on the untouched crop
+            return [((5, 5, 20, 20), 0.9 if short <= 200 else 0.2)]
+
+    det = _ScaleFussy()
+    r = face_recover.find_face(_frame(), [100, 100, 120, 160], det, _Embedder())
+    assert r["score"] == 0.9
+    assert r["scale"] == 1.0        # not the largest scale — the best one
+
+
+def test_a_faint_face_is_still_returned_with_its_score():
+    """The live pipeline's 0.5 cutoff threw away a real face at 0.481. Here the
+    human is the gate, so we hand back the weak one AND how weak it is."""
+    r = face_recover.find_face(_frame(), [100, 100, 60, 120],
+                               _Detector(score=0.481), _Embedder())
+    assert r["score"] == 0.481
+    assert face_recover.RECOVER_THRESHOLD < 0.5
+
+
+def test_a_preview_of_the_face_comes_back_for_a_human_to_check():
+    r = face_recover.find_face(_frame(), [100, 100, 60, 120], _Detector(), _Embedder())
+    assert r["face_jpeg"][:2] == b"\xff\xd8"      # a real JPEG, not a promise
+
+
 def test_no_face_is_reported_honestly():
     class _Blind:
-        def detect_and_extract(self, img):
-            return None
+        def detect_scored(self, img):
+            return []
 
     assert face_recover.find_face(_frame(), [10, 10, 50, 100], _Blind(), _Embedder()) is None
 

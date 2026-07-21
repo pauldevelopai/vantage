@@ -142,10 +142,10 @@ function HistoryPanel({ person, onClose, onEnrolled }: { person: PersonRow; onCl
   // A body-only row has no face embedding, so there is nothing to name and no
   // history to search. Recovering a face from that person's box turns it into a
   // real face sighting — from then on this panel behaves like any other.
-  const [recoveredId, setRecoveredId] = useState<string | null>(null);
+  const [recovered, setRecovered] = useState<{ token: string; preview: string | null; score: number } | null>(null);
   const [recovering, setRecovering] = useState(false);
   const [recoverMsg, setRecoverMsg] = useState<string | null>(null);
-  const sid = person.sighting_id || recoveredId;
+  const sid = person.sighting_id;
   const canEnrol = !enrolled && !!sid && canEditPerson;
   const frameId = (person.image_url || '').split('/').pop()?.replace('.jpg', '') || '';
 
@@ -156,8 +156,7 @@ function HistoryPanel({ person, onClose, onEnrolled }: { person: PersonRow; onCl
     try {
       const r = await api.recoverFace(frameId, person.bbox as number[], person.camera_id, person.ts);
       if (r.found) {
-        setRecoveredId(r.sighting_id);
-        setRecoverMsg(null);
+        setRecovered({ token: r.token, preview: r.face_preview || null, score: r.score });
       } else {
         setRecoverMsg(r.reason || 'No readable face in this shot.');
       }
@@ -165,6 +164,21 @@ function HistoryPanel({ person, onClose, onEnrolled }: { person: PersonRow; onCl
       setRecoverMsg(e?.message || 'Could not check this shot for a face');
     } finally {
       setRecovering(false);
+    }
+  }
+
+  /** Save only once the operator has looked at the crop and agrees it's a face. */
+  async function confirmRecovered() {
+    if (!recovered || !name.trim()) return;
+    setSaving(true);
+    setSaveErr(null);
+    try {
+      await api.confirmFace(recovered.token, name.trim(), details.trim());
+      onEnrolled();
+    } catch (e: any) {
+      setSaveErr(e?.message || 'Could not save');
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -295,13 +309,13 @@ function HistoryPanel({ person, onClose, onEnrolled }: { person: PersonRow; onCl
               yet. Run the face pass over just this person's box — if a face is
               in there the row becomes nameable, and is matched against everyone
               already enrolled. If not, we say so rather than pretend. */}
-          {!enrolled && !sid && canEditPerson && (
+          {!enrolled && !sid && !recovered && canEditPerson && (
             <div className="mb-4 rounded-md bg-gray-50 border border-gray-200 p-3">
               <p className="text-sm font-medium text-gray-800">No face captured in this shot</p>
               <p className="text-[11px] text-gray-500 mb-2">
                 The cameras detected the person but not a face, so there's nothing to
-                recognise them by yet. Check this shot again — if a face is readable in it,
-                you can name them.
+                recognise them by yet. Check this shot again — this looks harder than the
+                live pass does, and will show you whatever it finds.
               </p>
               <button onClick={recoverFace} disabled={recovering || !frameId || !person.bbox}
                       className="text-xs font-medium bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-white rounded px-3 py-1.5">
@@ -310,10 +324,46 @@ function HistoryPanel({ person, onClose, onEnrolled }: { person: PersonRow; onCl
               {recoverMsg && <p className="mt-2 text-xs text-gray-600">{recoverMsg}</p>}
             </div>
           )}
-          {recoveredId && !enrolled && (
-            <p className="mb-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded p-2">
-              Found a face in this shot. You can name them now — and their history is being searched.
-            </p>
+
+          {/* We looked harder than the live pipeline, so YOU decide whether this
+              is really a face before it goes into the recognition database — a
+              wrong crop enrolled here would poison every future match. */}
+          {recovered && !enrolled && (
+            <div className="mb-4 rounded-md bg-indigo-50 border border-indigo-200 p-3">
+              <p className="text-sm font-medium text-indigo-900">Is this a face?</p>
+              <p className="text-[11px] text-indigo-700/80 mb-2">
+                This is what we found in that shot{recovered.score < 0.5 && ' — a faint one, so check it'}.
+                If it's the person's face, name them and it goes into the recognition database.
+                If it isn't, discard it.
+              </p>
+              <div className="flex gap-3">
+                {recovered.preview && (
+                  <img src={recovered.preview} alt="Recovered face"
+                       className="w-24 h-24 flex-none object-cover rounded-md border border-indigo-300 bg-white"
+                       style={{ imageRendering: 'pixelated' }} />
+                )}
+                <div className="min-w-0 flex-1">
+                  <input autoFocus value={name} onChange={e => setName(e.target.value)}
+                         onKeyDown={e => { if (e.key === 'Enter') confirmRecovered(); }}
+                         placeholder="Name (e.g. Lorraine)"
+                         className="w-full bg-white border border-indigo-200 rounded px-2 py-1.5 text-sm text-gray-800 focus:border-indigo-500 outline-none" />
+                  <textarea value={details} onChange={e => setDetails(e.target.value)} rows={2}
+                            placeholder="Details (optional) — who they are, why they're here"
+                            className="mt-2 w-full bg-white border border-indigo-200 rounded px-2 py-1.5 text-sm text-gray-800 focus:border-indigo-500 outline-none resize-y" />
+                </div>
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <button onClick={confirmRecovered} disabled={saving || !name.trim()}
+                        className="text-xs font-medium bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded px-3 py-1.5">
+                  {saving ? 'Saving…' : 'Yes — save to recognition database'}
+                </button>
+                <button onClick={() => { setRecovered(null); setRecoverMsg("Discarded — that wasn't a face."); }}
+                        className="text-xs text-gray-500 hover:text-gray-700">
+                  Not a face
+                </button>
+                {saveErr && <span className="text-xs text-red-600">{saveErr}</span>}
+              </div>
+            </div>
           )}
           {!enrolled && !canEditPerson && (
             <p className="mb-4 text-[11px] text-gray-400">

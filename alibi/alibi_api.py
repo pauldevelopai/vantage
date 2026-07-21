@@ -5060,25 +5060,90 @@ async def recover_face(payload: RecoverFaceRequest,
                 "reason": "No readable face in this shot — too far from the camera, "
                           "turned away, or too dark. Naming someone needs a face."}
 
+    # Nothing is stored yet. We look harder than the live pipeline does, so the
+    # person who asked gets to see the face we found and decide whether it IS
+    # one — a wrong crop enrolled here would poison every future match.
+    import base64
+    from alibi.ttl_cache import cached as _cached
+    token = _uuid.uuid4().hex[:16]
+    _cached(f"recover:{token}", 900, lambda: {
+        "embedding": found["embedding"],
+        "bbox": list(found["bbox"]),
+        "frame_id": frame_id,
+        "camera_id": payload.camera_id or "",
+        "ts": payload.ts or datetime.utcnow().isoformat(),
+        "score": found["score"],
+    })
+    return {"found": True, "token": token, "bbox": list(found["bbox"]),
+            "score": found["score"], "scale": found["scale"],
+            "face_preview": ("data:image/jpeg;base64,"
+                             + base64.b64encode(found["face_jpeg"]).decode("ascii"))
+                            if found["face_jpeg"] else None}
+
+
+class ConfirmFaceRequest(BaseModel):
+    token: str
+    label: str
+    details: str = ""
+
+
+@app.post("/people/confirm-face", tags=["People"])
+async def confirm_face(payload: ConfirmFaceRequest,
+                       current_user: User = Depends(require_role([Role.SUPERVISOR, Role.ADMIN]))):
+    """Store the recovered face, now that a human has looked at it and named
+    the person. This is the point the recognition database learns: the sighting
+    and the watchlist entry are written together, so the name applies to this
+    picture and to every future sighting of the same face."""
+    import re
+    import uuid as _uuid
+    from alibi.watchlist.watchlist_store import WatchlistStore, WatchlistEntry
+    from alibi.watchlist.face_sighting_store import (FaceSighting,
+                                                     get_face_sighting_store)
+
+    label = payload.label.strip()
+    if not label:
+        raise HTTPException(status_code=400, detail="A name is required")
+    from alibi.ttl_cache import cached as _cached
+    pending = _cached(f"recover:{payload.token}", 900, lambda: None)
+    if not pending:
+        raise HTTPException(status_code=404,
+                            detail="That face check has expired — run it again")
+
     sighting_id = _uuid.uuid4().hex[:16]
     get_face_sighting_store().add_sighting(FaceSighting(
         sighting_id=sighting_id,
-        camera_id=payload.camera_id or "",
-        ts=payload.ts or datetime.utcnow().isoformat(),
-        embedding=found["embedding"],
-        bbox=tuple(found["bbox"]),
-        confidence=float(found["confidence"]),
-        image_path=f"/api/cameras/frames/{frame_id}.jpg",
+        camera_id=pending["camera_id"],
+        ts=pending["ts"],
+        embedding=pending["embedding"],
+        bbox=tuple(pending["bbox"]),
+        confidence=float(pending["score"]),
+        image_path=f"/api/cameras/frames/{pending['frame_id']}.jpg",
         metadata={"recovered_by": current_user.username,
                   "recovered_from": "person_detection",
-                  "upscale": found["upscale"]},
+                  "confirmed_by_human": True},
     ))
-    get_store().append_audit("face_recovered", {
-        "user": current_user.username, "frame_id": frame_id,
-        "sighting_id": sighting_id, "camera_id": payload.camera_id,
+
+    slug = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-") or "person"
+    person_id = f"{slug}-{_uuid.uuid4().hex[:6]}"
+    WatchlistStore().add_entry(WatchlistEntry(
+        person_id=person_id,
+        label=label,
+        embedding=list(pending["embedding"]),
+        added_ts=datetime.utcnow().isoformat(),
+        source_ref=f"sighting:{sighting_id}",
+        metadata={"enrolled_by": current_user.username,
+                  "enrolled_from": "recovered_face",
+                  "camera_id": pending["camera_id"],
+                  "sighting_ts": pending["ts"],
+                  "frame_url": f"/api/cameras/frames/{pending['frame_id']}.jpg",
+                  "notes": payload.details.strip()[:2000] or None},
+    ))
+    get_store().append_audit("face_recovered_enrolled", {
+        "user": current_user.username, "person_id": person_id, "label": label,
+        "sighting_id": sighting_id, "score": pending["score"],
     })
-    return {"found": True, "sighting_id": sighting_id, "bbox": list(found["bbox"]),
-            "upscale": found["upscale"]}
+    return {"status": "enrolled", "person_id": person_id, "label": label,
+            "sighting_id": sighting_id}
 
 
 @app.get("/faces/recent")
