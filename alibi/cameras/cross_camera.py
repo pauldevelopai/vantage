@@ -418,11 +418,15 @@ _tracker_instance: Optional[CrossCameraTracker] = None
 def get_cross_camera_tracker() -> CrossCameraTracker:
     """Get or create global cross-camera tracker.
 
-    Retention is 7 days, not the class default 24h: familiar-vs-new
-    classification needs an entity's first sighting to be able to age past a
-    day — with 24h retention everything would read as "NEW to the scene"
-    forever. A week of sightings at this scale is still tiny."""
+    Retention is 30 days, not the class default 24h. Two reasons:
+      * familiar-vs-new needs an entity's first sighting to age past a day —
+        with 24h retention everything reads as "NEW to the scene" forever; and
+      * the Vehicles view offers 24h / 7d / 30d windows, and a window we can't
+        actually answer would be a lie. Keeping 30 days makes the longest one
+        real as history accrues.
+    The cost is trivial at this scale: a month is on the order of 10k sighting
+    rows (~10MB of JSONL), each a small dict."""
     global _tracker_instance
     if _tracker_instance is None:
-        _tracker_instance = CrossCameraTracker(retention_hours=24 * 7)
+        _tracker_instance = CrossCameraTracker(retention_hours=24 * 30)
     return _tracker_instance

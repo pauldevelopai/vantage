@@ -30,15 +30,17 @@ export function VehicleSearchPage() {
   const [searching, setSearching] = useState(false);
   const [searched, setSearched] = useState(false);
 
-  // The distinct vehicles the Overview KPI counts — loaded up front.
+  // The distinct vehicles the Overview KPI counts, over a chosen window.
   const [distinct, setDistinct] = useState<any[]>([]);
   const [loadingDistinct, setLoadingDistinct] = useState(true);
+  const [window_, setWindow_] = useState('7d');
   useEffect(() => {
-    api.getDistinctVehicles('7d')
+    setLoadingDistinct(true);
+    api.getDistinctVehicles(window_)
       .then(d => setDistinct(d.vehicles || []))
       .catch(() => setDistinct([]))
       .finally(() => setLoadingDistinct(false));
-  }, []);
+  }, [window_]);
 
   // Trail state
   const [trail, setTrail] = useState<TrailEntry[]>([]);
@@ -115,11 +117,23 @@ export function VehicleSearchPage() {
       {/* The DISTINCT vehicles — this is what the Overview's "distinct vehicles"
           KPI counts, so landing here must show exactly those cars. */}
       <div className="mt-6 bg-white shadow sm:rounded-lg p-6">
-        <div className="flex items-baseline justify-between mb-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <h2 className="text-lg font-medium text-gray-900">
             Distinct vehicles{distinct.length > 0 ? ` (${distinct.length})` : ''}
           </h2>
-          <span className="text-xs text-gray-500">grouped by appearance · last 7 days</span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-gray-500 hidden sm:inline">grouped by appearance</span>
+            <div className="flex items-center gap-0.5 p-0.5 rounded-md bg-gray-100">
+              {[{ k: '24h', l: '24H' }, { k: '7d', l: '7D' }, { k: '30d', l: '30D' }].map(w => (
+                <button key={w.k} onClick={() => setWindow_(w.k)}
+                        className={`px-2.5 py-1 text-xs font-medium rounded ${
+                          window_ === w.k ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'
+                        }`}>
+                  {w.l}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
         {loadingDistinct ? (
           <p className="text-sm text-gray-500">Loading…</p>
