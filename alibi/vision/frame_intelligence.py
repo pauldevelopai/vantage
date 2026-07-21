@@ -221,6 +221,18 @@ def _run_plates(mce, frame, camera_id: str, ts: datetime, out: Dict[str, Any],
                 pass
 
 
+# Two tiers of face detection.
+#
+# A face at or above FACE_CONFIDENT is treated as it always has been: recorded,
+# clustered, matched. Below that, down to the detector's floor, a face is FAINT
+# — real enough to check against people you have already named, not solid
+# enough to become an identity of its own. Faint faces must clear
+# FAINT_MATCH_MIN (stricter than the everyday 0.6) to count as a match, and are
+# dropped entirely otherwise.
+FACE_CONFIDENT = 0.5
+FAINT_MATCH_MIN = 0.65
+
+
 def face_within_person(face_bbox, person_boxes, pad: float = 0.35) -> bool:
     """A REAL face lies inside (or at the head of) a detected person. The face
     detector alone fires on texture — verified live: a tree and stone paving
@@ -280,6 +292,20 @@ def _run_faces(mce, frame, camera_id: str, ts: datetime, out: Dict[str, Any],
                     embedding, watchlist_embeddings, watchlist_labels)
             except Exception:
                 is_match, top, best_score = False, [], 0.0
+
+        # A FAINT face — one the old 0.5 cutoff would have thrown away entirely.
+        # Someone looking down at a phone under a high camera scored 0.481 and
+        # was discarded, which meant enrolling her did nothing the next time she
+        # walked past. So we now look down to FACE_FAINT, but a faint face may
+        # only ever CONFIRM someone already enrolled, and on a stricter identity
+        # threshold than a clear one. It never creates an unknown-face row and
+        # never starts an appearance cluster: the detector fires on texture
+        # (see face_within_person — a tree and paving have both been "faces"),
+        # and looser detection must not mean looser identity.
+        if det_score < FACE_CONFIDENT and not (
+                is_match and top and best_score >= FAINT_MATCH_MIN):
+            continue
+
         if is_match and top:
             out["watchlist_hit"] = True
             out["watchlist_label"] = top[0].label

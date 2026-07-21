@@ -129,7 +129,13 @@ def get_security_components():
         _cross_camera_tracker = get_cross_camera_tracker()
 
     if _face_detector is None:
-        _face_detector = FaceDetector(confidence_threshold=0.5)
+        # The detector's floor, NOT the decision threshold. Callers filter by
+        # score: the camera pipeline treats anything under 0.5 as a faint face
+        # that may only confirm an already-enrolled person (see
+        # frame_intelligence.FACE_CONFIDENT), and the phone endpoint below keeps
+        # the old 0.5 behaviour explicitly. Detecting lower costs nothing and
+        # stops us discarding real faces before anyone can look at them.
+        _face_detector = FaceDetector(confidence_threshold=0.35)
 
     if _face_embedder is None:
         _face_embedder = FaceEmbedder()
@@ -394,7 +400,12 @@ async def analyze_frame_secure(
     watchlist_hit = False
     watchlist_match_label = None
     try:
-        faces = _face_detector.detect(frame)
+        # The shared detector now has a lower floor; this endpoint keeps its
+        # original 0.5 bar rather than inheriting the faint tier by accident.
+        try:
+            faces = [b for b, s in _face_detector.detect_scored(frame) if s >= 0.5]
+        except AttributeError:                  # older detector: no scores
+            faces = _face_detector.detect(frame)
         if faces:
             watchlist_embeddings = _watchlist_store.get_all_embeddings()
             watchlist_labels = {
