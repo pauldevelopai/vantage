@@ -526,6 +526,12 @@ def main(argv=None):  # pragma: no cover
 
     # Free offline vision: if Ollama with a vision model is running on THIS PC,
     # describe every motion still locally and ship the words with the frame.
+    # Two safeguards against a slow model dragging the pipeline:
+    #   * a short per-frame timeout so a slow description is abandoned, not waited on
+    #   * an on/off flag the owner flips FROM THE CONSOLE (polled below) — no
+    #     command editing, no re-download, takes effect in a few seconds.
+    _lv = {"enabled": False}
+    _lv_timeout = float(os.environ.get("VANTAGE_LOCAL_VISION_TIMEOUT", "6"))
     local_describe = None
     try:
         try:
@@ -534,8 +540,15 @@ def main(argv=None):  # pragma: no cover
             import local_vision as lv        # flat zipapp layout
         model = os.environ.get("VANTAGE_LOCAL_VISION_MODEL", lv.DEFAULT_MODEL)
         if lv.ollama_has_model(model):
-            local_describe = lambda jpeg: lv.describe(jpeg, model=model)
-            print(f"[record-agent] local vision ON — describing frames with Ollama '{model}' (free, on-site)")
+            _lv["enabled"] = True
+
+            def local_describe(jpeg):
+                if not _lv["enabled"]:
+                    return None
+                return lv.describe(jpeg, model=model, timeout=_lv_timeout)
+
+            print(f"[record-agent] local vision ON — describing frames with Ollama '{model}' "
+                  f"(free, on-site; toggle it in the console if it's slow)")
         else:
             lv.pull_model(model)             # kick off a background pull if Ollama is up
             print(f"[record-agent] local vision available but model '{model}' not ready; "
@@ -547,6 +560,22 @@ def main(argv=None):  # pragma: no cover
     threading.Thread(
         target=frame_loop, args=(frame_uploader, time.sleep), daemon=True,
     ).start()
+
+    # Honour the console's local-vision toggle live (only meaningful if Ollama
+    # was actually available at startup — we never enable what isn't there).
+    def config_loop():
+        while True:
+            try:
+                status, body = ba._http("GET", "/api/cameras/bridge/config", headers=headers)
+                if status == 200 and isinstance(body, dict) and "local_vision" in body:
+                    want = bool(body["local_vision"]) and (local_describe is not None)
+                    if want != _lv["enabled"]:
+                        _lv["enabled"] = want
+                        print(f"[record-agent] local vision {'ON' if want else 'OFF'} (from console)")
+            except Exception:
+                pass
+            time.sleep(10)
+    threading.Thread(target=config_loop, daemon=True).start()
 
     # --- report what we're storing (so the console can show it) ------------- #
     caps = {
