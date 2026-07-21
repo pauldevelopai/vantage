@@ -63,6 +63,23 @@ def upscale(crop: np.ndarray, target: int = UPSCALE_TARGET,
     return out, factor
 
 
+_DETECTOR = None
+_EMBEDDER = None
+
+
+def _models():
+    """Load SCRFD and ArcFace once. Both take seconds to construct, and this
+    runs behind a button a person is waiting on."""
+    global _DETECTOR, _EMBEDDER
+    if _DETECTOR is None:
+        from alibi.watchlist.face_detect import FaceDetector
+        _DETECTOR = FaceDetector()
+    if _EMBEDDER is None:
+        from alibi.watchlist.face_embed import FaceEmbedder
+        _EMBEDDER = FaceEmbedder()
+    return _DETECTOR, _EMBEDDER
+
+
 def find_face(frame: np.ndarray, bbox, detector=None, embedder=None) -> Optional[dict]:
     """Look for one readable face inside a person box.
 
@@ -77,8 +94,8 @@ def find_face(frame: np.ndarray, bbox, detector=None, embedder=None) -> Optional
     big, factor = upscale(crop)
 
     if detector is None:
-        from alibi.watchlist.face_detect import FaceDetector
-        detector = FaceDetector()
+        detector, _cached_embedder = _models()
+        embedder = embedder or _cached_embedder
 
     found = detector.detect_and_extract(big)
     if not found:
@@ -88,8 +105,7 @@ def find_face(frame: np.ndarray, bbox, detector=None, embedder=None) -> Optional
         return None
 
     if embedder is None:
-        from alibi.watchlist.face_embed import FaceEmbedder
-        embedder = FaceEmbedder()
+        _d, embedder = _models()
     emb = embedder.generate_embedding(face_img)
     if emb is None or len(emb) == 0:
         return None
