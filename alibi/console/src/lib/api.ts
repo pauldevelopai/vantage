@@ -727,6 +727,13 @@ export const api = {
     return res.json();
   },
 
+  /** Every DISTINCT vehicle (appearance clusters) — what the Overview KPI counts. */
+  async getDistinctVehicles(window: string = '7d'): Promise<{ window: string; count: number; vehicles: any[] }> {
+    const res = await fetchWithAuth(`${API_BASE}/vehicles/distinct?window=${window}`);
+    if (!res.ok) throw new Error('Failed to load distinct vehicles');
+    return res.json();
+  },
+
   /** Recorder behaviour the agent honours live (e.g. local Ollama vision on/off). */
   async getRecorderSettings(): Promise<{ local_vision: boolean }> {
     const res = await fetchWithAuth(`${API_BASE}/recorders/settings`);

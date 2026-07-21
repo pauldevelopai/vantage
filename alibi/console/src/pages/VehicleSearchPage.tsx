@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
+import { CropImg } from '../components/CropImg';
 import type { TrailEntry } from '../lib/types';
 
 interface VehicleSighting {
@@ -28,6 +29,16 @@ export function VehicleSearchPage() {
   const [results, setResults] = useState<VehicleSighting[]>([]);
   const [searching, setSearching] = useState(false);
   const [searched, setSearched] = useState(false);
+
+  // The distinct vehicles the Overview KPI counts — loaded up front.
+  const [distinct, setDistinct] = useState<any[]>([]);
+  const [loadingDistinct, setLoadingDistinct] = useState(true);
+  useEffect(() => {
+    api.getDistinctVehicles('7d')
+      .then(d => setDistinct(d.vehicles || []))
+      .catch(() => setDistinct([]))
+      .finally(() => setLoadingDistinct(false));
+  }, []);
 
   // Trail state
   const [trail, setTrail] = useState<TrailEntry[]>([]);
@@ -94,11 +105,70 @@ export function VehicleSearchPage() {
     <div className="px-4 sm:px-6 lg:px-8">
       <div className="sm:flex sm:items-center">
         <div className="sm:flex-auto">
-          <h1 className="text-2xl font-semibold text-gray-900">Vehicle Search</h1>
+          <h1 className="text-2xl font-semibold text-gray-900">Vehicles</h1>
           <p className="mt-2 text-sm text-gray-700">
-            Search indexed vehicle sightings by license plate, make, model, color, location, and time.
+            The distinct vehicles your cameras have seen — then a full search over every sighting.
           </p>
         </div>
+      </div>
+
+      {/* The DISTINCT vehicles — this is what the Overview's "distinct vehicles"
+          KPI counts, so landing here must show exactly those cars. */}
+      <div className="mt-6 bg-white shadow sm:rounded-lg p-6">
+        <div className="flex items-baseline justify-between mb-4">
+          <h2 className="text-lg font-medium text-gray-900">
+            Distinct vehicles{distinct.length > 0 ? ` (${distinct.length})` : ''}
+          </h2>
+          <span className="text-xs text-gray-500">grouped by appearance · last 7 days</span>
+        </div>
+        {loadingDistinct ? (
+          <p className="text-sm text-gray-500">Loading…</p>
+        ) : distinct.length === 0 ? (
+          <p className="text-sm text-gray-500">No vehicles clustered yet.</p>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {distinct.map((v: any) => (
+              <div key={v.entity_id} className="rounded-lg border border-gray-200 overflow-hidden bg-white">
+                <div className="aspect-video bg-gray-100">
+                  {v.frame_url && v.bbox
+                    ? <CropImg src={v.frame_url} alt={v.descriptor || 'vehicle'}
+                               bbox={v.bbox as [number, number, number, number]} pad={0.3}
+                               className="w-full h-full" />
+                    : <div className="w-full h-full flex items-center justify-center text-xs text-gray-400">no photo</div>}
+                </div>
+                <div className="p-3">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                      v.owner_label ? 'bg-emerald-100 text-emerald-800'
+                      : v.familiarity === 'new' ? 'bg-amber-100 text-amber-800'
+                      : 'bg-gray-100 text-gray-700'}`}>
+                      {v.owner_label ? 'YOURS' : String(v.familiarity || '').toUpperCase()}
+                    </span>
+                    <span className="text-sm font-medium text-gray-900 truncate">
+                      {v.owner_label || v.descriptor || 'Unnamed vehicle'}
+                    </span>
+                    {v.plate && (
+                      <span className="font-mono text-[11px] font-bold text-gray-800 bg-gray-100 border border-gray-300 rounded px-1.5 py-0.5 tracking-wider">
+                        {v.plate}
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-1 text-xs text-gray-600">
+                    Came past {v.passes ?? '—'}× over {v.days} day{v.days === 1 ? '' : 's'}
+                    {v.cameras?.length > 0 && ` · ${v.cameras.join(', ')}`}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-gray-400">
+                    last seen {v.last_seen ? new Date(v.last_seen.endsWith('Z') ? v.last_seen : v.last_seen + 'Z').toLocaleString() : '—'}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <p className="mt-3 text-[11px] text-gray-400">
+          Grouped by appearance from your own cameras — continuity, never an identity claim.
+          Name one on the Overview and it reads as yours everywhere.
+        </p>
       </div>
 
       {/* Search Form */}
