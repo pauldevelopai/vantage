@@ -4891,22 +4891,56 @@ async def people_recent(limit: int = 60, hours: int = 168,
         sightings = []
 
     names = _display_names()
-    labels, details = {}, {}
+    labels, details, embeddings = {}, {}, {}
     try:
         from alibi.watchlist.watchlist_store import WatchlistStore
-        for e in WatchlistStore().load_all():
-            labels[e.person_id] = e.label
+        _ws = WatchlistStore()
+        for pid_, e in _ws._get_active_entries().items():
+            labels[pid_] = e.label
             note = (e.metadata or {}).get("notes")
             if note:
-                details[e.person_id] = note
+                details[pid_] = note
+            if e.embedding:
+                embeddings[pid_] = e.embedding
     except Exception:
         pass
+
+    # READ-TIME face matching — this is what makes naming retroactive. A sighting
+    # only carries a person_id if it was matched WHEN IT WAS RECORDED, so every
+    # face captured before you enrolled someone would read "Unknown person"
+    # forever. Comparing each sighting against the enrolled embeddings here means
+    # naming a face names it on this picture and on every past sighting of it,
+    # immediately. Conservative threshold — we never guess a stranger's identity.
+    def _match_pid(s):
+        if s.matched_person_id:
+            return s.matched_person_id
+        if not embeddings or not getattr(s, "embedding", None):
+            return None
+        try:
+            import numpy as _np
+            v = _np.asarray(s.embedding, dtype=_np.float32).ravel()
+            n = float(_np.linalg.norm(v))
+            if v.size == 0 or n == 0:
+                return None
+            v = v / n
+            best_pid, best = None, 0.6
+            for pid_, emb in embeddings.items():
+                w = _np.asarray(emb, dtype=_np.float32).ravel()
+                wn = float(_np.linalg.norm(w))
+                if wn == 0 or w.shape[0] != v.shape[0]:
+                    continue
+                score = float(_np.dot(v, w / wn))
+                if score >= best:
+                    best_pid, best = pid_, score
+            return best_pid
+        except Exception:
+            return None
 
     rows = []
     for s in sightings:
         if s.ts < cutoff:
             continue
-        pid = s.matched_person_id
+        pid = _match_pid(s)
         rows.append({
             "sighting_id": s.sighting_id,
             "source": "face",
