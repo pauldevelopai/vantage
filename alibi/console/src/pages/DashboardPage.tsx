@@ -901,6 +901,21 @@ const TIER_META = {
   noted:     { label: 'NOTED', badge: 'bg-slate-700 text-slate-300', border: 'border-slate-800', glow: '' },
 } as const;
 
+// When NO vision model ran, the basic-CV fallback writes a pixel-statistics
+// string ("High activity or complex scene detected"). That is not a description
+// of anything — never show it as if it were one.
+const GENERIC_DESCRIPTIONS = [
+  'static scene, very low activity',
+  'calm scene with minimal movement',
+  'moderate activity detected',
+  'high activity or complex scene detected',
+];
+function realDesc(d?: string | null): string | null {
+  const t = (d || '').trim();
+  if (!t) return null;
+  return GENERIC_DESCRIPTIONS.includes(t.toLowerCase()) ? null : t;
+}
+
 // Criteria-signal badges — things the system surfaces "worth a look" against our
 // own criteria (not raised incidents). All carry the amber "review" styling; the
 // label just names WHICH criterion. Never red — red is a human confirmation only.
@@ -965,22 +980,31 @@ function SituationsPanel({ situations, onChanged, onOpenVehicle }: { situations:
             Nothing needed your attention in this window — here's the routine activity that was noted.
           </p>
           <ul className="space-y-1.5">
-            {recent.map((s, i) => (
-              <li key={s.incident_id || i} className="flex items-center gap-2 text-xs">
+            {recent.map((s, i) => {
+              const d = realDesc(s.description);
+              return (
+              <li key={s.incident_id || i} className="flex items-start gap-2 text-xs">
                 {s.snapshot_url
                   ? <Link to={`/incidents/${s.incident_id}`} className="w-9 h-9 flex-none rounded overflow-hidden bg-slate-900 border border-slate-800 no-underline">
                       <AuthImg src={s.snapshot_url} alt={s.event_type || 'evidence'} className="w-full h-full object-cover" />
                     </Link>
                   : <span className="w-9 h-9 flex-none rounded bg-slate-800/60 border border-slate-800" />}
-                <span className="text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded bg-slate-700 text-slate-300 flex-none">NOTED</span>
-                <Link to={`/incidents/${s.incident_id}`}
-                      className="text-slate-300 hover:text-white truncate no-underline">
-                  {s.title || typeMeta(s.event_type || '').label}
-                </Link>
-                <span className="text-slate-600 truncate hidden sm:inline">{s.camera_name}</span>
-                <span className="text-slate-600 ml-auto font-mono text-[10px] flex-none">{timeAgo(s.ts)}</span>
+                <span className="mt-1 text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded bg-slate-700 text-slate-300 flex-none">NOTED</span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <Link to={`/incidents/${s.incident_id}`}
+                          className="text-slate-300 hover:text-white truncate no-underline">
+                      {s.title || typeMeta(s.event_type || '').label}
+                    </Link>
+                    <span className="text-slate-600 truncate hidden sm:inline">{s.camera_name}</span>
+                  </div>
+                  {/* What was actually seen — only when a vision model really ran. */}
+                  {d && <p className="text-[11px] text-slate-500 line-clamp-2 mt-0.5">{d}</p>}
+                </div>
+                <span className="text-slate-600 ml-auto mt-1 font-mono text-[10px] flex-none">{timeAgo(s.ts)}</span>
               </li>
-            ))}
+              );
+            })}
           </ul>
           {noted.length > recent.length && (
             <p className="mt-2 text-[11px]">
@@ -1042,8 +1066,8 @@ function SituationsPanel({ situations, onChanged, onOpenVehicle }: { situations:
                   ? <>“{s.confirmed.label}” <span className="text-[10px] font-normal text-slate-500">— confirmed by {s.confirmed.by}</span></>
                   : (s.title || typeMeta(s.event_type || '').label)}
               </div>
-              {s.description && (
-                <p className="mt-0.5 text-xs text-slate-500 line-clamp-2">{s.description}</p>
+              {realDesc(s.description) && (
+                <p className="mt-0.5 text-xs text-slate-500 line-clamp-2">{realDesc(s.description)}</p>
               )}
               <div className="mt-1.5 flex items-center gap-3">
                 {s.incident_id
