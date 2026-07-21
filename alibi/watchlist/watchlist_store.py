@@ -139,15 +139,50 @@ class WatchlistStore:
             if entry.source_ref != "REMOVED" and len(entry.embedding) > 0
         }
 
-    def get_all_embeddings(self) -> Dict[str, np.ndarray]:
-        """
-        Get all active embeddings as dictionary.
+    def get_galleries(self) -> Dict[str, np.ndarray]:
+        """Every confirmed face we hold for each person, stacked (N, D).
 
-        Returns:
-            Dict mapping person_id to embedding array
+        A person is not one photograph. Someone enrolled head-on at the gate
+        looks very different looking down at a phone in the driveway, and a
+        single template will miss them there. Each time someone confirms a
+        face, that view joins the person's gallery, and matching compares
+        against all of them — so the system genuinely gets better at
+        recognising the people it has been corrected about.
+
+        The LABEL still comes from the latest entry (renaming stays last-wins),
+        and a person whose latest entry is REMOVED is gone entirely.
         """
-        active = self._get_active_entries()
-        return {pid: entry.get_embedding_array() for pid, entry in active.items()}
+        entries = self.load_all()
+        latest = {}
+        for entry in entries:
+            latest[entry.person_id] = entry
+
+        galleries: Dict[str, list] = {}
+        for entry in entries:
+            head = latest.get(entry.person_id)
+            if head is None or head.source_ref == "REMOVED":
+                continue                       # deliberately removed person
+            if entry.source_ref == "REMOVED" or not entry.embedding:
+                continue
+            galleries.setdefault(entry.person_id, []).append(entry.embedding)
+
+        out: Dict[str, np.ndarray] = {}
+        for pid, embs in galleries.items():
+            arr = np.array(embs, dtype=np.float32)
+            # Renaming re-appends the same vector, so drop exact repeats —
+            # they add cost and no information.
+            arr = np.unique(arr.round(6), axis=0)
+            if arr.size:
+                out[pid] = arr
+        return out
+
+    def get_all_embeddings(self) -> Dict[str, np.ndarray]:
+        """Every person's face gallery, keyed by person_id.
+
+        Shape is (N, D) — N confirmed views of that person. Callers score
+        against the best-matching view; see FaceMatcher.cosine_similarity.
+        """
+        return self.get_galleries()
 
     def get_all_metadata(self) -> List[Dict[str, Any]]:
         """

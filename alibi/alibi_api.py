@@ -2174,14 +2174,21 @@ async def get_watchlist(
             entry["face"] = ({"frame_url": md["frame_url"],
                               "bbox": [fb.get("x", 0), fb.get("y", 0), fb.get("w", 0), fb.get("h", 0)]}
                              if md.get("frame_url") else None)
-            emb = embeddings.get(entry["person_id"]) if hasattr(embeddings, "get") else None
-            if emb is None or not len(emb):
+            gallery = embeddings.get(entry["person_id"]) if hasattr(embeddings, "get") else None
+            if gallery is None or not len(gallery):
                 continue
-            matches = sighting_store.find_similar(_np.asarray(emb, dtype=_np.float32),
-                                                  threshold=0.6, limit=500)
-            if matches:
-                newest = max(matches, key=lambda m: m[0].ts)[0]
-                entry["times_seen"] = len(matches)
+            # A person now holds several confirmed views; a sighting counts if
+            # it matches ANY of them. Union by sighting_id so more views can
+            # only find more appearances, never double-count one.
+            gallery = _np.atleast_2d(_np.asarray(gallery, dtype=_np.float32))
+            best: dict = {}
+            for view in gallery:
+                for s, score in sighting_store.find_similar(view, threshold=0.6, limit=500):
+                    if s.sighting_id not in best or score > best[s.sighting_id][1]:
+                        best[s.sighting_id] = (s, score)
+            if best:
+                newest = max((v[0] for v in best.values()), key=lambda m: m.ts)
+                entry["times_seen"] = len(best)
                 entry["last_seen"] = newest.ts
                 if newest.image_path:
                     entry["face"] = {"frame_url": newest.image_path, "bbox": list(newest.bbox)}
@@ -4900,8 +4907,10 @@ async def people_recent(limit: int = 60, hours: int = 168,
             note = (e.metadata or {}).get("notes")
             if note:
                 details[pid_] = note
-            if e.embedding:
-                embeddings[pid_] = e.embedding
+        # Galleries, not single templates: every confirmed view of a person
+        # counts, so someone enrolled at the gate is still found in the
+        # driveway looking down at a phone.
+        embeddings = _ws.get_galleries()
     except Exception:
         pass
 
@@ -4923,13 +4932,12 @@ async def people_recent(limit: int = 60, hours: int = 168,
             if v.size == 0 or n == 0:
                 return None
             v = v / n
+            from alibi.watchlist.face_match import FaceMatcher
+            _m = FaceMatcher()
             best_pid, best = None, 0.6
-            for pid_, emb in embeddings.items():
-                w = _np.asarray(emb, dtype=_np.float32).ravel()
-                wn = float(_np.linalg.norm(w))
-                if wn == 0 or w.shape[0] != v.shape[0]:
-                    continue
-                score = float(_np.dot(v, w / wn))
+            for pid_, gallery in embeddings.items():
+                # Gallery-aware: scores against the person's BEST confirmed view.
+                score = _m.cosine_similarity(v, gallery)
                 if score >= best:
                     best_pid, best = pid_, score
             return best_pid
@@ -5123,9 +5131,22 @@ async def confirm_face(payload: ConfirmFaceRequest,
                   "confirmed_by_human": True},
     ))
 
-    slug = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-") or "person"
-    person_id = f"{slug}-{_uuid.uuid4().hex[:6]}"
-    WatchlistStore().add_entry(WatchlistEntry(
+    # This is where the system learns. If you have named this person before,
+    # the new view joins THEIR gallery instead of creating a second Lorraine —
+    # so every correction makes them easier to recognise next time, especially
+    # at the angle that was being missed.
+    store_ = WatchlistStore()
+    existing = next((pid for pid, e in store_._get_active_entries().items()
+                     if e.label.strip().lower() == label.lower()), None)
+    person_id = existing or f"{re.sub(r'[^a-z0-9]+', '-', label.lower()).strip('-') or 'person'}-{_uuid.uuid4().hex[:6]}"
+
+    # And the answer itself is a labelled example: it moves where this camera
+    # draws the line between a face and a smudge.
+    from alibi.watchlist import face_feedback
+    face_feedback.record(camera_id=pending["camera_id"], score=pending["score"],
+                         accepted=True, source="recover", note=label)
+
+    store_.add_entry(WatchlistEntry(
         person_id=person_id,
         label=label,
         embedding=list(pending["embedding"]),
@@ -5138,12 +5159,59 @@ async def confirm_face(payload: ConfirmFaceRequest,
                   "frame_url": f"/api/cameras/frames/{pending['frame_id']}.jpg",
                   "notes": payload.details.strip()[:2000] or None},
     ))
+    views = len(store_.get_galleries().get(person_id, []))
     get_store().append_audit("face_recovered_enrolled", {
         "user": current_user.username, "person_id": person_id, "label": label,
         "sighting_id": sighting_id, "score": pending["score"],
+        "extended_existing": bool(existing), "views": views,
     })
     return {"status": "enrolled", "person_id": person_id, "label": label,
-            "sighting_id": sighting_id}
+            "sighting_id": sighting_id,
+            "extended_existing": bool(existing), "views": views}
+
+
+class RejectFaceRequest(BaseModel):
+    token: str
+    reason: str = ""
+
+
+@app.post("/people/reject-face", tags=["People"])
+async def reject_face(payload: RejectFaceRequest,
+                      current_user: User = Depends(require_role([Role.SUPERVISOR, Role.ADMIN]))):
+    """"That isn't a face." Kept, because a wrong answer teaches as much as a
+    right one: it tells this camera where the line between a face and a patch
+    of texture actually falls."""
+    from alibi.ttl_cache import cached as _cached
+    from alibi.watchlist import face_feedback
+
+    pending = _cached(f"recover:{payload.token}", 900, lambda: None)
+    if not pending:
+        raise HTTPException(status_code=404,
+                            detail="That face check has expired — run it again")
+    face_feedback.record(camera_id=pending["camera_id"], score=pending["score"],
+                         accepted=False, source="recover",
+                         note=payload.reason.strip()[:200] or None)
+    get_store().append_audit("face_rejected", {
+        "user": current_user.username, "score": pending["score"],
+        "camera_id": pending["camera_id"],
+    })
+    return {"status": "recorded", **face_feedback.summary(pending["camera_id"])}
+
+
+@app.get("/people/learning", tags=["People"])
+async def face_learning(camera_id: str = "",
+                        current_user: User = Depends(get_current_user)):
+    """What the cameras have learned from being corrected, and the threshold
+    those corrections argue for. Honest about not knowing yet."""
+    from alibi.vision.frame_intelligence import FACE_CONFIDENT
+    from alibi.watchlist import face_feedback
+
+    cam = camera_id or None
+    s = face_feedback.summary(cam)
+    learned = (face_feedback.learned_threshold(camera_id, FACE_CONFIDENT)
+               if camera_id else FACE_CONFIDENT)
+    return {"camera_id": camera_id, "default_threshold": FACE_CONFIDENT,
+            "threshold_in_use": learned, "learned": learned != FACE_CONFIDENT, **s}
 
 
 @app.get("/faces/recent")

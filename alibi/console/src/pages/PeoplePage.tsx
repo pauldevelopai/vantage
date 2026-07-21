@@ -167,19 +167,37 @@ function HistoryPanel({ person, onClose, onEnrolled }: { person: PersonRow; onCl
     }
   }
 
-  /** Save only once the operator has looked at the crop and agrees it's a face. */
+  /** Save only once the operator has looked at the crop and agrees it's a face.
+   *  Naming someone already enrolled adds this view to their gallery rather
+   *  than creating a second them — that is how recognition improves. */
   async function confirmRecovered() {
     if (!recovered || !name.trim()) return;
     setSaving(true);
     setSaveErr(null);
     try {
-      await api.confirmFace(recovered.token, name.trim(), details.trim());
-      onEnrolled();
+      const r = await api.confirmFace(recovered.token, name.trim(), details.trim());
+      if (r?.extended_existing) {
+        setRecovered(null);
+        setRecoverMsg(`Added another view of ${r.label} — ${r.views} now on file. ` +
+                      `They'll be easier to spot at this angle.`);
+        setTimeout(onEnrolled, 2200);
+      } else {
+        onEnrolled();
+      }
     } catch (e: any) {
       setSaveErr(e?.message || 'Could not save');
     } finally {
       setSaving(false);
     }
+  }
+
+  /** A wrong answer teaches as much as a right one — it tells this camera
+   *  where the line between a face and a patch of texture falls. */
+  async function rejectRecovered() {
+    const tok = recovered?.token;
+    setRecovered(null);
+    setRecoverMsg("Noted — that wasn't a face. This camera will bear it in mind.");
+    if (tok) { try { await api.rejectFace(tok); } catch { /* teaching is best-effort */ } }
   }
 
   async function updatePerson() {
@@ -357,7 +375,7 @@ function HistoryPanel({ person, onClose, onEnrolled }: { person: PersonRow; onCl
                         className="text-xs font-medium bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded px-3 py-1.5">
                   {saving ? 'Saving…' : 'Yes — save to recognition database'}
                 </button>
-                <button onClick={() => { setRecovered(null); setRecoverMsg("Discarded — that wasn't a face."); }}
+                <button onClick={rejectRecovered}
                         className="text-xs text-gray-500 hover:text-gray-700">
                   Not a face
                 </button>

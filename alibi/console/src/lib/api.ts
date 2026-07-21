@@ -652,6 +652,26 @@ export const api = {
     return res.json();
   },
 
+  /** "That isn't a face" — recorded, because it teaches this camera where the
+   *  line between a face and a patch of texture actually falls. */
+  async rejectFace(token: string, reason?: string): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/people/reject-face`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, reason: reason || '' }),
+    });
+    if (!res.ok) throw new Error('Could not record that');
+    return res.json();
+  },
+
+  /** What the cameras have learned from being corrected. */
+  async getFaceLearning(cameraId?: string): Promise<any> {
+    const q = cameraId ? `?camera_id=${encodeURIComponent(cameraId)}` : '';
+    const res = await fetchWithAuth(`${API_BASE}/people/learning${q}`);
+    if (!res.ok) throw new Error('Could not load learning state');
+    return res.json();
+  },
+
   async removeWatchlistEntry(personId: string): Promise<any> {
     const res = await fetchWithAuth(`${API_BASE}/watchlist/${encodeURIComponent(personId)}`, {
       method: 'DELETE',

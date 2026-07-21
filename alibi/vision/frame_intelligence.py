@@ -279,6 +279,13 @@ def _run_faces(mce, frame, camera_id: str, ts: datetime, out: Dict[str, Any],
     except Exception:
         watchlist_embeddings, watchlist_labels = [], {}
 
+    # What this camera has been taught about its own faces-vs-texture line.
+    try:
+        from alibi.watchlist import face_feedback
+        confident_at = face_feedback.learned_threshold(camera_id, FACE_CONFIDENT)
+    except Exception:
+        confident_at = FACE_CONFIDENT
+
     for bbox, det_score in faces:
         try:
             face_crop = mce._face_detector.extract_face(frame, bbox)
@@ -293,6 +300,10 @@ def _run_faces(mce, frame, camera_id: str, ts: datetime, out: Dict[str, Any],
             except Exception:
                 is_match, top, best_score = False, [], 0.0
 
+        # Where the line sits is this camera's own business, and its answers
+        # decide it. Until enough corrections exist, confident_at == the
+        # default, so a fresh deployment behaves exactly as it always has.
+        #
         # A FAINT face — one the old 0.5 cutoff would have thrown away entirely.
         # Someone looking down at a phone under a high camera scored 0.481 and
         # was discarded, which meant enrolling her did nothing the next time she
@@ -302,7 +313,7 @@ def _run_faces(mce, frame, camera_id: str, ts: datetime, out: Dict[str, Any],
         # never starts an appearance cluster: the detector fires on texture
         # (see face_within_person — a tree and paving have both been "faces"),
         # and looser detection must not mean looser identity.
-        if det_score < FACE_CONFIDENT and not (
+        if det_score < confident_at and not (
                 is_match and top and best_score >= FAINT_MATCH_MIN):
             continue
 

@@ -57,25 +57,31 @@ class FaceMatcher:
         
         Args:
             embedding1: First embedding vector
-            embedding2: Second embedding vector
-            
+            embedding2: A single embedding, OR a person's whole gallery of
+                confirmed views, shape (N, D). Against a gallery we return the
+                BEST-matching view: recognising someone from any angle you have
+                confirmed is the point of keeping more than one.
+
         Returns:
             Similarity score (0-1, where 1 is identical)
         """
-        # Normalize embeddings
-        norm1 = np.linalg.norm(embedding1)
-        norm2 = np.linalg.norm(embedding2)
-        
-        if norm1 == 0 or norm2 == 0:
+        a = np.asarray(embedding1, dtype=np.float32).ravel()
+        b = np.asarray(embedding2, dtype=np.float32)
+        if b.ndim == 1:
+            b = b.reshape(1, -1)
+        if a.size == 0 or b.size == 0 or b.shape[1] != a.size:
             return 0.0
-        
-        # Calculate cosine similarity
-        similarity = np.dot(embedding1, embedding2) / (norm1 * norm2)
-        
-        # Clip to [0, 1] range (sometimes numerical errors can cause values slightly outside)
-        similarity = np.clip(similarity, 0.0, 1.0)
-        
-        return float(similarity)
+
+        norm_a = np.linalg.norm(a)
+        norms_b = np.linalg.norm(b, axis=1)
+        if norm_a == 0 or not np.any(norms_b):
+            return 0.0
+
+        with np.errstate(divide="ignore", invalid="ignore"):
+            sims = (b @ a) / (norms_b * norm_a)
+        sims = np.nan_to_num(sims, nan=0.0)
+
+        return float(np.clip(sims.max(), 0.0, 1.0))
     
     def match(
         self,
