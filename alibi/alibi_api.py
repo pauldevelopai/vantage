@@ -4173,6 +4173,7 @@ class VehicleLabelUpdate(BaseModel):
     entity_id: str
     label: str
     plate: Optional[str] = None
+    details: Optional[str] = None
 
 
 @app.put("/vehicles/entity-label", tags=["Vehicles"])
@@ -4186,11 +4187,14 @@ async def set_vehicle_entity_label(
     empty label removes the name. Audited."""
     from alibi.patterns.familiarity import set_vehicle_label
     plate = (payload.plate or "").strip() or None
+    details = (payload.details or "").strip() or None
     result = set_vehicle_label(payload.entity_id, payload.label,
-                               set_by=current_user.username, plate=plate)
+                               set_by=current_user.username, plate=plate,
+                               details=details)
     get_store().append_audit("vehicle_labelled", {
         "user": current_user.username, "entity_id": payload.entity_id,
         "label": payload.label.strip() or None, "plate": plate,
+        "has_details": bool(details),
     })
     return {"entity_id": payload.entity_id, **(result or {"label": None})}
 
@@ -4343,7 +4347,8 @@ async def list_distinct_vehicles(window: str = "7d",
     photo, plate, how often it came past and when. Continuity, never identity."""
     from datetime import timedelta
     from alibi.cameras.cross_camera import get_cross_camera_tracker
-    from alibi.patterns.familiarity import classify_entity, get_vehicle_labels, plate_labels
+    from alibi.patterns.familiarity import (classify_entity, get_vehicle_labels,
+                                            plate_labels, plate_details)
     from alibi.patterns.situations import vehicle_descriptor, visit_count
     from alibi.vehicles.evidence import (sightings_index, entity_evidence,
                                          plate_index, best_plate)
@@ -4354,8 +4359,9 @@ async def list_distinct_vehicles(window: str = "7d",
     vlabels = get_vehicle_labels()
     try:
         plabels = plate_labels()
+        pdetails = plate_details()
     except Exception:
-        plabels = {}
+        plabels, pdetails = {}, {}
     names = _display_names()
 
     try:
@@ -4382,6 +4388,8 @@ async def list_distinct_vehicles(window: str = "7d",
         plate = bp["plate"] if bp else None
         owner = ((vlabels.get(e["entity_id"]) or {}).get("label")
                  or (plabels.get(plate) if plate else None))
+        owner_details = ((vlabels.get(e["entity_id"]) or {}).get("details")
+                         or (pdetails.get(plate) if plate else None))
         # A car the owner has claimed IS the scene, whatever the raw maths says.
         cls = "resident" if owner else classify_entity(
             e["count"], e["first_seen"], e["last_seen"],
@@ -4389,6 +4397,7 @@ async def list_distinct_vehicles(window: str = "7d",
         rows.append({
             "entity_id": e["entity_id"],
             "owner_label": owner,
+            "owner_details": owner_details,
             "descriptor": vehicle_descriptor(ev.get("colour"), ev.get("body"), owner),
             "familiarity": cls,
             "plate": plate,

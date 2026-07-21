@@ -78,10 +78,12 @@ def get_vehicle_labels() -> Dict[str, Dict[str, Any]]:
 
 def set_vehicle_label(entity_id: str, label: str, set_by: str,
                       plate: Optional[str] = None,
+                      details: Optional[str] = None,
                       now: Optional[datetime] = None) -> Dict[str, Any]:
-    """Name a recurring vehicle. Empty label removes the name. A `plate`, when
-    known, is stored with it so the name follows the PLATE across the appearance
-    fragments the ReID clustering splits the same car into (see plate_labels)."""
+    """Name a recurring vehicle and record what the owner knows about it. Empty
+    label removes the entry. A `plate`, when known, is stored with it so the name
+    AND the details follow the PLATE across the appearance fragments the ReID
+    clustering splits the same car into (see plate_labels / plate_details)."""
     labels = get_vehicle_labels()
     label = (label or "").strip()
     if label:
@@ -89,6 +91,9 @@ def set_vehicle_label(entity_id: str, label: str, set_by: str,
                "set_at": (now or datetime.utcnow()).isoformat()}
         if plate:
             row["plate"] = str(plate).strip()
+        d = (details or "").strip()[:2000]
+        if d:
+            row["details"] = d
         labels[entity_id] = row
     else:
         labels.pop(entity_id, None)
@@ -105,6 +110,17 @@ def plate_labels() -> Dict[str, str]:
         p = (row or {}).get("plate")
         if p and row.get("label"):
             out[str(p)] = row["label"]
+    return out
+
+
+def plate_details() -> Dict[str, str]:
+    """{plate -> owner's notes} — the details follow the plate the same way the
+    name does, so what you know about a car isn't stranded on one fragment."""
+    out: Dict[str, str] = {}
+    for row in get_vehicle_labels().values():
+        p = (row or {}).get("plate")
+        if p and (row or {}).get("details"):
+            out[str(p)] = row["details"]
     return out
 
 

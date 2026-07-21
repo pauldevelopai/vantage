@@ -674,11 +674,13 @@ export const api = {
   },
 
   /** Name a recurring vehicle ("Paul's Fortuner"); empty label removes it. */
-  async setVehicleLabel(entityId: string, label: string, plate?: string | null): Promise<any> {
+  async setVehicleLabel(entityId: string, label: string, plate?: string | null,
+                        details?: string | null): Promise<any> {
     const res = await fetchWithAuth(`${API_BASE}/vehicles/entity-label`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ entity_id: entityId, label, plate: plate || null }),
+      body: JSON.stringify({ entity_id: entityId, label, plate: plate || null,
+                             details: details || null }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));

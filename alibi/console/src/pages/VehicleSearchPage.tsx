@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { CropImg } from '../components/CropImg';
+import { VehicleHistoryModal } from '../components/VehicleHistoryModal';
 import type { TrailEntry } from '../lib/types';
 
 interface VehicleSighting {
@@ -34,13 +35,15 @@ export function VehicleSearchPage() {
   const [distinct, setDistinct] = useState<any[]>([]);
   const [loadingDistinct, setLoadingDistinct] = useState(true);
   const [window_, setWindow_] = useState('7d');
+  const [openVehicle, setOpenVehicle] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
   useEffect(() => {
     setLoadingDistinct(true);
     api.getDistinctVehicles(window_)
       .then(d => setDistinct(d.vehicles || []))
       .catch(() => setDistinct([]))
       .finally(() => setLoadingDistinct(false));
-  }, [window_]);
+  }, [window_, reload]);
 
   // Trail state
   const [trail, setTrail] = useState<TrailEntry[]>([]);
@@ -142,7 +145,8 @@ export function VehicleSearchPage() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {distinct.map((v: any) => (
-              <div key={v.entity_id} className="rounded-lg border border-gray-200 overflow-hidden bg-white">
+              <button key={v.entity_id} onClick={() => setOpenVehicle(v.entity_id)}
+                      className="text-left rounded-lg border border-gray-200 overflow-hidden bg-white hover:border-indigo-500 hover:shadow transition">
                 <div className="aspect-video bg-gray-100">
                   {v.frame_url && v.bbox
                     ? <CropImg src={v.frame_url} alt={v.descriptor || 'vehicle'}
@@ -174,8 +178,14 @@ export function VehicleSearchPage() {
                   <p className="mt-0.5 text-[11px] text-gray-400">
                     last seen {v.last_seen ? new Date(v.last_seen.endsWith('Z') ? v.last_seen : v.last_seen + 'Z').toLocaleString() : '—'}
                   </p>
+                  {v.owner_details && (
+                    <p className="mt-1 text-[11px] text-gray-600 line-clamp-2 whitespace-pre-wrap">{v.owner_details}</p>
+                  )}
+                  <span className="mt-1.5 inline-block text-[11px] text-indigo-600">
+                    open · every appearance &amp; edit →
+                  </span>
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         )}
@@ -484,6 +494,12 @@ export function VehicleSearchPage() {
             </div>
           )}
         </div>
+      )}
+
+      {openVehicle && (
+        <VehicleHistoryModal entityId={openVehicle}
+                             onClose={() => setOpenVehicle(null)}
+                             onSaved={() => { setOpenVehicle(null); setReload(r => r + 1); }} />
       )}
     </div>
   );
