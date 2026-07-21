@@ -979,33 +979,38 @@ function SituationsPanel({ situations, onChanged, onOpenVehicle }: { situations:
           <p className="text-xs text-slate-500 mb-3">
             Nothing needed your attention in this window — here's the routine activity that was noted.
           </p>
-          <ul className="space-y-1.5">
+          {/* A grid of evidence cards, not a list of near-identical rows — the
+              picture is what you actually scan, so lead with it. */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
             {recent.map((s, i) => {
               const d = realDesc(s.description);
               return (
-              <li key={s.incident_id || i} className="flex items-start gap-2 text-xs">
-                {s.snapshot_url
-                  ? <Link to={`/incidents/${s.incident_id}`} className="w-9 h-9 flex-none rounded overflow-hidden bg-slate-900 border border-slate-800 no-underline">
-                      <AuthImg src={s.snapshot_url} alt={s.event_type || 'evidence'} className="w-full h-full object-cover" />
-                    </Link>
-                  : <span className="w-9 h-9 flex-none rounded bg-slate-800/60 border border-slate-800" />}
-                <span className="mt-1 text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded bg-slate-700 text-slate-300 flex-none">NOTED</span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <Link to={`/incidents/${s.incident_id}`}
-                          className="text-slate-300 hover:text-white truncate no-underline">
-                      {s.title || typeMeta(s.event_type || '').label}
-                    </Link>
-                    <span className="text-slate-600 truncate hidden sm:inline">{s.camera_name}</span>
+                <Link key={s.incident_id || i} to={`/incidents/${s.incident_id}`}
+                      className="vg-rise group rounded-lg overflow-hidden bg-black border border-slate-800 hover:border-indigo-500 hover:shadow-[0_0_22px_-4px_rgba(99,102,241,.85)] transition-all duration-300 no-underline"
+                      style={{ animationDelay: `${210 + i * 40}ms` }}>
+                  <div className="relative aspect-video bg-slate-900">
+                    {s.snapshot_url
+                      ? <AuthImg src={s.snapshot_url} alt={s.event_type || 'evidence'}
+                                 className="w-full h-full object-cover opacity-90 group-hover:opacity-100 group-hover:scale-[1.05] transition-all duration-500" />
+                      : <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-700">no frame</div>}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent" />
+                    <span className="absolute top-1.5 left-1.5 text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded bg-slate-700/90 text-slate-300">NOTED</span>
+                    <span className="absolute bottom-1 right-1.5 text-[8px] px-1 py-0.5 rounded bg-black/80 text-slate-400 font-mono">
+                      {timeAgo(s.ts)}
+                    </span>
                   </div>
-                  {/* What was actually seen — only when a vision model really ran. */}
-                  {d && <p className="text-[11px] text-slate-500 line-clamp-2 mt-0.5">{d}</p>}
-                </div>
-                <span className="text-slate-600 ml-auto mt-1 font-mono text-[10px] flex-none">{timeAgo(s.ts)}</span>
-              </li>
+                  <div className="px-2 py-1.5 border-t border-slate-800/70">
+                    <div className="text-[10px] font-medium text-slate-200 truncate">
+                      {s.title || typeMeta(s.event_type || '').label}
+                    </div>
+                    <div className="text-[9px] text-slate-500 truncate">{s.camera_name}</div>
+                    {/* What was actually seen — only when a vision model really ran. */}
+                    {d && <p className="mt-0.5 text-[9px] text-slate-500 line-clamp-2">{d}</p>}
+                  </div>
+                </Link>
               );
             })}
-          </ul>
+          </div>
           {noted.length > recent.length && (
             <p className="mt-2 text-[11px]">
               <Link to="/incidents" className="text-slate-400 hover:text-slate-200 no-underline">
