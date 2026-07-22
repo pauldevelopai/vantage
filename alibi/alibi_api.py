@@ -3784,6 +3784,21 @@ async def bridge_ingest_frame(camera_id: str, request: Request,
                 "description": analysis.get("description", ""),
                 "intel": _intel_summary(intel)}
 
+    # Continued presence is not repeated arrival. A parked car is detected in
+    # every motion frame, and raising an event each time produced incidents
+    # holding hundreds of near-identical photographs of one stationary car.
+    # Raise on change, plus an occasional heartbeat so a long stay still shows.
+    try:
+        from alibi.cameras.scene_change import get_scene_memory
+        fresh, why = get_scene_memory().consider(camera_id, intel, now)
+        if not fresh:
+            return {"analyzed": True, "incident": None, "unchanged": True,
+                    "description": analysis.get("description", ""),
+                    "intel": _intel_summary(intel)}
+        event.metadata = {**(event.metadata or {}), "scene": why}
+    except Exception as e:
+        print(f"[frame-ai] scene-change check unavailable: {e}", flush=True)
+
     store = get_store()
     settings = get_settings()
     store.append_event(event)

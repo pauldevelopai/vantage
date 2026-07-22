@@ -5,6 +5,92 @@ import { canPerformAction, hasRole } from '../lib/auth';
 import { AuthImg } from '../components/AuthImg';
 import type { IncidentDetail, IncidentExplanation } from '../lib/types';
 
+/**
+ * A parked car is detected in every motion frame, so one incident could hold
+ * 223 "vehicle detected" events across three hours — each with its own
+ * near-identical photograph. Showing them all is not a timeline, it is the
+ * same picture dozens of times.
+ *
+ * Runs of the same event type on the same camera collapse into one entry that
+ * says how long it went on. Anything different — a person arriving, the car
+ * leaving — breaks the run and gets its own entry, which is the point.
+ *
+ * The pipeline no longer creates these floods (alibi/cameras/scene_change.py),
+ * but incidents recorded before that fix still contain them.
+ */
+const RUN_GAP_MS = 10 * 60 * 1000;
+
+function collapseRuns(events: any[]): any[][] {
+  const ordered = [...(events || [])].sort(
+    (a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
+  const runs: any[][] = [];
+  for (const e of ordered) {
+    const run = runs[runs.length - 1];
+    const last = run?.[run.length - 1];
+    const sameScene = last
+      && last.event_type === e.event_type
+      && last.camera_id === e.camera_id
+      && new Date(e.ts).getTime() - new Date(last.ts).getTime() <= RUN_GAP_MS;
+    if (sameScene) run.push(e); else runs.push([e]);
+  }
+  return runs;
+}
+
+function spanLabel(run: any[]): string {
+  const ms = new Date(run[run.length - 1].ts).getTime() - new Date(run[0].ts).getTime();
+  const mins = Math.round(ms / 60000);
+  if (mins < 1) return 'under a minute';
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  return `${h}h ${mins % 60}m`;
+}
+
+/** One entry for a stretch where nothing changed. */
+function StillThere({ run }: { run: any[] }) {
+  const [open, setOpen] = useState(false);
+  const first = run[0];
+  return (
+    <div className="border-l-2 border-gray-300 pl-4 relative">
+      <div className="absolute -left-2 top-0 w-3 h-3 rounded-full bg-gray-400"></div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <p className="font-medium text-gray-900">{first.event_type}</p>
+        <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
+          continuously for {spanLabel(run)}
+        </span>
+      </div>
+      <p className="text-xs text-gray-500 mt-1 font-mono">
+        🕐 {new Date(first.ts).toLocaleString()} → {new Date(run[run.length - 1].ts).toLocaleTimeString()}
+      </p>
+      <p className="text-sm text-gray-500 mt-1">📹 {first.camera_id}</p>
+      <p className="text-sm text-gray-500 mt-1">
+        Same scene across {run.length} frames — one shown.
+      </p>
+      {first.snapshot_url && (
+        <a href={first.snapshot_url} target="_blank" rel="noopener noreferrer"
+           className="mt-2 block w-full max-w-xs rounded overflow-hidden border border-gray-200 bg-black">
+          <AuthImg src={first.snapshot_url} alt="event frame"
+                   className="w-full h-auto object-contain max-h-56" />
+        </a>
+      )}
+      <button onClick={() => setOpen(!open)}
+              className="mt-2 text-xs text-blue-600 hover:text-blue-800">
+        {open ? 'Hide' : `Show all ${run.length} frames`}
+      </button>
+      {open && (
+        <div className="mt-2 grid grid-cols-3 sm:grid-cols-6 gap-2">
+          {run.map(e => (
+            <a key={e.event_id} href={e.snapshot_url} target="_blank" rel="noopener noreferrer"
+               title={new Date(e.ts).toLocaleTimeString()}
+               className="block rounded overflow-hidden border border-gray-200 bg-black">
+              {e.snapshot_url && <AuthImg src={e.snapshot_url} alt="" className="w-full h-16 object-cover" />}
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function IncidentDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -487,7 +573,9 @@ export function IncidentDetailPage() {
           <h2 className="text-lg font-medium text-gray-900 mb-4">Replay Timeline</h2>
           <p className="text-sm text-gray-600 mb-4">Ordered events with exact ingestion times</p>
           <div className="space-y-4">
-            {incident.events.map((event) => (
+            {collapseRuns(incident.events).map((run) => run.length > 1 ? (
+              <StillThere key={run[0].event_id} run={run} />
+            ) : (() => { const event = run[0]; return (
               <div key={event.event_id} className="border-l-2 border-blue-300 pl-4 relative">
                 <div className="absolute -left-2 top-0 w-3 h-3 rounded-full bg-blue-500"></div>
                 <div className="flex justify-between items-start">
@@ -533,7 +621,7 @@ export function IncidentDetailPage() {
                   </div>
                 )}
               </div>
-            ))}
+            ); })())}
           </div>
         </div>
 
