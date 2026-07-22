@@ -4718,12 +4718,16 @@ async def person_candidates(person_id: str, limit: int = 12,
     if gallery is None or entry is None:
         raise HTTPException(status_code=404, detail="No such enrolled person")
 
+    from alibi.watchlist import rejections
+    ruled_out = rejections.rejected_for(person_id)
     known = {tuple(_np.asarray(v, dtype=_np.float32).round(4).ravel()) for v in gallery}
     matcher = FaceMatcher()
     out = []
     for sight in get_face_sighting_store().load_all():
         if not sight.embedding or sight.matched_person_id:
             continue
+        if sight.sighting_id in ruled_out:
+            continue                       # already told this isn't them
         v = _np.asarray(sight.embedding, dtype=_np.float32).ravel()
         if tuple(v.round(4)) in known:
             continue                       # already one of this person's views
@@ -4741,6 +4745,51 @@ async def person_candidates(person_id: str, limit: int = 12,
 
 class ClaimFacesRequest(BaseModel):
     sighting_ids: list
+
+
+class NotAMatchRequest(BaseModel):
+    sighting_ids: list
+
+
+@app.post("/watchlist/{person_id}/not-a-match", tags=["Watchlist"])
+async def not_a_match(person_id: str, payload: NotAMatchRequest,
+                      current_user: User = Depends(require_role([Role.SUPERVISOR, Role.ADMIN]))):
+    """"That isn't them." Reversing a name, and remembering it.
+
+    Removes the attribution from the stored face, drops the view from that
+    person's gallery so it stops pulling matches the wrong way, and records the
+    rejection so the same face is never suggested for them again — an undo that
+    gets re-offered next week is not an undo.
+
+    Saying a face is not Paul says nothing about who it IS. The face goes back
+    to being an unknown person, which is the honest state.
+    """
+    from alibi.watchlist.face_sighting_store import get_face_sighting_store
+    from alibi.watchlist import rejections
+
+    wanted = {s for s in (payload.sighting_ids or []) if s}
+    if not wanted:
+        raise HTTPException(status_code=400, detail="No sightings given")
+
+    store = get_face_sighting_store()
+    cleared = 0
+    for sight in store.load_all():
+        if sight.sighting_id in wanted:
+            rejections.record(person_id, sight.sighting_id, by=current_user.username)
+            if sight.matched_person_id == person_id:
+                sight.matched_person_id = None
+                sight.match_score = None
+                store.add_sighting(sight)          # append-only; last wins
+                cleared += 1
+
+    from alibi.watchlist.watchlist_store import WatchlistStore
+    views = len(WatchlistStore().get_galleries().get(person_id, []))
+    get_store().append_audit("faces_rejected", {
+        "user": current_user.username, "person_id": person_id,
+        "rejected": len(wanted), "cleared": cleared, "views_left": views,
+    })
+    return {"person_id": person_id, "rejected": len(wanted),
+            "cleared": cleared, "views": views}
 
 
 @app.post("/watchlist/{person_id}/claim", tags=["Watchlist"])

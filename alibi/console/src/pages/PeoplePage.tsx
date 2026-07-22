@@ -226,6 +226,23 @@ function HistoryPanel({ person, onClose, onEnrolled }: { person: PersonRow; onCl
     }
   }
 
+  /** "That isn't them." Clears the name from this face, drops it from their
+   *  gallery, and remembers — so it is not offered for them again. It says
+   *  nothing about who the person IS; they go back to unknown, which is
+   *  honest. */
+  async function notThisPerson() {
+    if (!sid || !person.matched_person_id) return;
+    if (!confirm(`Clear "${person.matched_label}" from this face? It goes back to `
+                 + `an unknown person, and won't be suggested as them again.`)) return;
+    setSaving(true);
+    try {
+      await api.notAMatch(person.matched_person_id, [sid]);
+      onEnrolled();
+    } catch (e: any) {
+      setSaveErr(e?.message || 'Could not undo that');
+    } finally { setSaving(false); }
+  }
+
   /** A wrong answer teaches as much as a right one — it tells this camera
    *  where the line between a face and a patch of texture falls. */
   async function rejectRecovered() {
@@ -304,10 +321,21 @@ function HistoryPanel({ person, onClose, onEnrolled }: { person: PersonRow; onCl
                     : <p className="text-xs text-emerald-700/70 mt-1">No details on file yet.</p>}
                 </div>
                 {canEditPerson && (
-                  <button onClick={() => { setEditingPerson(true); setName(person.matched_label || ''); setDetails(person.matched_details || ''); }}
-                          className="flex-none text-xs text-emerald-800 hover:text-emerald-900 border border-emerald-300 rounded px-2 py-1">
-                    Edit
-                  </button>
+                  <div className="flex-none flex items-center gap-2">
+                    <button onClick={() => { setEditingPerson(true); setName(person.matched_label || ''); setDetails(person.matched_details || ''); }}
+                            className="text-xs text-emerald-800 hover:text-emerald-900 border border-emerald-300 rounded px-2 py-1">
+                      Edit
+                    </button>
+                    {/* A name has to be reversible — the cost of a wrong one is
+                        carried by whoever was misnamed. This clears it, drops
+                        the view from their gallery, and remembers, so the face
+                        is never suggested for them again. */}
+                    <button onClick={notThisPerson} disabled={saving || !sid}
+                            title="Clear this name and never suggest it for them again"
+                            className="text-xs text-red-700 hover:text-red-800 border border-red-300 rounded px-2 py-1 disabled:opacity-50">
+                      Not {person.matched_label}
+                    </button>
+                  </div>
                 )}
               </div>
             </div>

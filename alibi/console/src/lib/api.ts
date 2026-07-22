@@ -703,6 +703,18 @@ export const api = {
     return res.json();
   },
 
+  /** "That isn't them" — clears the name, drops the view, and remembers so it
+   *  is never suggested for that person again. */
+  async notAMatch(personId: string, sightingIds: string[]): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/watchlist/${encodeURIComponent(personId)}/not-a-match`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sighting_ids: sightingIds }),
+    });
+    if (!res.ok) throw new Error('Could not undo that');
+    return res.json();
+  },
+
   async removeWatchlistEntry(personId: string): Promise<any> {
     const res = await fetchWithAuth(`${API_BASE}/watchlist/${encodeURIComponent(personId)}`, {
       method: 'DELETE',

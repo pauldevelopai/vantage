@@ -157,12 +157,22 @@ class WatchlistStore:
         for entry in entries:
             latest[entry.person_id] = entry
 
+        from alibi.watchlist import rejections
+        rejected = rejections.all_rejections()
+
         galleries: Dict[str, list] = {}
         for entry in entries:
             head = latest.get(entry.person_id)
             if head is None or head.source_ref == "REMOVED":
                 continue                       # deliberately removed person
             if entry.source_ref == "REMOVED" or not entry.embedding:
+                continue
+            # Views added from a face later ruled out are dropped, or a
+            # rejection would clear the label while still dragging matches
+            # towards the wrong face.
+            src = (entry.source_ref or "")
+            if src.startswith("sighting:") and \
+                    src.split(":", 1)[1] in rejected.get(entry.person_id, set()):
                 continue
             galleries.setdefault(entry.person_id, []).append(entry.embedding)
 
@@ -222,11 +232,17 @@ def effective_galleries() -> Dict[str, np.ndarray]:
     """
     from alibi.watchlist.face_sighting_store import get_face_sighting_store
 
+    from alibi.watchlist import rejections
+
     galleries = {pid: list(g) for pid, g in WatchlistStore().get_galleries().items()}
+    rejected = rejections.all_rejections()
     try:
         for sight in get_face_sighting_store().load_all():
             pid = sight.matched_person_id
             if pid and pid in galleries and sight.embedding:
+                # A face someone has ruled out must not creep back in.
+                if sight.sighting_id in rejected.get(pid, set()):
+                    continue
                 galleries[pid].append(np.asarray(sight.embedding, dtype=np.float32))
     except Exception as e:
         print(f"[watchlist] could not read the face archive: {e}")
