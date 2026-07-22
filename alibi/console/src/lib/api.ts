@@ -673,8 +673,14 @@ export const api = {
   },
 
   /** Mint a single-use pairing code — how a recorder or a phone joins. */
-  async pairBridge(): Promise<{ code: string; expires_in_minutes: number }> {
-    const res = await fetchWithAuth(`${API_BASE}/cameras/bridge/pair`, { method: 'POST' });
+  async pairBridge(): Promise<{ code: string; expires_in_minutes: number;
+                                phone_url?: string | null; qr_svg?: string | null }> {
+    // The server can't know its public address; the browser can.
+    const res = await fetchWithAuth(`${API_BASE}/cameras/bridge/pair`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ base_url: window.location.origin }),
+    });
     if (!res.ok) throw new Error('Could not create a pairing code');
     return res.json();
   },

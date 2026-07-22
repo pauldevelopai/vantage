@@ -3135,15 +3135,38 @@ class BridgeResultsRequest(BaseModel):
 # --- Admin (console) side ---------------------------------------- #
 
 @app.post("/cameras/bridge/pair", tags=["Camera Bridge"])
-async def bridge_pair(current_user: User = Depends(require_role([Role.ADMIN]))):
-    """Mint a single-use pairing code + the one-line setup command for the agent."""
+async def bridge_pair(payload: dict = Body(default={}),
+                      current_user: User = Depends(require_role([Role.ADMIN]))):
+    """Mint a single-use pairing code, plus a QR that carries it.
+
+    Typing an eight-character code into a phone is the fiddly part, so the QR
+    encodes <base_url>/phone?code=CODE — the page reads the query string, so
+    scanning it means the handset arrives already paired-up and the only thing
+    left to press is Start. The code is still shown for anyone whose camera
+    app won't cooperate.
+    """
     from alibi.cameras.bridge import get_bridge_registry, PAIRING_TTL_MINUTES
     pc = get_bridge_registry().create_pairing_code(created_by=current_user.username)
+
+    # The server does not know how it is reached from outside, so the console
+    # tells it. Anything not http(s) is refused rather than encoded blindly.
+    base = str(payload.get("base_url") or "").strip().rstrip("/")
+    link, qr_svg = None, None
+    if base.startswith("https://") or base.startswith("http://"):
+        link = f"{base}/phone?code={pc.code}"
+        try:
+            import segno
+            qr = segno.make(link, error="m")
+            qr_svg = qr.svg_data_uri(scale=6, border=2, dark="#064e3b", light="#ffffff")
+        except Exception as e:
+            print(f"[pair] QR unavailable: {e}", flush=True)
+
     return {
         "code": pc.code,
         "expires_at": pc.expires_at,
         "expires_in_minutes": PAIRING_TTL_MINUTES,
-        # The agent binary/script is a later slice; this is the intended shape.
+        "phone_url": link,
+        "qr_svg": qr_svg,          # data: URI, or null when it could not be made
         "setup_hint": f"Run the Vantage Bridge on the network you want to scan and pair it with code {pc.code}.",
     }
 

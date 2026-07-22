@@ -89,3 +89,5 @@ huggingface-hub>=0.17.0      # Hugging Face model hub
 # spaCy for deep linguistic analysis (optional)
 # After installing, run: python -m spacy download en_core_web_sm
 spacy>=3.5.0
+# QR codes for phone-camera pairing (pure Python, no dependencies, MIT)
+segno>=1.6.0

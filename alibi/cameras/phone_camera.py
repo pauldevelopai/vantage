@@ -266,9 +266,15 @@ PHONE_CAMERA_HTML = r"""<!doctype html>
   $('startBtn').onclick = startWatching;
   $('stopBtn').onclick = stopWatching;
 
-  // A QR or link can carry the code: /phone?code=ABC123
+  // The QR carries the code: /phone?code=ABC123. Say so, so the form doesn't
+  // look like it still wants something typed.
   var qs = new URLSearchParams(location.search);
-  if (qs.get('code')) $('code').value = qs.get('code').toUpperCase();
+  if (qs.get('code')) {
+    $('code').value = qs.get('code').toUpperCase();
+    $('pairMsg').className = 'muted';
+    $('pairMsg').textContent = 'Code filled in from the QR — name this camera and tap Pair.';
+    setTimeout(function () { $('name').focus(); }, 200);
+  }
 
   if (creds) { show('cam'); startCamera(); } else { show('pair'); }
 })();

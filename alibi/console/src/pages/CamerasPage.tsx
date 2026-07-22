@@ -145,6 +145,7 @@ export function CamerasPage() {
   // nothing reads, while claiming otherwise.
   const phoneUrl = `${window.location.origin}/phone`;
   const [phoneCode, setPhoneCode] = useState<string | null>(null);
+  const [phoneQr, setPhoneQr] = useState<string | null>(null);
   const [phoneMins, setPhoneMins] = useState(0);
   const [phoneBusy, setPhoneBusy] = useState(false);
   const [phoneErr, setPhoneErr] = useState<string | null>(null);
@@ -155,6 +156,7 @@ export function CamerasPage() {
     try {
       const r = await api.pairBridge();
       setPhoneCode(r.code);
+      setPhoneQr(r.qr_svg || null);
       setPhoneMins(r.expires_in_minutes);
     } catch (e: any) {
       setPhoneErr(e?.message || 'Could not create a pairing code');
@@ -518,8 +520,15 @@ export function CamerasPage() {
           <p className="mt-1 text-sm text-gray-500">
             Any phone can become a camera. Its frames go through the same detection, plates,
             faces and vehicle matching as your fixed cameras, and it appears alongside them.
-            Open this on the phone’s browser and allow the camera:
           </p>
+          <p className="mt-3 text-sm text-gray-500">
+            <span className="font-medium text-gray-700">1.</span> Press the button below for a code.
+            {' '}<span className="font-medium text-gray-700">2.</span> On the phone, scan the QR — or
+            open the address and type the code.
+            {' '}<span className="font-medium text-gray-700">3.</span> Allow the camera when asked, then
+            tap <span className="font-medium text-gray-700">Start watching</span>.
+          </p>
+          <p className="mt-3 text-xs text-gray-400">Address, if you're typing it in:</p>
           <div className="mt-3 flex items-center gap-2">
             <code className="flex-1 text-sm bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-800 break-all">
               {phoneUrl}
@@ -536,13 +545,30 @@ export function CamerasPage() {
             </button>
             {phoneErr && <p className="mt-2 text-xs text-red-600">{phoneErr}</p>}
             {phoneCode && (
-              <div className="mt-3 rounded-md bg-emerald-50 border border-emerald-200 p-3">
-                <p className="text-xs text-emerald-800">Enter this on the phone:</p>
-                <p className="font-mono text-3xl tracking-[0.3em] text-emerald-900 mt-1">{phoneCode}</p>
-                <p className="text-[11px] text-emerald-700/80 mt-2">
-                  Single use, expires in {phoneMins} minutes. Then tap Start watching and leave the
-                  page open. No sign-in needed on the handset — the code is the gate.
-                </p>
+              <div className="mt-3 rounded-md bg-emerald-50 border border-emerald-200 p-4">
+                <div className="flex flex-col sm:flex-row items-center gap-5">
+                  {phoneQr ? (
+                    <div className="flex-none text-center">
+                      <img src={phoneQr} alt="Pairing QR code"
+                           className="w-40 h-40 rounded bg-white p-1 border border-emerald-200" />
+                      <p className="mt-1 text-[11px] text-emerald-700/80">Scan with the phone's camera</p>
+                    </div>
+                  ) : (
+                    <div className="flex-none w-40 h-40 rounded bg-white border border-emerald-200 flex items-center justify-center text-center px-3">
+                      <span className="text-[11px] text-gray-400">
+                        QR unavailable — use the code
+                      </span>
+                    </div>
+                  )}
+                  <div className="min-w-0 text-center sm:text-left">
+                    <p className="text-xs text-emerald-800">…or type this code on the phone:</p>
+                    <p className="font-mono text-3xl tracking-[0.3em] text-emerald-900 mt-1 break-all">{phoneCode}</p>
+                    <p className="text-[11px] text-emerald-700/80 mt-2">
+                      Single use, expires in {phoneMins} minutes. Scanning the QR fills the code in
+                      for you — no sign-in needed on the handset, the code is the gate.
+                    </p>
+                  </div>
+                </div>
               </div>
             )}
           </div>
