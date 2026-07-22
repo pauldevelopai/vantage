@@ -2,11 +2,12 @@
 // "what's been happening" over a window, and "which incidents was a plate near".
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
+import { WINDOWS as SHARED_WINDOWS } from '../components/TimeWindow';
 
+// The shared four, plus the finer grain this page alone needs.
 const WINDOWS = [
-  { key: '1h', label: 'Last hour' },
-  { key: '24h', label: 'Last 24 hours' },
-  { key: '7d', label: 'Last week' },
+  { key: '1h', label: 'Last hour', short: '1H' },
+  ...SHARED_WINDOWS,
 ];
 
 export default function PatternsPage() {

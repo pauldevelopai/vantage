@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { hasRole } from '../lib/auth';
 import { AuthImg } from '../components/AuthImg';
 import { CropImg } from '../components/CropImg';
+import { WINDOWS, windowPhrase, type Win } from '../components/TimeWindow';
 import { VehicleHistoryModal } from '../components/VehicleHistoryModal';
 import type { DashboardOverview, DashboardPatterns, DashboardPerson, DashboardRow, DashboardVehicle, FieldReport, PatternFinding, RecurringVehicle, WatchingFor } from '../lib/types';
 
@@ -17,11 +18,9 @@ import type { DashboardOverview, DashboardPatterns, DashboardPerson, DashboardRo
  * make the page look busier.
  */
 
-const RANGES = [
-  { key: '24h', label: '24H' },
-  { key: '7d', label: '7D' },
-  { key: '30d', label: '30D' },
-];
+// The four the whole system offers (incl. All time). Styling stays bespoke to
+// this dark control-room header; only the vocabulary is shared.
+const RANGES = WINDOWS.map(w => ({ key: w.key, label: w.short, title: w.label }));
 
 const TYPE_META: Record<string, { label: string; color: string }> = {
   person_detected: { label: 'Person', color: '#818cf8' },
@@ -92,7 +91,7 @@ const CSS = `
 `;
 
 export function DashboardPage() {
-  const [range, setRange] = useState('24h');
+  const [range, setRange] = useState<Win>('24h');
   const [vehicleHistory, setVehicleHistory] = useState<string | null>(null);
   const [logReport, setLogReport] = useState(false);
   const [data, setData] = useState<DashboardOverview | null>(null);
@@ -139,14 +138,15 @@ export function DashboardPage() {
               </span>
             </div>
             <p className="text-sm text-slate-500">
-              Real detections from your cameras · updated {data ? timeAgo(data.generated_at) : '…'}
+              Real detections from your cameras, {windowPhrase(range)} · updated {data ? timeAgo(data.generated_at) : '…'}
             </p>
           </div>
           <div className="flex items-center gap-1 p-1 rounded-lg bg-slate-900/70 border border-slate-800">
             {RANGES.map(r => (
               <button
                 key={r.key}
-                onClick={() => setRange(r.key)}
+                title={r.title}
+                onClick={() => setRange(r.key as Win)}
                 className={`px-3 py-1 text-xs font-semibold tracking-wide rounded-md transition-all duration-200 ${
                   range === r.key
                     ? 'bg-indigo-500 text-white shadow-[0_0_16px_-2px_rgba(99,102,241,.8)]'

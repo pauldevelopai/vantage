@@ -74,8 +74,11 @@ async def vehicle_history(
     from alibi.cameras.cross_camera import get_cross_camera_tracker
     from alibi.patterns.familiarity import classify_entity, get_vehicle_labels
 
-    hours = {"24h": 24, "7d": 24 * 7, "30d": 24 * 30}.get(window, 24 * 7)
+    from alibi import time_window
+
     tracker = get_cross_camera_tracker()
+    # "all" = the tracker's full retention; trails older than that are gone.
+    hours = time_window.window_hours(window, default="7d") or tracker.retention_hours
 
     summary = next((e for e in tracker.entity_summary("vehicle", hours=hours)
                     if e["entity_id"] == entity_id), None)

@@ -776,8 +776,11 @@ export const api = {
     return res.json();
   },
 
-  async getRecentPeople(hours: number = 168): Promise<{ people: PersonRow[]; count: number; window_hours: number }> {
-    const res = await fetchWithAuth(`${API_BASE}/people/recent?hours=${hours}`);
+  /** People seen in a window. Takes a shared window key ('24h'|'7d'|'30d'|'all')
+   *  — a number is still accepted as raw hours for older callers. */
+  async getRecentPeople(window: string | number = '7d'): Promise<{ people: PersonRow[]; count: number; window_hours: number }> {
+    const q = typeof window === 'number' ? `hours=${window}` : `window=${encodeURIComponent(window)}`;
+    const res = await fetchWithAuth(`${API_BASE}/people/recent?limit=200&${q}`);
     if (!res.ok) throw new Error('Failed to load people');
     return res.json();
   },

@@ -3,6 +3,7 @@ import { api } from '../lib/api';
 import { CropImg } from '../components/CropImg';
 import { VehicleHistoryModal } from '../components/VehicleHistoryModal';
 import type { TrailEntry } from '../lib/types';
+import { WINDOWS, type Win } from '../components/TimeWindow';
 
 interface VehicleSighting {
   sighting_id: string;
@@ -34,7 +35,7 @@ export function VehicleSearchPage() {
   // The distinct vehicles the Overview KPI counts, over a chosen window.
   const [distinct, setDistinct] = useState<any[]>([]);
   const [loadingDistinct, setLoadingDistinct] = useState(true);
-  const [window_, setWindow_] = useState('7d');
+  const [window_, setWindow_] = useState<Win>('7d');
   const [openVehicle, setOpenVehicle] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   useEffect(() => {
@@ -127,12 +128,12 @@ export function VehicleSearchPage() {
           <div className="flex items-center gap-3">
             <span className="text-xs text-gray-500 hidden sm:inline">grouped by appearance</span>
             <div className="flex items-center gap-0.5 p-0.5 rounded-md bg-gray-100">
-              {[{ k: '24h', l: '24H' }, { k: '7d', l: '7D' }, { k: '30d', l: '30D' }].map(w => (
-                <button key={w.k} onClick={() => setWindow_(w.k)}
+              {WINDOWS.map(w => (
+                <button key={w.key} onClick={() => setWindow_(w.key)} title={w.label}
                         className={`px-2.5 py-1 text-xs font-medium rounded ${
-                          window_ === w.k ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'
+                          window_ === w.key ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'
                         }`}>
-                  {w.l}
+                  {w.short}
                 </button>
               ))}
             </div>

@@ -4,6 +4,7 @@ import { hasRole } from '../lib/auth';
 import { AuthImg } from './AuthImg';
 import { CropImg } from './CropImg';
 import type { VehicleHistory } from '../lib/types';
+import { WINDOWS, type Win } from './TimeWindow';
 
 /**
  * One recurring vehicle in full — shared by the Overview and the Vehicles page.
@@ -149,7 +150,7 @@ export function VehicleHistoryModal({ entityId, onClose, onSaved }: {
   entityId: string; onClose: () => void; onSaved: () => void;
 }) {
   const [h, setH] = useState<VehicleHistory | null>(null);
-  const [win, setWin] = useState('7d');
+  const [win, setWin] = useState<Win>('7d');
   const [err, setErr] = useState<string | null>(null);
   const canEdit = hasRole('supervisor') || hasRole('admin');
 
@@ -212,10 +213,10 @@ export function VehicleHistoryModal({ entityId, onClose, onSaved }: {
           </div>
           <div className="flex items-center gap-2 flex-none">
             <div className="flex items-center gap-0.5 p-0.5 rounded bg-slate-800">
-              {['24h', '7d', '30d'].map(w => (
-                <button key={w} onClick={() => setWin(w)}
-                        className={`px-2 py-0.5 text-[10px] rounded ${win === w ? 'bg-indigo-500 text-white' : 'text-slate-400'}`}>
-                  {w.toUpperCase()}
+              {WINDOWS.map(w => (
+                <button key={w.key} onClick={() => setWin(w.key)} title={w.label}
+                        className={`px-2 py-0.5 text-[10px] rounded ${win === w.key ? 'bg-indigo-500 text-white' : 'text-slate-400'}`}>
+                  {w.short}
                 </button>
               ))}
             </div>

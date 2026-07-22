@@ -26,6 +26,7 @@ from alibi.schemas import (
 )
 from alibi.alibi_store import get_store
 from alibi.settings import get_settings
+from alibi import time_window          # 24h / 7d / 30d / all — one vocabulary
 from alibi.incident_grouper import process_camera_event
 from alibi.alibi_engine import (
     build_incident_plan,
@@ -1053,7 +1054,7 @@ async def get_metrics_summary(range: str = "24h", current_user: User = Depends(g
 # Empty stores return zeros and empty lists — the console renders an honest
 # "nothing yet" rather than any placeholder data.
 
-_DASH_RANGES = {"24h": 24, "7d": 24 * 7, "30d": 24 * 30}
+_DASH_RANGES = time_window.HOURS      # 24h / 7d / 30d / all — see alibi/time_window.py
 # Vehicle familiarity is judged over the tracker's full retention (7 days), not
 # the dashboard's selected range, so a week-long resident isn't flagged as
 # out-of-ordinary on a quiet day.
@@ -1166,13 +1167,14 @@ async def dashboard_overview(range: str = "24h",
     returns zeros."""
     from collections import Counter
     from datetime import timedelta
-    hours = _DASH_RANGES.get(range, 24)
-    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    hours = time_window.window_hours(range)         # None == all time
+    cutoff = time_window.cutoff(range)              # None == no cutoff
 
     store = get_store()
     # Pull generously, then filter/sort here (the store's limit is file-order).
-    events = [e for e in store.list_events(limit=5000)
-              if getattr(e, "ts", None) and e.ts >= cutoff]
+    # cutoff is None for "all time" — every stored event counts.
+    events = [e for e in store.list_events(limit=100000 if cutoff is None else 5000)
+              if getattr(e, "ts", None) and (cutoff is None or e.ts >= cutoff)]
     events.sort(key=lambda e: e.ts, reverse=True)
 
     # Camera display names, disambiguated when several share a vendor name.
@@ -1246,7 +1248,9 @@ async def dashboard_overview(range: str = "24h",
             wl_embeddings = {e.person_id: e.embedding for e in wl_entries if e.embedding}
         except Exception:
             wl_labels, wl_embeddings = {}, {}
-        recent_people = _recent_people(cutoff.isoformat(), max_rows=12, labels=wl_labels,
+        # "" sorts before every ISO timestamp, so all time really means all.
+        recent_people = _recent_people(cutoff.isoformat() if cutoff else "",
+                                       max_rows=12, labels=wl_labels,
                                        watchlist_embeddings=wl_embeddings)
         for p in recent_people:
             p["source"] = "face"
@@ -1398,8 +1402,9 @@ async def dashboard_overview(range: str = "24h",
             face_sightings = []
             try:
                 from alibi.watchlist.face_sighting_store import get_face_sighting_store
+                _from = cutoff.isoformat() if cutoff else ""
                 face_sightings = [s for s in get_face_sighting_store().load_all()
-                                  if s.ts >= cutoff.isoformat()]
+                                  if s.ts >= _from]
             except Exception:
                 pass
             watching_for = evaluate_watching_for(site, events, face_sightings)
@@ -4496,8 +4501,11 @@ async def list_distinct_vehicles(window: str = "7d",
     from alibi.vehicles.evidence import (sightings_index, entity_evidence,
                                          plate_index, best_plate)
 
-    hours = {"24h": 24, "7d": 24 * 7, "30d": 24 * 30}.get(window, _VEH_BASELINE_HOURS)
     tracker = get_cross_camera_tracker()
+    # "all" = everything the tracker still holds. Vehicle trails prune at the
+    # tracker's retention, so that IS all time for this data — claiming more
+    # would be claiming sightings we deleted.
+    hours = time_window.window_hours(window, default="7d") or tracker.retention_hours
     ent = tracker.entity_summary("vehicle", hours=hours)
     vlabels = get_vehicle_labels()
     try:
@@ -4885,12 +4893,21 @@ async def get_baselines(camera_id: str, current_user: User = Depends(get_current
 # surface continuity ("seen 4 times since Tuesday"), never an identity we guessed.
 
 @app.get("/people/recent", tags=["People"])
-async def people_recent(limit: int = 60, hours: int = 168,
+async def people_recent(limit: int = 60, hours: int = 168, window: str = "",
                         current_user: User = Depends(get_current_user)):
-    """Recent face sightings from our own cameras, newest first."""
+    """Recent face sightings from our own cameras, newest first.
+
+    `window` (24h/7d/30d/all) is the shared vocabulary every page uses; `hours`
+    stays for older callers. An empty cutoff means all time — "" sorts before
+    every ISO timestamp, so nothing is filtered out.
+    """
     from datetime import timedelta
     from alibi.watchlist.face_sighting_store import get_face_sighting_store
-    cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+    if window:
+        _c = time_window.cutoff(window)
+        cutoff = _c.isoformat() if _c else ""
+    else:
+        cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
 
     try:
         sightings = get_face_sighting_store().get_recent(limit=limit)
@@ -4979,9 +4996,9 @@ async def people_recent(limit: int = 60, hours: int = 168,
                 union = aw * ah + bw * bh - inter
                 return inter / union if union > 0 else 0.0
 
-            cutoff_dt = datetime.fromisoformat(cutoff)
-            events = [e for e in get_store().list_events(limit=5000)
-                      if getattr(e, "ts", None) and e.ts >= cutoff_dt]
+            cutoff_dt = datetime.fromisoformat(cutoff) if cutoff else None
+            events = [e for e in get_store().list_events(limit=100000 if cutoff_dt is None else 5000)
+                      if getattr(e, "ts", None) and (cutoff_dt is None or e.ts >= cutoff_dt)]
             events.sort(key=lambda e: e.ts, reverse=True)
             seen_boxes: list = []
             for e in events:

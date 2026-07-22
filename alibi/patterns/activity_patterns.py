@@ -20,15 +20,25 @@ from alibi.watchlist.face_sighting_store import get_face_sighting_store
 from alibi.vehicles.sightings_store import VehicleSightingsStore
 
 
-# Named windows the UI offers.
-WINDOWS = {"1h": 1.0, "24h": 24.0, "7d": 168.0, "week": 168.0}
+# Named windows the UI offers. The four shared ones come from alibi.time_window
+# so this module can't drift from the rest of the system; the extras below are
+# finer grains only this analysis uses.
+WINDOWS = {"1h": 1.0, "30m": 0.5, "week": 168.0}
 
 
 def parse_window(window: str) -> float:
-    """Parse '1h' / '24h' / '7d' / '30m' into hours (default 24h)."""
+    """Parse '24h' / '7d' / '30d' / 'all' / '1h' / '30m' into hours.
+
+    "all" has no natural number of hours; this analysis needs one, so it gets
+    the longest shared window rather than pretending to unbounded history.
+    """
+    from alibi import time_window
+
     w = (window or "24h").strip().lower()
     if w in WINDOWS:
         return WINDOWS[w]
+    if w in time_window.HOURS:
+        return time_window.HOURS[w] or time_window.HOURS["30d"]
     try:
         if w.endswith("h"):
             return float(w[:-1])

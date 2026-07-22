@@ -4,6 +4,7 @@ import { hasRole } from '../lib/auth';
 import { AuthImg } from '../components/AuthImg';
 import { CropImg } from '../components/CropImg';
 import type { PersonRow, PersonHistoryResult } from '../lib/types';
+import { TimeWindow, windowPhrase, type Win } from '../components/TimeWindow';
 
 /**
  * People — "who has been here, and where have they been before?"
@@ -30,10 +31,11 @@ export function PeoplePage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [selected, setSelected] = useState<PersonRow | null>(null);
+  const [win, setWin] = useState<Win>('7d');
 
-  async function load() {
+  async function load(w: Win = win) {
     try {
-      const d = await api.getRecentPeople(168);
+      const d = await api.getRecentPeople(w);
       setRows(d.people);
       setErr(null);
     } catch (e: any) {
@@ -44,20 +46,24 @@ export function PeoplePage() {
   }
 
   useEffect(() => {
-    load();
-    const t = setInterval(load, 20000);
+    setLoading(true);
+    load(win);
+    const t = setInterval(() => load(win), 20000);
     return () => clearInterval(t);
-  }, []);
+  }, [win]);
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6">
-      <div className="mb-4">
-        <h1 className="text-2xl font-semibold text-gray-900">People</h1>
-        <p className="text-sm text-gray-500">
-          People your cameras have seen in the last 7 days. Click any one of them. Where a face
-          was captured you get their history and can name them; where only a body was detected
-          you can run the face pass over that shot and name them if a face is recoverable.
-        </p>
+      <div className="mb-4 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-gray-900">People</h1>
+          <p className="text-sm text-gray-500">
+            People your cameras have seen — {windowPhrase(win)}. Click any one of them. Where a face
+            was captured you get their history and can name them; where only a body was detected
+            you can run the face pass over that shot and name them if a face is recoverable.
+          </p>
+        </div>
+        <TimeWindow value={win} onChange={setWin} className="flex-none mt-1" />
       </div>
 
       {err && <div className="my-4 p-3 bg-red-50 text-red-700 text-sm rounded-md">{err}</div>}
@@ -65,10 +71,13 @@ export function PeoplePage() {
 
       {!loading && rows.length === 0 && (
         <div className="bg-white shadow rounded-lg p-8 text-center">
-          <p className="text-gray-900 font-medium">No faces seen yet</p>
+          <p className="text-gray-900 font-medium">
+            {win === 'all' ? 'Nobody on record yet' : `Nobody seen ${windowPhrase(win)}`}
+          </p>
           <p className="text-sm text-gray-500 mt-2 max-w-lg mx-auto">
-            This only ever shows real faces your own cameras recorded — so it stays empty
-            until the recorder sends motion frames containing people. Nothing here is simulated.
+            This only ever shows real people your own cameras recorded — so it stays empty
+            until the recorder sends motion frames containing them. Nothing here is simulated.
+            {win !== 'all' && ' Try a longer period.'}
           </p>
         </div>
       )}
