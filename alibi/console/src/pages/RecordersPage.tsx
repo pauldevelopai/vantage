@@ -25,6 +25,70 @@ function fmtWhen(ts: number): string {
   return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+
+/**
+ * A phone is a real camera. The bridge protocol is plain HTTP, so a web page
+ * on the handset can speak it — no app, nothing opened on the router — and its
+ * frames go through the same pipeline as every other camera.
+ *
+ * The code is single-use and expires, so it is safe to show on screen.
+ */
+function PhoneCameraCard() {
+  const [code, setCode] = useState<string | null>(null);
+  const [mins, setMins] = useState<number>(0);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const url = `${window.location.origin}/phone`;
+
+  async function makeCode() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api.pairBridge();
+      setCode(r.code);
+      setMins(r.expires_in_minutes);
+    } catch (e: any) {
+      setErr(e?.message || 'Could not create a code');
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="bg-white shadow rounded-lg p-4 mb-6">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-gray-900">Use a phone as a camera</p>
+          <p className="text-xs text-gray-500 mt-0.5">
+            An old handset on a windowsill counts. It feeds the same system as your
+            other cameras — no app to install, nothing to open on your router.
+          </p>
+        </div>
+        {hasRole('admin') && (
+          <button onClick={makeCode} disabled={busy}
+                  className="flex-none text-xs font-medium bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-white rounded px-3 py-1.5">
+            {busy ? 'Working…' : code ? 'New code' : 'Add a phone'}
+          </button>
+        )}
+      </div>
+      {!hasRole('admin') && (
+        <p className="mt-2 text-xs text-gray-400">Adding a camera requires the admin role.</p>
+      )}
+      {err && <p className="mt-2 text-xs text-red-600">{err}</p>}
+      {code && (
+        <div className="mt-3 rounded-md bg-indigo-50 border border-indigo-200 p-3">
+          <p className="text-xs text-indigo-800">On the phone, open</p>
+          <p className="font-mono text-sm text-indigo-900 break-all">{url}</p>
+          <p className="text-xs text-indigo-800 mt-2">and enter this code:</p>
+          <p className="font-mono text-3xl tracking-[0.3em] text-indigo-900 mt-1">{code}</p>
+          <p className="text-[11px] text-indigo-700/80 mt-2">
+            Single use, expires in {mins} minutes. Then tap Start watching and leave
+            the page open.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function RecordersPage() {
   const isAdmin = hasRole('admin');
   const [bridges, setBridges] = useState<Bridge[]>([]);
@@ -63,10 +127,13 @@ export function RecordersPage() {
 
   const [localVision, setLocalVision] = useState<boolean | null>(null);
   const [lvBusy, setLvBusy] = useState(false);
+  const [lvErr, setLvErr] = useState<string | null>(null);
 
   useEffect(() => {
     loadBridges();
-    api.getRecorderSettings().then(s => setLocalVision(!!s.local_vision)).catch(() => {});
+    api.getRecorderSettings()
+      .then(s => { setLocalVision(!!s.local_vision); setLvErr(null); })
+      .catch(e => setLvErr(e?.message || 'Settings unavailable'));
     const t = setInterval(loadBridges, 5000);
     return () => clearInterval(t);
   }, []);
@@ -78,7 +145,10 @@ export function RecordersPage() {
     try {
       const s = await api.setRecorderSettings({ local_vision: next });
       setLocalVision(!!s.local_vision);
-    } catch { /* keep old */ } finally { setLvBusy(false); }
+      setLvErr(null);
+    } catch (e: any) {
+      setLvErr(e?.message || 'Could not change it');
+    } finally { setLvBusy(false); }
   }
 
   async function handleDownload() {
@@ -167,27 +237,63 @@ export function RecordersPage() {
         </p>
       </div>
 
-      {/* Free on-PC scene descriptions (Ollama) — a live on/off the recorder
-          honours within a few seconds. Turn it off if Ollama is slow. */}
-      {localVision !== null && (
-        <div className="bg-white shadow rounded-lg p-4 mb-6 flex items-center justify-between gap-4">
-          <div>
-            <p className="text-sm font-medium text-gray-900">Free scene descriptions (Ollama on your PC)</p>
-            <p className="text-xs text-gray-500">
-              Describes every shot locally at no AI cost. Slow on machines without a GPU — flip it off and the
-              cloud narrates instead. Takes effect on the recorder within a few seconds.
+      {/* Who describes the pictures: your PC for free, or the cloud for money.
+          Always rendered — this used to vanish entirely when the settings call
+          failed, which looks identical to the feature not existing. */}
+      <div className="bg-white shadow rounded-lg p-4 mb-6">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-gray-900">Who describes what the cameras see</p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {lvErr
+                ? 'Could not read the current setting.'
+                : localVision === null
+                  ? 'Checking…'
+                  : localVision
+                    ? 'Ollama on your PC — free, but slow without a GPU.'
+                    : 'Claude in the cloud — fast, costs a little per shot, and the picture leaves your network.'}
             </p>
           </div>
-          <button
-            onClick={() => toggleLocalVision(!localVision)}
-            disabled={lvBusy || !hasRole('supervisor')}
-            title={!hasRole('supervisor') ? 'Supervisor or admin only' : undefined}
-            className={`relative inline-flex h-6 w-11 flex-none items-center rounded-full transition-colors disabled:opacity-50 ${localVision ? 'bg-indigo-600' : 'bg-gray-300'}`}
-          >
-            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${localVision ? 'translate-x-6' : 'translate-x-1'}`} />
-          </button>
+          <div className="flex flex-none items-center gap-2">
+            <button
+              onClick={() => toggleLocalVision(false)}
+              disabled={lvBusy || !hasRole('supervisor') || localVision === null}
+              title={!hasRole('supervisor') ? 'Supervisor or admin only' : 'Describe in the cloud'}
+              className={`px-3 py-1.5 text-xs font-medium rounded-l-md border disabled:opacity-50 ${
+                localVision === false
+                  ? 'bg-indigo-600 border-indigo-600 text-white'
+                  : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'}`}
+            >
+              Cloud
+            </button>
+            <button
+              onClick={() => toggleLocalVision(true)}
+              disabled={lvBusy || !hasRole('supervisor') || localVision === null}
+              title={!hasRole('supervisor') ? 'Supervisor or admin only' : 'Describe on your own PC with Ollama'}
+              className={`-ml-2 px-3 py-1.5 text-xs font-medium rounded-r-md border disabled:opacity-50 ${
+                localVision === true
+                  ? 'bg-indigo-600 border-indigo-600 text-white'
+                  : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'}`}
+            >
+              Ollama (free)
+            </button>
+          </div>
         </div>
-      )}
+        {lvErr && (
+          <p className="mt-2 text-xs text-red-600">
+            {lvErr} — the recorder keeps whatever it was last told.
+          </p>
+        )}
+        {localVision && (
+          <p className="mt-2 text-xs text-gray-500">
+            Needs Ollama running on the recorder PC with a vision model pulled
+            (<code className="bg-gray-100 px-1 rounded">ollama pull llama3.2-vision</code>).
+            If it isn't there, shots go undescribed rather than falling back to paid calls.
+          </p>
+        )}
+      </div>
+
+      <PhoneCameraCard />
 
       {/* Your recorders — the day-to-day view, with storage */}
       <div className="bg-white shadow rounded-lg p-6 mb-6">

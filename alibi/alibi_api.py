@@ -212,6 +212,17 @@ async def mobile_home():
     """
     return HTMLResponse(content=MOBILE_HOME_HTML)
 
+@app.get("/phone", response_class=HTMLResponse, tags=["Mobile"])
+async def phone_camera_page():
+    """Turn a phone into a camera. No app, no router changes: the page speaks
+    the same bridge protocol the desktop recorder does, so its frames go
+    through the identical pipeline and land on Overview beside every other
+    camera. Unauthenticated by design — pairing is the gate, and the code is
+    single-use and short-lived."""
+    from alibi.cameras.phone_camera import PHONE_CAMERA_HTML
+    return HTMLResponse(content=PHONE_CAMERA_HTML)
+
+
 @app.get("/camera-test", response_class=HTMLResponse, tags=["Debug"])
 async def camera_test():
     """

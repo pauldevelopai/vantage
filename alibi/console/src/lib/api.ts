@@ -672,6 +672,13 @@ export const api = {
     return res.json();
   },
 
+  /** Mint a single-use pairing code — how a recorder or a phone joins. */
+  async pairBridge(): Promise<{ code: string; expires_in_minutes: number }> {
+    const res = await fetchWithAuth(`${API_BASE}/cameras/bridge/pair`, { method: 'POST' });
+    if (!res.ok) throw new Error('Could not create a pairing code');
+    return res.json();
+  },
+
   async removeWatchlistEntry(personId: string): Promise<any> {
     const res = await fetchWithAuth(`${API_BASE}/watchlist/${encodeURIComponent(personId)}`, {
       method: 'DELETE',
