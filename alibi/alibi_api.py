@@ -4548,6 +4548,71 @@ class WatchlistPersonUpdate(BaseModel):
 SUGGEST_SAME_PERSON = 0.30
 
 
+@app.post("/watchlist/merge-duplicates", tags=["Watchlist"])
+async def merge_duplicate_people(dry_run: bool = True,
+                                 current_user: User = Depends(require_role([Role.ADMIN]))):
+    """Fold people who share a name into one.
+
+    Enrolling "Paul" twice used to mint a second Paul, so the live store held
+    three of him and three Mikes, each holding a single view. His own pictures
+    were competing against fragments of himself, and none had enough angles to
+    recognise him. That cause is fixed; this repairs what it already made.
+
+    Every view is preserved — the survivor inherits them all, and the others
+    are marked removed rather than deleted.
+    """
+    from datetime import datetime as _dt
+    from alibi.watchlist.watchlist_store import WatchlistStore, WatchlistEntry
+
+    ws = WatchlistStore()
+    active = ws._get_active_entries()
+    galleries = ws.get_galleries()
+
+    by_name: dict = {}
+    for pid, entry in active.items():
+        by_name.setdefault(entry.label.strip().lower(), []).append(pid)
+
+    plan = []
+    for name, pids in sorted(by_name.items()):
+        if len(pids) < 2:
+            continue
+        # Keep the one holding the most views; ties go to the oldest id.
+        pids.sort(key=lambda p: (-len(galleries.get(p, [])), p))
+        keep, drop = pids[0], pids[1:]
+        views = sum(len(galleries.get(p, [])) for p in pids)
+        plan.append({"label": active[keep].label, "keep": keep, "merge": drop,
+                     "views_after": views})
+
+    if dry_run:
+        return {"dry_run": True, "would_merge": plan}
+
+    merged = 0
+    for row in plan:
+        keep = row["keep"]
+        survivor = active[keep]
+        for pid in row["merge"]:
+            for vec in galleries.get(pid, []):
+                ws.add_entry(WatchlistEntry(
+                    person_id=keep, label=survivor.label,
+                    embedding=[float(x) for x in vec],
+                    added_ts=_dt.utcnow().isoformat(),
+                    source_ref=f"merged:{pid}",
+                    metadata={**(survivor.metadata or {}), "merged_from": pid}))
+            # Retire the duplicate. Marked removed, never deleted.
+            ws.add_entry(WatchlistEntry(
+                person_id=pid, label=survivor.label, embedding=[],
+                added_ts=_dt.utcnow().isoformat(), source_ref="REMOVED",
+                metadata={"merged_into": keep, "by": current_user.username}))
+            merged += 1
+
+    after = {p: len(g) for p, g in WatchlistStore().get_galleries().items()}
+    get_store().append_audit("people_merged", {
+        "user": current_user.username, "duplicates_removed": merged,
+        "people": [r["label"] for r in plan]})
+    return {"dry_run": False, "duplicates_removed": merged, "merged": plan,
+            "views_per_person_now": after}
+
+
 @app.get("/watchlist/{person_id}/candidates", tags=["Watchlist"])
 async def person_candidates(person_id: str, limit: int = 12,
                             current_user: User = Depends(get_current_user)):

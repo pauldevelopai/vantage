@@ -32,6 +32,18 @@ RESIDENT_MIN_SIGHTINGS = 60    # ...OR this many sightings = a constant presence
 REGULAR_MIN_DAYS = 2
 
 
+def _passes(v: dict) -> str:
+    """How many times it actually came past — passes, not frames.
+
+    A parked car is detected in every frame, so the raw sighting count read
+    "seen 4368x" for a vehicle that never moved. `visits` groups sightings
+    separated by more than ten minutes; fall back to the raw count only for
+    callers that predate it.
+    """
+    n = v.get("visits") or v.get("count") or 0
+    return f"seen {n} time{'s' if n != 1 else ''}"
+
+
 def classify_entity(count: int, first_seen: str, last_seen: str, days: int,
                     active_hours: int, now: Optional[datetime] = None) -> str:
     """resident | regular | new | occasional — from the sighting record alone.
@@ -177,16 +189,16 @@ def pattern_findings(vehicle_entities: List[Dict[str, Any]],
             except (ValueError, TypeError):
                 first_txt = "today"
             text = (f"{name} is NEW to the scene — first seen {first_txt} at {cams}, "
-                    f"{v['count']} sighting{'s' if v['count'] != 1 else ''} so far.")
+                    f"{_passes(v)} so far.")
         elif cls == "regular":
             text = (f"{name} keeps coming back — seen on {v.get('days', '?')} different days"
                     f"{_hour_phrase(busiest_local)} ({cams}). A pattern worth knowing about.")
         elif cls == "resident":
-            text = (f"{name} is {_CLASS_PHRASE['resident']} — seen {v['count']}× across "
+            text = (f"{name} is {_CLASS_PHRASE['resident']} — {_passes(v)} across "
                     f"{v.get('days', '?')} days at {cams}."
                     + ("" if owner else " If it's yours, name it and it stays quiet."))
         else:
-            text = f"{name}: {v['count']} sighting{'s' if v['count'] != 1 else ''} ({cams})."
+            text = f"{name}: {_passes(v)} ({cams})."
         findings.append({"kind": cls, "entity_id": v["entity_id"], "label": v["label"],
                          "owner_label": owner, "text": text})
 

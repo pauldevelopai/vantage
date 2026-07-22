@@ -19,6 +19,11 @@ import numpy as np
 from alibi.encryption import get_encrypted_writer
 from alibi.cameras.appearance_reid import cosine_similarity, l2_normalize
 
+# Sightings closer together than this are one visit, not two. A car that parks
+# in view is detected in every frame; counting those as arrivals is what made a
+# stationary vehicle read "seen 4368x".
+VISIT_GAP = timedelta(minutes=10)
+
 
 @dataclass
 class CrossCameraAlert:
@@ -477,9 +482,20 @@ class CrossCameraTracker:
             hour_buckets = [0] * 24
             for ts, _e in recent:
                 hour_buckets[ts.hour] += 1
+            # Sightings are frames, not arrivals. A car parked in view is
+            # detected in every one, which is how a vehicle came to read
+            # "seen 4368x" — that is a still car, not 4368 visits. Group
+            # sightings separated by less than VISIT_GAP into one pass.
+            visits, last_ts = 0, None
+            for ts, _e in recent:
+                if last_ts is None or (ts - last_ts) > VISIT_GAP:
+                    visits += 1
+                last_ts = ts
+
             out.append({
                 "entity_id": key[len(prefix):],
                 "count": len(recent),
+                "visits": visits,
                 "first_seen": recent[0][0].isoformat(),
                 "last_seen": recent[-1][0].isoformat(),
                 "cameras": sorted({e["camera_id"] for _ts, e in recent}),
