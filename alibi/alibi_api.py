@@ -79,6 +79,32 @@ async def startup_data_rotation():
     except Exception as e:
         print(f"[Startup] Data rotation skipped: {e}")
 
+    # Sweep frames nothing was ever found in. Evidence — anything you named
+    # someone from, wrote on, or that carries a plate — is kept regardless of
+    # age; see alibi/cameras/frame_retention.py. Reported, never silent: a
+    # deletion you cannot see is one you cannot question.
+    # Sweeping is OFF unless switched on deliberately. Deleting pictures cannot
+    # be undone, and the first sweep on an unswept store is the big one — the
+    # owner should see the plan before it runs, not read about it afterwards.
+    # Set VANTAGE_SWEEP_FRAMES=1 once you are happy with what the dry run says.
+    try:
+        import os as _os
+        from alibi.cameras import frame_retention
+        enabled = _os.environ.get("VANTAGE_SWEEP_FRAMES", "").strip() in ("1", "true", "yes")
+        plan = frame_retention.sweep(dry_run=not enabled)
+        if plan.aborted:
+            print(f"[Startup] Frame sweep aborted: {plan.aborted}")
+        elif enabled:
+            print(f"[Startup] Frame sweep: removed {plan.deleting} "
+                  f"({plan.bytes_freed / 1048576:.0f}MB), kept {plan.keep_forever} "
+                  f"for good, {plan.keep_referenced} as recent evidence")
+        else:
+            print(f"[Startup] Frame sweep DISABLED (VANTAGE_SWEEP_FRAMES unset). "
+                  f"Would remove {plan.deleting} ({plan.bytes_freed / 1048576:.0f}MB) "
+                  f"and keep {plan.keep_forever} for good.")
+    except Exception as e:
+        print(f"[Startup] Frame sweep skipped: {e}")
+
 
 # Mount media directory for clips and snapshots (legacy/placeholder)
 MEDIA_DIR = Path("alibi/data/media")
@@ -5215,6 +5241,50 @@ async def reject_face(payload: RejectFaceRequest,
         "camera_id": pending["camera_id"],
     })
     return {"status": "recorded", **face_feedback.summary(pending["camera_id"])}
+
+
+@app.get("/storage/frames", tags=["Storage"])
+async def frame_storage_report(current_user: User = Depends(get_current_user)):
+    """What the picture store holds, what a sweep would remove, and WHY each
+    kept frame is worth keeping. A dry run — this deletes nothing."""
+    from fastapi.concurrency import run_in_threadpool
+    from alibi.cameras import frame_retention
+
+    plan = await run_in_threadpool(lambda: frame_retention.sweep(dry_run=True))
+    total = plan.keep_forever + plan.keep_referenced + plan.keep_recent + plan.deleting
+    return {
+        "frames_held": total,
+        "kept_for_good": plan.keep_forever,
+        "kept_as_recent_evidence": plan.keep_referenced,
+        "kept_pending_review": plan.keep_recent,
+        "would_remove": plan.deleting,
+        "would_free_mb": round(plan.bytes_freed / 1048576, 1),
+        "kept_because": plan.reasons,
+        "policy": {
+            "evidence": "kept regardless of age",
+            "ordinary_detections_days": frame_retention.KEEP_REFERENCED_DAYS,
+            "nothing_detected_days": frame_retention.KEEP_UNREFERENCED_DAYS,
+        },
+        "aborted": plan.aborted,
+    }
+
+
+@app.post("/storage/frames/sweep", tags=["Storage"])
+async def run_frame_sweep(current_user: User = Depends(require_role([Role.ADMIN]))):
+    """Actually remove the frames nothing was found in. Admin only, audited."""
+    from fastapi.concurrency import run_in_threadpool
+    from alibi.cameras import frame_retention
+
+    plan = await run_in_threadpool(lambda: frame_retention.sweep(dry_run=False))
+    get_store().append_audit("frames_swept", {
+        "user": current_user.username, "removed": plan.deleting,
+        "freed_mb": round(plan.bytes_freed / 1048576, 1),
+        "kept_for_good": plan.keep_forever, "aborted": plan.aborted,
+    })
+    return {"removed": plan.deleting,
+            "freed_mb": round(plan.bytes_freed / 1048576, 1),
+            "kept_for_good": plan.keep_forever,
+            "aborted": plan.aborted}
 
 
 @app.get("/people/learning", tags=["People"])
