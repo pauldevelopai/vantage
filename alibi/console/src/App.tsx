@@ -114,13 +114,14 @@ function Layout({ children }: { children: React.ReactNode }) {
   type NavItem = { to: string; label: string };
   const navGroups: { title: string | null; items: NavItem[] }[] = [
     { title: null, items: [{ to: '/overview', label: 'Overview' }] },
+    // Intel is a destination in its own right, not a sub-item of Intelligence.
+    { title: null, items: [{ to: '/intel', label: 'Intel' }] },
     { title: 'Setup', items: [{ to: '/cameras', label: 'Cameras' }, { to: '/recorders', label: 'Recorders' }, { to: '/sites', label: 'Sites' }] },
     { title: 'Intelligence', items: [
       { to: '/advisor', label: 'Advisor' }, { to: '/incidents', label: 'Incidents' },
       { to: '/people', label: 'People' }, { to: '/patterns', label: 'Patterns' },
       { to: '/reports', label: 'Reports' }, { to: '/search', label: 'Search' },
       { to: '/metrics', label: 'Metrics' }, { to: '/vehicle-search', label: 'Vehicles' },
-      { to: '/intel', label: 'Intel' },
     ] },
     { title: 'Watchlist', items: sup ? [{ to: '/vehicle-review', label: 'Review' }, { to: '/hotlist', label: 'Hotlist' }, { to: '/faces', label: 'Faces' }] : [] },
     { title: 'Admin', items: adm ? [{ to: '/costs', label: 'Costs' }, { to: '/settings', label: 'Settings' }] : [] },

@@ -43,12 +43,21 @@ export function AdvisorPage() {
   useEffect(() => {
     if (!siteId) return;
     setLoading(true);
-    Promise.all([
-      api.getSiteBrief(siteId).catch(() => null),
-      api.getAdvisor(siteId).catch(() => null),
+    setErr(null);
+    // Both calls used to be .catch(() => null), so any failure rendered as an
+    // empty page with no explanation — indistinguishable from "nothing to say".
+    // Report what actually broke; a page that stays silent about its own
+    // errors is the hardest kind to diagnose.
+    Promise.allSettled([
+      api.getSiteBrief(siteId),
+      api.getAdvisor(siteId),
     ]).then(([b, a]) => {
-      setBrief(b);
-      setAdvisor(a);
+      setBrief(b.status === 'fulfilled' ? b.value : null);
+      setAdvisor(a.status === 'fulfilled' ? a.value : null);
+      const broke: string[] = [];
+      if (b.status === 'rejected') broke.push(`brief (${b.reason?.message || 'failed'})`);
+      if (a.status === 'rejected') broke.push(`recommendations (${a.reason?.message || 'failed'})`);
+      setErr(broke.length ? `Could not load ${broke.join(' and ')}.` : null);
       setLoading(false);
     });
   }, [siteId]);
@@ -146,7 +155,10 @@ export function AdvisorPage() {
           {/* Recommendations */}
           <div className="bg-white shadow rounded-lg p-5">
             <h2 className="text-lg font-medium text-gray-900">Recommendations</h2>
-            <p className="text-sm text-gray-500 mb-3">{advisor?.summary || ''}</p>
+            <p className="text-sm text-gray-500 mb-3">
+              {advisor?.summary
+                || (advisor ? 'Nothing needs attention right now.' : 'Recommendations unavailable.')}
+            </p>
 
             {!advisor ? (
               <p className="text-sm text-gray-500">Couldn't load recommendations.</p>
