@@ -3177,6 +3177,7 @@ class BridgeRegisterRequest(BaseModel):
     code: str
     name: str = "Vantage Bridge"
     site_hint: str = ""
+    kind: str = ""            # "phone" registers a camera straight away
 
 
 class BridgeScanRequest(BaseModel):
@@ -3518,7 +3519,27 @@ async def bridge_register(req: BridgeRegisterRequest):
     )
     if not creds:
         raise HTTPException(status_code=400, detail="Invalid or expired pairing code")
-    return creds  # {bridge_id, token} — token shown only here
+
+    # A phone is a camera in its own right, so give it one now rather than
+    # waiting for its first frame. Pairing a handset and finding nothing in the
+    # camera list is indistinguishable from pairing having failed — and a phone
+    # watching a still room may not send a frame for a long time.
+    if req.kind == "phone":
+        camera_id = f"phone-{creds['bridge_id'][-6:]}"
+        try:
+            store = get_camera_store()
+            if store.get(camera_id) is None:
+                store.add(Camera(camera_id=camera_id, name=req.name or "Phone camera",
+                                 source="phone", source_type="mobile", enabled=True,
+                                 location="Phone camera", status="online",
+                                 last_seen=None,
+                                 vms_config={"bridge_id": creds["bridge_id"]}))
+                print(f"[cameras] registered {camera_id} at pairing", flush=True)
+        except Exception as e:
+            print(f"[cameras] could not register the phone camera: {e}", flush=True)
+        creds = {**creds, "camera_id": camera_id}
+
+    return creds  # {bridge_id, token, camera_id?} — token shown only here
 
 
 @app.post("/cameras/bridge/heartbeat", tags=["Camera Bridge"])

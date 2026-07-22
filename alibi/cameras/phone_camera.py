@@ -134,13 +134,16 @@ PHONE_CAMERA_HTML = r"""<!doctype html>
     try {
       var r = await fetch(API + '/cameras/bridge/register', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: code, name: $('name').value.trim() || 'Phone camera' })
+        body: JSON.stringify({ code: code, kind: 'phone',
+                               name: $('name').value.trim() || 'Phone camera' })
       });
       if (!r.ok) throw new Error((await r.json().catch(function(){return{};})).detail || 'Pairing failed');
       var c = await r.json();
       creds = {
         bridge_id: c.bridge_id, token: c.token,
-        camera_id: 'phone-' + c.bridge_id.slice(-6),
+        // The server names the camera so both ends agree; fall back only if
+        // talking to an older build.
+        camera_id: c.camera_id || ('phone-' + c.bridge_id.slice(-6)),
         name: $('name').value.trim() || 'Phone camera'
       };
       localStorage.setItem(LS, JSON.stringify(creds));
