@@ -91,8 +91,12 @@ PHONE_CAMERA_HTML = r"""<!doctype html>
       <span class="muted">Last</span><span class="stat muted" id="last">—</span>
     </div>
     <p class="muted" style="margin-top:14px;margin-bottom:0">
-      Keep this page open and the screen awake. Only frames where something
-      changes are sent, so a still room costs nothing.
+      It keeps watching while nothing moves — a still room is fine, it just
+      stays quiet and checks in every minute. Only frames where something
+      changes are sent.<br><br>
+      Leave this page in front with the screen on. Phones suspend background
+      tabs, so switching apps or locking the screen will pause it — it says so
+      above if that happens, and picks up again when you come back.
     </p>
     <button class="ghost" id="forget" style="margin-top:14px">Unpair this phone</button>
   </div>
@@ -228,8 +232,13 @@ PHONE_CAMERA_HTML = r"""<!doctype html>
     } catch (e) { /* the next tick tries again */ }
   }
 
+  var lastTick = 0;
+
   async function tick() {
+    lastTick = Date.now();
     heartbeat();
+    // A still scene is not a reason to stop. We keep looking and keep saying
+    // we're here; the system counts that as recording, just quiet.
     var sig = signature();
     if (!changed(prev, sig)) { setState('Watching — nothing moving', 'muted'); return; }
     prev = sig;
@@ -266,17 +275,27 @@ PHONE_CAMERA_HTML = r"""<!doctype html>
     }, 'image/jpeg', 0.85);
   }
 
+  // The wake lock is RELEASED by the browser every time the page is hidden, so
+  // asking once means losing it the first time the screen goes off. Re-acquire
+  // whenever we're visible and watching.
+  var wake = null;
+  async function holdScreen() {
+    if (!navigator.wakeLock || !timer || document.visibilityState !== 'visible') return;
+    try { wake = await navigator.wakeLock.request('screen'); } catch (e) { wake = null; }
+  }
+
   function startWatching() {
     if (!creds) return;
     prev = null;
     lastBeat = 0;
+    lastTick = Date.now();
     heartbeat();
     timer = setInterval(tick, INTERVAL_MS);
     $('dot').classList.add('live');
     $('startBtn').classList.add('hide');
     $('stopBtn').classList.remove('hide');
     setState('Watching', 'ok');
-    if (navigator.wakeLock) navigator.wakeLock.request('screen').catch(function () {});
+    holdScreen();
   }
 
   function stopWatching() {
@@ -290,6 +309,32 @@ PHONE_CAMERA_HTML = r"""<!doctype html>
 
   $('startBtn').onclick = startWatching;
   $('stopBtn').onclick = stopWatching;
+
+  // Coming back from a locked screen or another app: the browser may have
+  // suspended our timer and stopped the camera track. Pick both up rather than
+  // sitting there looking connected while sending nothing.
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState !== 'visible' || !timer) return;
+    holdScreen();
+    var track = stream && stream.getVideoTracks()[0];
+    if (!track || track.readyState === 'ended') startCamera();
+    lastTick = Date.now();
+    heartbeat();
+    setState('Watching', 'ok');
+  });
+
+  // If the browser has been throttling us, say so instead of showing a
+  // reassuring green dot while nothing is being sent.
+  setInterval(function () {
+    if (!timer) return;
+    var idle = Date.now() - lastTick;
+    if (idle > 90000) {
+      setState('Paused by the phone — tap the screen', 'warn');
+      $('dot').classList.remove('live');
+    } else {
+      $('dot').classList.add('live');
+    }
+  }, 15000);
 
   // The QR carries the code: /phone?code=ABC123. Say so, so the form doesn't
   // look like it still wants something typed.
