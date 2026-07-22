@@ -832,7 +832,7 @@ function SituationsPanel({ situations, onChanged, onOpenVehicle }: { situations:
                   </div>
                   <div className="px-2 py-1.5 border-t border-slate-800/70">
                     <div className="text-[10px] font-medium text-slate-200 truncate">
-                      {s.title || typeMeta(s.event_type || '').label}
+                      {s.who || s.title || typeMeta(s.event_type || '').label}
                     </div>
                     <div className="text-[9px] text-slate-500 truncate">{s.camera_name}</div>
                     {/* What was actually seen — only when a vision model really ran. */}
@@ -900,7 +900,7 @@ function SituationsPanel({ situations, onChanged, onOpenVehicle }: { situations:
               <div className="mt-1 text-sm font-medium text-slate-100 truncate">
                 {s.confirmed?.label
                   ? <>“{s.confirmed.label}” <span className="text-[10px] font-normal text-slate-500">— confirmed by {s.confirmed.by}</span></>
-                  : (s.title || typeMeta(s.event_type || '').label)}
+                  : (s.who || s.title || typeMeta(s.event_type || '').label)}
               </div>
               {realDesc(s.description) && (
                 <p className="mt-0.5 text-xs text-slate-500 line-clamp-2">{realDesc(s.description)}</p>
@@ -1113,7 +1113,7 @@ function NamedVehiclesPanel({ vehicles, onOpen }: { vehicles: import('../lib/typ
           )}
           <span className="text-slate-500">
             {v.seen_recently
-              ? <>seen {v.count}× · {v.cameras.join(', ')}</>
+              ? <>seen {v.passes ?? v.count} time{(v.passes ?? v.count) === 1 ? '' : 's'} · {v.cameras.join(', ')}</>
               : <>not seen recently</>}
           </span>
           <span className="text-slate-600 ml-auto font-mono text-[10px]">{v.last_seen ? timeAgo(v.last_seen) : ''}</span>
@@ -1206,7 +1206,7 @@ function RecurringVehicleRow({ v, onSaved, onOpen }: { v: RecurringVehicle; onSa
         {v.owner_label ? `“${v.owner_label}”` : v.label}
       </button>
       <button onClick={onOpen} className="text-slate-500 hover:text-slate-300 text-left">
-        seen {v.count}× over {v.days} day{v.days === 1 ? '' : 's'} · {v.cameras.join(', ')}
+        seen {v.passes ?? v.count} time{(v.passes ?? v.count) === 1 ? '' : 's'} over {v.days} day{v.days === 1 ? '' : 's'} · {v.cameras.join(', ')}
         {v.busiest_hour_utc !== null && ` · mostly around ${String((v.busiest_hour_utc + 2) % 24).padStart(2, '0')}:00`}
       </button>
       {canName && !naming && (

@@ -383,6 +383,9 @@ export interface RecurringVehicle {
   body?: string | null;
   plate?: string | null;             // most-read plate (the stable identity), or null
   plate_region?: string | null;
+  /** Distinct visits, not frames. A parked car is detected in every
+   *  frame it sits in — that is how this read "seen 4368x". */
+  passes?: number | null;
 }
 
 /** One row on the Overview's Situations panel — the top things worth a look,
@@ -411,6 +414,9 @@ export interface DashboardSituation {
   bbox?: number[] | null;
   plate?: string | null;
   confirmed: { by: string; ts: string; label: string | null; notes?: string } | null;
+  /** An enrolled person recognised in this frame. Never a guess — an
+   *  unrecognised face leaves this null and the card stays generic. */
+  who?: string | null;
 }
 
 /** A vehicle the owner has named — the persistent "known vehicles" database.
@@ -426,6 +432,9 @@ export interface NamedVehicle {
   count?: number | null;
   cameras: string[];
   seen_recently: boolean;
+  /** Distinct visits, not frames. A parked car is detected in every
+   *  frame it sits in — that is how this read "seen 4368x". */
+  passes?: number | null;
 }
 
 /** A car that is NOT the usual scene — new or occasional, unnamed — with how
@@ -437,6 +446,9 @@ export interface OutOfOrdinaryVehicle {
   familiarity: 'new' | 'occasional';
   descriptor?: string | null;  // colour+type when known ("White SUV"), else null
   passes: number | null;       // distinct visits — the honest "how often"
+  /** An enrolled person recognised in the frame. Never a guess — an
+   *  unrecognised face stays generic. */
+  who?: string | null;
   sightings: number;           // raw motion-stills (not shown as passes)
   days: number;
   first_seen: string;

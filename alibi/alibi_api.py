@@ -1136,6 +1136,52 @@ def _display_names() -> dict:
     return names
 
 
+def _who_in_frame(event) -> Optional[str]:
+    """The name of an enrolled person visible in this event's frame, or None.
+
+    Events are raised by the detector, which knows there is a person but not
+    which one. Face sightings hold that, so match the two up by camera and
+    second — the same join the evidence photos use.
+    """
+    try:
+        import numpy as _np
+        from alibi.watchlist.watchlist_store import WatchlistStore
+        from alibi.watchlist.face_sighting_store import get_face_sighting_store
+        from alibi.watchlist.face_match import FaceMatcher
+
+        frame_ids = set()
+        url = getattr(event, "snapshot_url", None) or ""
+        if "/frames/" in url:
+            frame_ids.add(url.rsplit("/", 1)[-1].replace(".jpg", ""))
+        if not frame_ids:
+            return None
+
+        ws = WatchlistStore()
+        galleries = ws.get_galleries()
+        if not galleries:
+            return None
+        labels = {pid: e.label for pid, e in ws._get_active_entries().items()}
+        matcher = FaceMatcher()
+
+        for sight in get_face_sighting_store().load_all():
+            path = sight.image_path or ""
+            if not any(f in path for f in frame_ids) or not sight.embedding:
+                continue
+            if sight.matched_person_id:
+                return labels.get(sight.matched_person_id)
+            v = _np.asarray(sight.embedding, dtype=_np.float32).ravel()
+            best, score = None, 0.6          # never guess below this
+            for pid, gal in galleries.items():
+                sc = matcher.cosine_similarity(v, gal)
+                if sc >= score:
+                    best, score = pid, sc
+            if best:
+                return labels.get(best)
+    except Exception as e:
+        print(f"[dashboard] who-in-frame unavailable: {e}", flush=True)
+    return None
+
+
 def _field_reports_payload(recent_vehicles: list, cutoff, names: dict) -> list:
     """Recent human field reports for the Overview, each with a camera name and
     a corroborating camera sighting when one backs it up. Degrades to []."""
@@ -1565,6 +1611,12 @@ async def dashboard_overview(range: str = "24h",
                 "camera_id": newest.camera_id if newest else None,
                 "camera_name": names.get(newest.camera_id, newest.camera_id) if newest else None,
                 "title": str(plan.get("summary_1line") or "").strip() or None,
+                # Who it was, if we already know them. A Situation card said
+                # "Person" about a face the owner had already named, because
+                # these are built from EVENTS and only face sightings carried a
+                # name. Same conservative threshold as everywhere else — an
+                # unrecognised face stays "Person", never a guess.
+                "who": _who_in_frame(newest) if newest else None,
                 "event_type": newest.event_type if newest else inc.get("event_type"),
                 "description": desc,
                 "snapshot_url": newest.snapshot_url if newest else None,
@@ -1938,6 +1990,10 @@ async def dashboard_overview(range: str = "24h",
                 "bbox": ev.get("bbox") if ev else None,
                 "last_seen": (e["last_seen"] if e else (meta or {}).get("set_at")),
                 "count": (e["count"] if e else None),
+                # Passes, not frames. A car parked in view is detected in every
+                # one, which is how this panel read "seen 4368x" for a vehicle
+                # that never moved.
+                "passes": (e.get("visits") if e else None),
                 "cameras": [names.get(c, c) for c in (e["cameras"] if e else [])],
                 "seen_recently": bool(e),
             })
