@@ -91,3 +91,52 @@ def test_activity_parser_gives_all_a_finite_number_of_hours():
     assert parse_window("7d") == 168
     assert parse_window("30d") == 720
     assert parse_window("1h") == 1
+
+
+def test_field_reports_accept_all_time(capsys):
+    """One of the two panels that broke on "all": it called cutoff.isoformat()
+    unconditionally.
+
+    Asserting the RETURN value proves nothing — the function catches everything
+    and returns [] either way, which is precisely how this shipped looking
+    fine. The failure is only visible in what it prints, so that is what we
+    assert on.
+    """
+    from alibi.alibi_api import _field_reports_payload
+
+    capsys.readouterr()
+    _field_reports_payload([], None, {})                      # cutoff None == all time
+    assert "unavailable" not in capsys.readouterr().out
+
+    capsys.readouterr()
+    _field_reports_payload([], NOW, {})
+    assert "unavailable" not in capsys.readouterr().out
+
+
+def test_all_time_does_not_silently_empty_any_overview_panel(capsys):
+    """Smoke test: every window returns 200 with no panel reporting itself
+    "unavailable".
+
+    NOTE this is weak on an empty store — the loops it guards never execute, so
+    it cannot catch a None-cutoff comparison on a dev box with no incidents.
+    It earns its keep where there IS data. The definitive check for the two
+    panels that actually broke is test_field_reports_accept_all_time above and
+    the live run against the deployment.
+    """
+    from fastapi.testclient import TestClient
+    from alibi.alibi_api import app
+    from alibi.auth import get_current_user, User, Role
+
+    app.dependency_overrides[get_current_user] = lambda: User(
+        username="t", password_hash="x", role=Role.ADMIN, full_name="T")
+    try:
+        client = TestClient(app)
+        for window in tw.WINDOWS:
+            capsys.readouterr()                       # drop earlier output
+            r = client.get(f"/dashboard/overview?range={window}")
+            assert r.status_code == 200, f"{window}: HTTP {r.status_code}"
+            printed = capsys.readouterr().out
+            broken = [ln for ln in printed.splitlines() if "unavailable" in ln]
+            assert not broken, f"{window} degraded a panel: {broken}"
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)

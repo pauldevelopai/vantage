@@ -1095,7 +1095,9 @@ def _field_reports_payload(recent_vehicles: list, cutoff, names: dict) -> list:
     a corroborating camera sighting when one backs it up. Degrades to []."""
     try:
         from alibi.reports.field_reports import get_field_report_store, corroborating_sighting
-        reports = get_field_report_store().list_recent(limit=12, since_iso=cutoff.isoformat())
+        # "" sorts before every ISO timestamp, so all time really means all.
+        reports = get_field_report_store().list_recent(
+            limit=12, since_iso=cutoff.isoformat() if cutoff else "")
         out = []
         for r in reports:
             d = r.to_dict()
@@ -1487,7 +1489,7 @@ async def dashboard_overview(range: str = "24h",
                 upd = datetime.fromisoformat(inc["updated_ts"])
             except (ValueError, TypeError, KeyError):
                 continue
-            if upd < cutoff:
+            if cutoff is not None and upd < cutoff:      # None == all time
                 continue
             md = inc.get("_metadata", {}) or {}
             confirmed = md.get("confirmed")
