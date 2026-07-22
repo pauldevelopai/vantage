@@ -242,6 +242,8 @@ def sweep(dry_run: bool = True, frames_dir: Path = FRAMES_DIR,
         except OSError:
             continue
     plan.bytes_freed = freed
+    # flush: journald block-buffers stdout, and a deletion nobody can see in
+    # the log is a deletion nobody can question.
     print(f"[frame-retention] swept {plan.deleting} frames, freed "
-          f"{freed / 1048576:.0f}MB; kept {plan.keep_forever} for good")
+          f"{freed / 1048576:.0f}MB; kept {plan.keep_forever} for good", flush=True)
     return plan

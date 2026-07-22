@@ -89,21 +89,30 @@ async def startup_data_rotation():
     # Set VANTAGE_SWEEP_FRAMES=1 once you are happy with what the dry run says.
     try:
         import os as _os
+        import sys as _sys
         from alibi.cameras import frame_retention
         enabled = _os.environ.get("VANTAGE_SWEEP_FRAMES", "").strip() in ("1", "true", "yes")
         plan = frame_retention.sweep(dry_run=not enabled)
         if plan.aborted:
-            print(f"[Startup] Frame sweep aborted: {plan.aborted}")
+            print(f"[Startup] Frame sweep aborted: {plan.aborted}", flush=True)
         elif enabled:
             print(f"[Startup] Frame sweep: removed {plan.deleting} "
                   f"({plan.bytes_freed / 1048576:.0f}MB), kept {plan.keep_forever} "
-                  f"for good, {plan.keep_referenced} as recent evidence")
+                  f"for good, {plan.keep_referenced} as recent evidence", flush=True)
+            if plan.deleting:
+                # Logs rotate; an irreversible deletion deserves a durable record.
+                get_store().append_audit("frames_swept", {
+                    "user": "startup", "removed": plan.deleting,
+                    "freed_mb": round(plan.bytes_freed / 1048576, 1),
+                    "kept_for_good": plan.keep_forever,
+                    "kept_referenced": plan.keep_referenced,
+                })
         else:
             print(f"[Startup] Frame sweep DISABLED (VANTAGE_SWEEP_FRAMES unset). "
                   f"Would remove {plan.deleting} ({plan.bytes_freed / 1048576:.0f}MB) "
-                  f"and keep {plan.keep_forever} for good.")
+                  f"and keep {plan.keep_forever} for good.", flush=True)
     except Exception as e:
-        print(f"[Startup] Frame sweep skipped: {e}")
+        print(f"[Startup] Frame sweep skipped: {e}", flush=True)
 
 
 # Mount media directory for clips and snapshots (legacy/placeholder)
