@@ -87,6 +87,96 @@ function MlStatusSection() {
   );
 }
 
+/**
+ * Local learning, and the switch for it.
+ *
+ * The review queue collected confirmed crops for months while nothing trained
+ * on them. This is what trains: each label you confirm becomes a centroid in
+ * the appearance space the ReID stack already produces, and a new crop is
+ * named only if it sits close enough to one.
+ *
+ * Off by default, and it says exactly what it learned from — because "the
+ * system is learning" is a claim that should be checkable, not atmospheric.
+ */
+function LocalLearning() {
+  const [s, setS] = useState<any>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => { api.getVehicleClassifier().then(setS).catch(e => setErr(e.message)); }, []);
+
+  async function toggle(on: boolean) {
+    setBusy(true); setErr(null);
+    try { setS(await api.setVehicleClassifier(on)); }
+    catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+  }
+
+  async function retrain() {
+    setBusy(true); setErr(null);
+    try { setS(await api.trainVehicleClassifier()); }
+    catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+  }
+
+  if (!s && !err) return null;
+
+  return (
+    <div className="bg-white shadow rounded-lg p-5 mb-6">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h2 className="text-lg font-medium text-gray-900">Learn vehicle makes from my confirmations</h2>
+          <p className="text-sm text-gray-500 mt-1">
+            Every make and model you confirm on the Vehicles page teaches this. It learns from
+            your own camera crops and your own judgements — nothing scraped, no public datasets,
+            and no people.
+          </p>
+        </div>
+        {hasRole('admin') && s && (
+          <button onClick={() => toggle(!s.enabled)} disabled={busy}
+                  className={`flex-none relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 ${s.enabled ? 'bg-indigo-600' : 'bg-gray-300'}`}>
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${s.enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+          </button>
+        )}
+      </div>
+
+      {err && <p className="mt-3 text-sm text-red-600">{err}</p>}
+
+      {s && (
+        <>
+          <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+            <Stat label="Makes it knows" value={String(s.label_count)} />
+            <Stat label="Crops trained on" value={String(s.examples_used)} />
+            <Stat label="Confirmations available" value={String(s.confirmed_available)} />
+            <Stat label="State" value={s.enabled ? 'On' : 'Off'} />
+          </div>
+          {s.labels?.length > 0 && (
+            <p className="mt-3 text-xs text-gray-600">Knows: {s.labels.join(' · ')}</p>
+          )}
+          <p className="mt-2 text-[11px] text-gray-400">
+            A make needs {s.min_examples_per_label} confirmed crops before it counts as one, and a
+            guess is only offered above {Math.round((s.min_confidence || 0) * 100)}% — a wrong badge
+            is worse than none. {s.trained_at ? `Last trained ${new Date(s.trained_at + 'Z').toLocaleString()}.` : 'Never trained yet.'}
+          </p>
+          {hasRole('admin') && (
+            <button onClick={retrain} disabled={busy}
+                    className="mt-3 text-xs font-medium bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-white rounded px-3 py-1.5">
+              {busy ? 'Working…' : 'Retrain from my confirmations'}
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md bg-gray-50 p-2">
+      <div className="text-lg font-semibold text-gray-900">{value}</div>
+      <div className="text-[10px] text-gray-500">{label}</div>
+    </div>
+  );
+}
+
 export function IntelPage() {
   const isAdmin = hasRole('admin');
   const [vocab, setVocab] = useState<SourceVocab | null>(null);
@@ -116,6 +206,7 @@ export function IntelPage() {
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-6">
+      <LocalLearning />
       <div className="flex items-start justify-between gap-4 mb-2">
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">Intel</h1>

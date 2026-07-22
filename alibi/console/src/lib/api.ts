@@ -715,6 +715,27 @@ export const api = {
     return res.json();
   },
 
+  async getVehicleClassifier(): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/vehicles/classifier`);
+    if (!res.ok) throw new Error('Could not read the classifier');
+    return res.json();
+  },
+
+  async setVehicleClassifier(enabled: boolean): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/vehicles/classifier`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
+    if (!res.ok) throw new Error('Could not change it');
+    return res.json();
+  },
+
+  async trainVehicleClassifier(): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/vehicles/classifier/train`, { method: 'POST' });
+    if (!res.ok) throw new Error('Training failed');
+    return res.json();
+  },
+
   async removeWatchlistEntry(personId: string): Promise<any> {
     const res = await fetchWithAuth(`${API_BASE}/watchlist/${encodeURIComponent(personId)}`, {
       method: 'DELETE',

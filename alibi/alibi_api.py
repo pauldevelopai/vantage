@@ -5704,6 +5704,62 @@ async def reject_face(payload: RejectFaceRequest,
     return {"status": "recorded", **face_feedback.summary(pending["camera_id"])}
 
 
+class ClassifierToggle(BaseModel):
+    enabled: bool
+
+
+@app.get("/vehicles/classifier", tags=["Vehicles"])
+async def vehicle_classifier_status(current_user: User = Depends(get_current_user)):
+    """What the local make/model classifier has learned, and from what."""
+    from alibi.vehicles.local_classifier import status
+    return status()
+
+
+@app.put("/vehicles/classifier", tags=["Vehicles"])
+async def set_vehicle_classifier(payload: ClassifierToggle,
+                                 current_user: User = Depends(require_role([Role.ADMIN]))):
+    """Switch local learning on or off. Off by default."""
+    from alibi.vehicles.local_classifier import set_enabled
+    out = set_enabled(payload.enabled)
+    get_store().append_audit("vehicle_classifier_toggled", {
+        "user": current_user.username, "enabled": payload.enabled})
+    return out
+
+
+@app.post("/vehicles/classifier/train", tags=["Vehicles"])
+async def train_vehicle_classifier(current_user: User = Depends(require_role([Role.ADMIN]))):
+    """Rebuild from every confirmed label. Your confirmations only — nothing
+    scraped, no public datasets, and no people."""
+    from fastapi.concurrency import run_in_threadpool
+    from alibi.vehicles.local_classifier import train
+    from alibi.cameras import frame_analyzer as fa
+    import alibi.mobile_camera_enhanced as mce
+
+    def _embed(frame_url, bbox):
+        """Embed one confirmed crop with the same ReID model the pipeline uses."""
+        if not frame_url or not bbox or len(bbox) != 4:
+            return None
+        fid = str(frame_url).rsplit("/", 1)[-1].replace(".jpg", "")
+        data = fa.get_frame(fid)
+        if not data:
+            return None
+        frame = fa.decode(data)
+        if frame is None:
+            return None
+        x, y, w, h = (int(v) for v in bbox)
+        crop = frame[max(0, y):y + h, max(0, x):x + w]
+        if crop.size == 0:
+            return None
+        emb = getattr(mce, "_vehicle_embedder", None)
+        return emb.embed(crop) if emb is not None else None
+
+    out = await run_in_threadpool(lambda: train(_embed))
+    get_store().append_audit("vehicle_classifier_trained", {
+        "user": current_user.username, "labels": out.get("label_count"),
+        "examples": out.get("examples_used")})
+    return out
+
+
 @app.get("/storage/frames", tags=["Storage"])
 async def frame_storage_report(current_user: User = Depends(get_current_user)):
     """What the picture store holds, what a sweep would remove, and WHY each
