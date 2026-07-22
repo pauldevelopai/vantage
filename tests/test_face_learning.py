@@ -161,3 +161,27 @@ def test_a_single_embedding_still_matches_the_old_way(tmp_path):
 def test_mismatched_dimensions_score_zero_rather_than_explode():
     m = FaceMatcher()
     assert m.cosine_similarity(np.ones(512), np.ones((3, 128))) == 0.0
+
+
+def test_clearing_a_name_off_a_face_actually_sticks(tmp_path):
+    """The file is append-only, so a correction is a NEW row. Returning both
+    made the correction invisible — the stale row still carried the wrong name
+    and the face stayed labelled after being un-named."""
+    from alibi.watchlist.face_sighting_store import FaceSighting, FaceSightingStore
+
+    store = FaceSightingStore(storage_path=str(tmp_path / "faces.jsonl"))
+    emb = np.ones(512, dtype=np.float32).tolist()
+    store.add_sighting(FaceSighting(sighting_id="s1", camera_id="gate",
+                                    ts="2026-07-22T13:00:00", embedding=emb,
+                                    bbox=(1, 2, 3, 4), confidence=0.9,
+                                    matched_person_id="paul-1"))
+    assert [s.matched_person_id for s in store.load_all()] == ["paul-1"]
+
+    # "That isn't Paul" — appended, not edited in place.
+    store.add_sighting(FaceSighting(sighting_id="s1", camera_id="gate",
+                                    ts="2026-07-22T13:00:00", embedding=emb,
+                                    bbox=(1, 2, 3, 4), confidence=0.9,
+                                    matched_person_id=None))
+    rows = store.load_all()
+    assert len(rows) == 1, "the corrected sighting appeared twice"
+    assert rows[0].matched_person_id is None, "the name survived being cleared"

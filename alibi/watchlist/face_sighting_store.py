@@ -114,16 +114,30 @@ class FaceSightingStore:
         self._crypto.write_line(self.storage_path, sighting.to_dict())
 
     def load_all(self, limit: Optional[int] = None) -> List[FaceSighting]:
-        """Load all sightings (or limited number, most recent)."""
-        sightings = []
+        """Load all sightings (or limited number, most recent).
+
+        LAST WRITE WINS per sighting_id. The file is append-only, so correcting
+        a sighting — clearing a name off a face that turned out to be someone
+        else — writes a new row rather than editing the old one. Returning both
+        meant the correction was invisible: the stale row still carried the
+        wrong name, and the face stayed labelled after being un-named.
+        """
+        by_id = {}
+        order = []
         if not self.storage_path.exists():
-            return sightings
+            return []
 
         for data in self._crypto.read_lines(self.storage_path):
             try:
-                sightings.append(FaceSighting.from_dict(data))
+                sighting = FaceSighting.from_dict(data)
             except Exception as e:
                 print(f"[FaceSightingStore] Error loading sighting: {e}")
+                continue
+            if sighting.sighting_id not in by_id:
+                order.append(sighting.sighting_id)
+            by_id[sighting.sighting_id] = sighting
+
+        sightings = [by_id[sid] for sid in order]
 
         if limit and len(sightings) > limit:
             sightings = sightings[-limit:]
