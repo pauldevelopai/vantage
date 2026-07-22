@@ -234,11 +234,20 @@ function Layout({ children }: { children: React.ReactNode }) {
   );
 }
 
+function PhoneRedirect() {
+  window.location.replace('/api/phone' + window.location.search);
+  return null;
+}
+
 function App() {
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        {/* The phone-camera page is served by the API, not the SPA, but
+            /api/phone is not a URL anyone wants to type on a handset. This
+            hands the short one over without touching the web server. */}
+        <Route path="/phone" element={<PhoneRedirect />} />
         <Route
           path="/*"
           element={
