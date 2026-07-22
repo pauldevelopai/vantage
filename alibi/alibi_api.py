@@ -2356,10 +2356,15 @@ async def enroll_face_from_sighting(
     if not sighting.embedding:
         raise HTTPException(status_code=400, detail="Sighting has no face embedding")
 
-    slug = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-") or "person"
-    person_id = f"{slug}-{_uuid.uuid4().hex[:6]}"
-
+    # Naming someone "Paul" twice must not create two Pauls. It did, which split
+    # his gallery across person_ids and meant neither had enough views to
+    # recognise him at a new angle.
     store = WatchlistStore()
+    existing = next((pid for pid, e in store._get_active_entries().items()
+                     if e.label.strip().lower() == label.lower()), None)
+    slug = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-") or "person"
+    person_id = existing or f"{slug}-{_uuid.uuid4().hex[:6]}"
+
     store.add_entry(WatchlistEntry(
         person_id=person_id,
         label=label,
@@ -4532,6 +4537,96 @@ async def ml_status(current_user: User = Depends(get_current_user)):
 class WatchlistPersonUpdate(BaseModel):
     label: Optional[str] = None
     details: Optional[str] = None
+
+
+# Naming someone should teach the system what they look like, not just label
+# one picture. ArcFace scored two photographs of the same man at 0.322 — real
+# recognition, far below the 0.6 we require before claiming an identity on our
+# own. So we SUGGEST at a much lower bar and let the owner confirm: every
+# confirmation adds that view to the person's gallery, so the next angle is
+# easier than the last. Suggesting is cheap and reversible; asserting is not.
+SUGGEST_SAME_PERSON = 0.30
+
+
+@app.get("/watchlist/{person_id}/candidates", tags=["Watchlist"])
+async def person_candidates(person_id: str, limit: int = 12,
+                            current_user: User = Depends(get_current_user)):
+    """Unnamed faces that might be this person, best first.
+
+    Deliberately generous — these are questions, not claims. Nothing here is
+    named until someone says so.
+    """
+    import numpy as _np
+    from alibi.watchlist.watchlist_store import WatchlistStore
+    from alibi.watchlist.face_sighting_store import get_face_sighting_store
+    from alibi.watchlist.face_match import FaceMatcher
+
+    ws = WatchlistStore()
+    gallery = ws.get_galleries().get(person_id)
+    entry = ws._get_active_entries().get(person_id)
+    if gallery is None or entry is None:
+        raise HTTPException(status_code=404, detail="No such enrolled person")
+
+    known = {tuple(_np.asarray(v, dtype=_np.float32).round(4).ravel()) for v in gallery}
+    matcher = FaceMatcher()
+    out = []
+    for sight in get_face_sighting_store().load_all():
+        if not sight.embedding or sight.matched_person_id:
+            continue
+        v = _np.asarray(sight.embedding, dtype=_np.float32).ravel()
+        if tuple(v.round(4)) in known:
+            continue                       # already one of this person's views
+        score = matcher.cosine_similarity(v, gallery)
+        if score >= SUGGEST_SAME_PERSON:
+            out.append({"sighting_id": sight.sighting_id, "ts": sight.ts,
+                        "camera_id": sight.camera_id, "frame_url": sight.image_path,
+                        "bbox": list(sight.bbox) if sight.bbox else None,
+                        "score": round(score, 3)})
+    out.sort(key=lambda r: r["score"], reverse=True)
+    return {"person_id": person_id, "label": entry.label,
+            "views_on_file": int(len(gallery)),
+            "candidates": out[:limit], "suggest_threshold": SUGGEST_SAME_PERSON}
+
+
+class ClaimFacesRequest(BaseModel):
+    sighting_ids: list
+
+
+@app.post("/watchlist/{person_id}/claim", tags=["Watchlist"])
+async def claim_faces(person_id: str, payload: ClaimFacesRequest,
+                      current_user: User = Depends(require_role([Role.SUPERVISOR, Role.ADMIN]))):
+    """"Yes, those are all the same person." Adds each confirmed view to their
+    gallery, so they are recognised at those angles from now on."""
+    from datetime import datetime as _dt
+    from alibi.watchlist.watchlist_store import WatchlistStore, WatchlistEntry
+    from alibi.watchlist.face_sighting_store import get_face_sighting_store
+
+    ws = WatchlistStore()
+    entry = ws._get_active_entries().get(person_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="No such enrolled person")
+
+    wanted = set(payload.sighting_ids or [])
+    added = 0
+    for sight in get_face_sighting_store().load_all():
+        if sight.sighting_id not in wanted or not sight.embedding:
+            continue
+        ws.add_entry(WatchlistEntry(
+            person_id=person_id, label=entry.label,
+            embedding=list(sight.embedding),
+            added_ts=_dt.utcnow().isoformat(),
+            source_ref=f"sighting:{sight.sighting_id}",
+            metadata={**(entry.metadata or {}), "confirmed_by": current_user.username,
+                      "confirmed_from": "same_person_review"},
+        ))
+        added += 1
+
+    views = len(ws.get_galleries().get(person_id, []))
+    get_store().append_audit("faces_claimed", {
+        "user": current_user.username, "person_id": person_id,
+        "label": entry.label, "added": added, "views": views,
+    })
+    return {"person_id": person_id, "label": entry.label, "added": added, "views": views}
 
 
 @app.put("/watchlist/{person_id}", tags=["Watchlist"])
