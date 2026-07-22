@@ -26,69 +26,6 @@ function fmtWhen(ts: number): string {
 }
 
 
-/**
- * A phone is a real camera. The bridge protocol is plain HTTP, so a web page
- * on the handset can speak it — no app, nothing opened on the router — and its
- * frames go through the same pipeline as every other camera.
- *
- * The code is single-use and expires, so it is safe to show on screen.
- */
-function PhoneCameraCard() {
-  const [code, setCode] = useState<string | null>(null);
-  const [mins, setMins] = useState<number>(0);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const url = `${window.location.origin}/phone`;
-
-  async function makeCode() {
-    setBusy(true);
-    setErr(null);
-    try {
-      const r = await api.pairBridge();
-      setCode(r.code);
-      setMins(r.expires_in_minutes);
-    } catch (e: any) {
-      setErr(e?.message || 'Could not create a code');
-    } finally { setBusy(false); }
-  }
-
-  return (
-    <div className="bg-white shadow rounded-lg p-4 mb-6">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-gray-900">Use a phone as a camera</p>
-          <p className="text-xs text-gray-500 mt-0.5">
-            An old handset on a windowsill counts. It feeds the same system as your
-            other cameras — no app to install, nothing to open on your router.
-          </p>
-        </div>
-        {hasRole('admin') && (
-          <button onClick={makeCode} disabled={busy}
-                  className="flex-none text-xs font-medium bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-white rounded px-3 py-1.5">
-            {busy ? 'Working…' : code ? 'New code' : 'Add a phone'}
-          </button>
-        )}
-      </div>
-      {!hasRole('admin') && (
-        <p className="mt-2 text-xs text-gray-400">Adding a camera requires the admin role.</p>
-      )}
-      {err && <p className="mt-2 text-xs text-red-600">{err}</p>}
-      {code && (
-        <div className="mt-3 rounded-md bg-indigo-50 border border-indigo-200 p-3">
-          <p className="text-xs text-indigo-800">On the phone, open</p>
-          <p className="font-mono text-sm text-indigo-900 break-all">{url}</p>
-          <p className="text-xs text-indigo-800 mt-2">and enter this code:</p>
-          <p className="font-mono text-3xl tracking-[0.3em] text-indigo-900 mt-1">{code}</p>
-          <p className="text-[11px] text-indigo-700/80 mt-2">
-            Single use, expires in {mins} minutes. Then tap Start watching and leave
-            the page open.
-          </p>
-        </div>
-      )}
-    </div>
-  );
-}
-
 export function RecordersPage() {
   const isAdmin = hasRole('admin');
   const [bridges, setBridges] = useState<Bridge[]>([]);
@@ -293,7 +230,6 @@ export function RecordersPage() {
         )}
       </div>
 
-      <PhoneCameraCard />
 
       {/* Your recorders — the day-to-day view, with storage */}
       <div className="bg-white shadow rounded-lg p-6 mb-6">

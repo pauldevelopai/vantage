@@ -319,13 +319,26 @@ async def mobile_login_page():
     return HTMLResponse(content=MOBILE_LOGIN_HTML)
 
 
-@router.get("/mobile-stream", response_class=HTMLResponse)
+@router.get("/mobile-stream")
 async def mobile_camera_stream_page():
+    """Superseded — hands over to /phone.
+
+    This page posted to /camera/analyze-frame, which only produced a VLM
+    description into camera_analysis.jsonl. It never ran detection, plates,
+    faces or vehicle ReID and never raised an event, so nothing it captured
+    reached Overview, People or Vehicles — while the console told the owner
+    it ran "the same detection, faces, plates and scene analysis as your
+    fixed cameras". On the live box that store was 0 bytes.
+
+    /phone speaks the bridge protocol and goes through the real pipeline.
+    Redirecting rather than deleting keeps any bookmarked link working.
     """
-    Simple web page for streaming from mobile phone camera.
-    
-    Open this on ANY phone browser to start streaming to Vantage.
-    """
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/api/phone", status_code=307)
+
+
+async def _retired_mobile_camera_stream_page():
+    """The old markup, unreachable; kept so the change stays reviewable."""
     html_content = """
 <!DOCTYPE html>
 <html lang="en">

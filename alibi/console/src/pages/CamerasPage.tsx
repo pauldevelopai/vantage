@@ -139,7 +139,27 @@ export function CamerasPage() {
 
   // Add-a-phone panel + the mobile stream URL to open on a phone.
   const [showPhone, setShowPhone] = useState(false);
-  const phoneUrl = `${window.location.origin}/camera/mobile-stream`;
+  // /phone speaks the bridge protocol, so a handset's frames go through the
+  // same detection/plates/faces/ReID pipeline as a fixed camera. The older
+  // /camera/mobile-stream page only produced a description into a side store
+  // nothing reads, while claiming otherwise.
+  const phoneUrl = `${window.location.origin}/phone`;
+  const [phoneCode, setPhoneCode] = useState<string | null>(null);
+  const [phoneMins, setPhoneMins] = useState(0);
+  const [phoneBusy, setPhoneBusy] = useState(false);
+  const [phoneErr, setPhoneErr] = useState<string | null>(null);
+
+  async function makePhoneCode() {
+    setPhoneBusy(true);
+    setPhoneErr(null);
+    try {
+      const r = await api.pairBridge();
+      setPhoneCode(r.code);
+      setPhoneMins(r.expires_in_minutes);
+    } catch (e: any) {
+      setPhoneErr(e?.message || 'Could not create a pairing code');
+    } finally { setPhoneBusy(false); }
+  }
 
   // Camera Bridge state (scan the user's own WiFi via a local agent)
   const [showOtherDevices, setShowOtherDevices] = useState(false);
@@ -496,9 +516,9 @@ export function CamerasPage() {
         <div className="bg-white shadow rounded-lg p-6 mb-6 border-l-4 border-emerald-400">
           <h2 className="text-lg font-medium text-gray-900">Add a phone as a camera</h2>
           <p className="mt-1 text-sm text-gray-500">
-            Any phone can become a camera — it streams frames into Vantage and runs the same
-            detection, faces, plates and scene analysis as your fixed cameras. Open this on the
-            phone’s browser and allow the camera:
+            Any phone can become a camera. Its frames go through the same detection, plates,
+            faces and vehicle matching as your fixed cameras, and it appears alongside them.
+            Open this on the phone’s browser and allow the camera:
           </p>
           <div className="mt-3 flex items-center gap-2">
             <code className="flex-1 text-sm bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-800 break-all">
@@ -509,9 +529,26 @@ export function CamerasPage() {
             <a href={phoneUrl} target="_blank" rel="noreferrer"
                className="px-3 py-2 text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded-md no-underline">Open</a>
           </div>
-          <p className="mt-2 text-xs text-gray-400">
-            The phone signs in the same way you did, then streams. Point it wherever you need eyes —
-            a doorway, a second gate, a room. It appears alongside your other cameras.
+          <div className="mt-4">
+            <button onClick={makePhoneCode} disabled={phoneBusy}
+                    className="px-3 py-2 text-sm bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-white rounded-md">
+              {phoneBusy ? 'Working…' : phoneCode ? 'New pairing code' : 'Get a pairing code'}
+            </button>
+            {phoneErr && <p className="mt-2 text-xs text-red-600">{phoneErr}</p>}
+            {phoneCode && (
+              <div className="mt-3 rounded-md bg-emerald-50 border border-emerald-200 p-3">
+                <p className="text-xs text-emerald-800">Enter this on the phone:</p>
+                <p className="font-mono text-3xl tracking-[0.3em] text-emerald-900 mt-1">{phoneCode}</p>
+                <p className="text-[11px] text-emerald-700/80 mt-2">
+                  Single use, expires in {phoneMins} minutes. Then tap Start watching and leave the
+                  page open. No sign-in needed on the handset — the code is the gate.
+                </p>
+              </div>
+            )}
+          </div>
+          <p className="mt-3 text-xs text-gray-400">
+            Point it wherever you need eyes — a doorway, a second gate, a room. It only sends
+            frames when something changes, so a still room costs nothing.
           </p>
         </div>
       )}
