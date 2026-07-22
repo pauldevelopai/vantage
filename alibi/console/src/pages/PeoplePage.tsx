@@ -286,6 +286,11 @@ function HistoryPanel({ person, onClose, onEnrolled }: { person: PersonRow; onCl
               </div>
             </div>
           )}
+          {enrolled && !editingPerson && person.matched_person_id && canEditPerson && (
+            <SamePersonReview personId={person.matched_person_id}
+                              label={person.matched_label || 'them'}
+                              onClaimed={onEnrolled} />
+          )}
           {enrolled && editingPerson && (
             <div className="mb-4 rounded-md bg-emerald-50 border border-emerald-300 p-3">
               <p className="text-sm font-medium text-emerald-900 mb-2">Edit this person</p>
@@ -532,6 +537,101 @@ function FrameNote({ frameId }: { frameId: string }) {
         </button>
         <button onClick={() => { setNote(saved); setEditing(false); }} className="text-xs text-gray-500">Cancel</button>
       </div>
+    </div>
+  );
+}
+
+
+/**
+ * "Is this the same person?"
+ *
+ * ArcFace scored two photographs of the same man at 0.322 — real recognition,
+ * far below the 0.6 we demand before claiming an identity unprompted. Rather
+ * than lower that bar, we ask. Every yes joins their gallery, so the next
+ * angle is easier than the last; one template never generalised.
+ */
+function SamePersonReview({ personId, label, onClaimed }: {
+  personId: string; label: string; onClaimed: () => void;
+}) {
+  const [cands, setCands] = useState<any[] | null>(null);
+  const [views, setViews] = useState(0);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.getPersonCandidates(personId)
+      .then(r => { setCands(r.candidates || []); setViews(r.views_on_file || 0); })
+      .catch(() => setCands([]));
+  }, [personId]);
+
+  function toggle(id: string) {
+    setPicked(prev => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  }
+
+  async function save() {
+    if (!picked.size) return;
+    setBusy(true);
+    try {
+      const r = await api.claimFaces(personId, Array.from(picked));
+      setMsg(`Added ${r.added} — ${label} now has ${r.views} views on file.`);
+      setCands(c => (c || []).filter(x => !picked.has(x.sighting_id)));
+      setPicked(new Set());
+      onClaimed();
+    } catch (e: any) {
+      setMsg(e?.message || 'Could not save');
+    } finally { setBusy(false); }
+  }
+
+  if (cands === null) return null;
+  if (!cands.length) {
+    return (
+      <p className="mb-4 text-[11px] text-gray-400">
+        {views} view{views === 1 ? '' : 's'} of {label} on file. No other unnamed faces look like them.
+      </p>
+    );
+  }
+
+  return (
+    <div className="mb-4 rounded-md bg-indigo-50 border border-indigo-200 p-3">
+      <p className="text-sm font-medium text-indigo-900">Are any of these also {label}?</p>
+      <p className="text-[11px] text-indigo-700/80 mb-2">
+        {label} has {views} view{views === 1 ? '' : 's'} on file. Each one you confirm makes them
+        easier to spot at that angle — one photograph doesn't generalise.
+      </p>
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+        {cands.map(k => (
+          <button key={k.sighting_id} onClick={() => toggle(k.sighting_id)}
+                  className={`rounded-md overflow-hidden border-2 text-left transition ${
+                    picked.has(k.sighting_id) ? 'border-indigo-600' : 'border-transparent hover:border-indigo-300'}`}>
+            <div className="aspect-square bg-gray-100">
+              {k.frame_url && k.bbox
+                ? <CropImg src={k.frame_url} alt="Possible match"
+                           bbox={k.bbox as [number, number, number, number]} pad={0.45}
+                           className="w-full h-full" />
+                : <div className="w-full h-full flex items-center justify-center text-[9px] text-gray-400">no crop</div>}
+            </div>
+            <div className="px-1 py-0.5 bg-white">
+              <div className="text-[9px] text-gray-500">{when(k.ts)}</div>
+              <div className="text-[9px] text-gray-400 tabular-nums">{Math.round(k.score * 100)}% alike</div>
+            </div>
+          </button>
+        ))}
+      </div>
+      <div className="mt-2 flex items-center gap-2">
+        <button onClick={save} disabled={busy || !picked.size}
+                className="text-xs font-medium bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded px-3 py-1.5">
+          {busy ? 'Saving…' : `Yes — ${picked.size || 'none'} selected ${picked.size === 1 ? 'is' : 'are'} ${label}`}
+        </button>
+        {msg && <span className="text-xs text-indigo-800">{msg}</span>}
+      </div>
+      <p className="mt-1.5 text-[11px] text-indigo-700/70">
+        Only pick the ones you're sure of. A wrong face here teaches the system the wrong thing.
+      </p>
     </div>
   );
 }

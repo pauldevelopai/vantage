@@ -685,6 +685,24 @@ export const api = {
     return res.json();
   },
 
+  /** Unnamed faces that might be this person — questions, not claims. */
+  async getPersonCandidates(personId: string): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/watchlist/${encodeURIComponent(personId)}/candidates`);
+    if (!res.ok) throw new Error('Could not look for matching faces');
+    return res.json();
+  },
+
+  /** "Yes, those are the same person" — each one joins their gallery. */
+  async claimFaces(personId: string, sightingIds: string[]): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/watchlist/${encodeURIComponent(personId)}/claim`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sighting_ids: sightingIds }),
+    });
+    if (!res.ok) throw new Error('Could not save those');
+    return res.json();
+  },
+
   async removeWatchlistEntry(personId: string): Promise<any> {
     const res = await fetchWithAuth(`${API_BASE}/watchlist/${encodeURIComponent(personId)}`, {
       method: 'DELETE',
