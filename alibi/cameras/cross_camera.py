@@ -6,6 +6,7 @@ Detects impossible travel and frequent re-appearances.
 """
 
 import json
+import os
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -45,13 +46,24 @@ class CrossCameraTracker:
         reappearance_camera_threshold: int = 3,
         storage_path: str = "alibi/data/cross_camera_sightings.jsonl",
         retention_hours: int = 24,
+        gallery_path: Optional[str] = None,
     ):
         self.min_travel_seconds = min_travel_seconds
         self.reappearance_window_minutes = reappearance_window_minutes
         self.reappearance_camera_threshold = reappearance_camera_threshold
         self.storage_path = Path(storage_path)
+        # The galleries belong beside the sightings they describe. Deriving the
+        # path means a tracker pointed at a temporary archive keeps temporary
+        # galleries too — otherwise every test sharing the default file would
+        # inherit whatever the last one learned.
+        self.gallery_path = (Path(gallery_path) if gallery_path
+                             else self.storage_path.parent / "reid_galleries.jsonl")
+        # How much history is held IN MEMORY. The archive on disk is
+        # append-only and never deleted — this is a working-set bound, not a
+        # retention policy. Queries beyond it read from the archive.
         self.retention_hours = retention_hours
         self._crypto = get_encrypted_writer()
+        self._gallery_dirty = 0
 
         # In-memory: {entity_key: [(camera_id, timestamp_iso, metadata), ...]}
         self._sightings: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
@@ -66,6 +78,7 @@ class CrossCameraTracker:
 
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
         self._load_recent()
+        self._load_galleries()
 
     def _entity_key(self, entity_type: str, entity_id: str) -> str:
         return f"{entity_type}:{entity_id}"
@@ -92,6 +105,93 @@ class CrossCameraTracker:
                     continue
         except Exception as e:
             print(f"[CrossCameraTracker] Error loading sightings: {e}")
+
+    # ── What the system has learned about who is who ─────────────────────
+    #
+    # The galleries ARE the memory: one representative embedding per entity,
+    # refined every time that entity is seen again. Until this was persisted
+    # they lived only in RAM, so every restart threw away every appearance the
+    # system had learned AND reset the id counter — the next vehicle was minted
+    # as vehicle_000001 again and merged into whatever vehicle_000001 used to
+    # be. Restarts did not just forget identities, they corrupted them.
+    #
+    # Snapshot per save, last one wins on load. Small: one vector per entity.
+
+    def _load_galleries(self) -> None:
+        """Restore the learned appearance galleries and the id counter."""
+        snapshot = None
+        try:
+            if self.gallery_path.exists():
+                for record in self._crypto.read_lines(self.gallery_path):
+                    snapshot = record            # last valid record wins
+        except Exception as e:
+            print(f"[CrossCameraTracker] Could not read galleries: {e}")
+
+        if snapshot:
+            try:
+                for etype, entities in (snapshot.get("galleries") or {}).items():
+                    for eid, vec in entities.items():
+                        self._galleries[etype][eid] = np.asarray(vec, dtype=np.float32)
+                for etype, counts in (snapshot.get("counts") or {}).items():
+                    for eid, n in counts.items():
+                        self._gallery_counts[etype][eid] = int(n)
+                self._new_entity_counter = int(snapshot.get("counter") or 0)
+            except Exception as e:
+                print(f"[CrossCameraTracker] Corrupt gallery snapshot ignored: {e}")
+
+        # Belt and braces: even with no snapshot (or a partial one), never mint
+        # an id that already exists in the archive. Reusing one silently merges
+        # two different vehicles, which is worse than losing the clustering.
+        highest = self._highest_minted_id()
+        if highest > self._new_entity_counter:
+            print(f"[CrossCameraTracker] id counter {self._new_entity_counter} "
+                  f"trails the archive; advancing to {highest} so ids are never reused")
+            self._new_entity_counter = highest
+
+        n = sum(len(v) for v in self._galleries.values())
+        if n:
+            print(f"[CrossCameraTracker] Restored {n} appearance galleries "
+                  f"(next id #{self._new_entity_counter + 1})")
+
+    def _highest_minted_id(self) -> int:
+        """Largest numeric suffix ever minted, from every id we know about."""
+        import re
+
+        highest = 0
+        seen = set()
+        for entities in self._galleries.values():
+            seen.update(entities.keys())
+        for key in self._sightings:
+            seen.add(key.split(":", 1)[-1])
+        for eid in seen:
+            m = re.search(r"_(\d+)$", eid or "")
+            if m:
+                highest = max(highest, int(m.group(1)))
+        return highest
+
+    def save_galleries(self) -> None:
+        """Write the learned galleries so a restart keeps them."""
+        try:
+            snapshot = {
+                "saved_ts": datetime.now().isoformat(),
+                "counter": self._new_entity_counter,
+                "galleries": {etype: {eid: [float(x) for x in vec]
+                                      for eid, vec in entities.items()}
+                              for etype, entities in self._galleries.items()},
+                "counts": {etype: dict(counts)
+                           for etype, counts in self._gallery_counts.items()},
+            }
+            self.gallery_path.parent.mkdir(parents=True, exist_ok=True)
+            self._crypto.write_line(self.gallery_path, snapshot)
+            self._gallery_dirty = 0
+        except Exception as e:
+            print(f"[CrossCameraTracker] Could not save galleries: {e}")
+
+    def _touch_galleries(self, force: bool = False) -> None:
+        """Save periodically — every sighting would rewrite the whole snapshot."""
+        self._gallery_dirty += 1
+        if force or self._gallery_dirty >= 25:
+            self.save_galleries()
 
     def _flush_sighting(self, entity_type: str, entity_id: str, camera_id: str, timestamp: str, metadata: dict):
         """Append a sighting record to JSONL (encrypted at rest)."""
@@ -200,11 +300,16 @@ class CrossCameraTracker:
             if emb is not None:
                 self._galleries[entity_type][entity_id] = l2_normalize(emb)
                 self._gallery_counts[entity_type][entity_id] = 1
+                # Save at once. A newly minted identity is the one thing that
+                # cannot be reconstructed, and losing the counter along with it
+                # is what let ids be reused — and vehicles merged — on restart.
+                self._touch_galleries(force=True)
         else:
             # Matched an existing identity — refine its gallery embedding and
             # annotate the sighting with the match score for auditability.
             if emb is not None:
                 self._update_gallery(entity_type, entity_id, emb)
+                self._touch_galleries()
             metadata = {**metadata, "reid_match_score": round(score, 4)}
 
         alerts = self.record_sighting(
@@ -217,25 +322,40 @@ class CrossCameraTracker:
     ) -> Tuple[Optional[str], float]:
         """
         Find the best-matching known entity of `entity_type` for embedding
-        `emb`. Only entities with at least one sighting still inside the
-        retention window are considered. Returns (entity_id, score) if the
-        best cosine similarity meets the threshold, else (None, best_score).
+        `emb`. EVERY entity we have ever learned is considered — a car that
+        last came down the road in March should be recognised as itself in
+        September, not minted as a stranger. (This used to skip anything with
+        no sighting inside the in-memory window, which silently undid the whole
+        point of remembering appearances.)
+
+        Returns (entity_id, score) if the best cosine similarity meets the
+        threshold, else (None, best_score).
         """
         if emb is None:
             return None, 0.0
 
         gallery = self._galleries.get(entity_type, {})
-        best_id: Optional[str] = None
-        best_score = 0.0
+        if not gallery:
+            return None, 0.0
 
-        for entity_id, ref in gallery.items():
-            # Skip entities that have aged out of the retention window.
-            if not self._has_recent_sighting(entity_type, entity_id):
-                continue
-            score = cosine_similarity(emb, ref)
-            if score > best_score:
-                best_score = score
-                best_id = entity_id
+        q = l2_normalize(np.asarray(emb, dtype=np.float32).ravel())
+
+        # Only entities embedded by the SAME model are comparable. Swap the
+        # ReID backend and the old vectors become meaningless here — better to
+        # ignore them and re-learn than to score noise against them.
+        ids = [i for i, ref in gallery.items()
+               if getattr(ref, "size", 0) == q.size]
+        if not ids:
+            return None, 0.0
+
+        # Vectorised: this now compares against everything ever learned rather
+        # than a recent handful, and runs once per detection.
+        refs = np.stack([np.asarray(gallery[i], dtype=np.float32).ravel() for i in ids])
+        norms = np.linalg.norm(refs, axis=1)
+        norms[norms == 0] = 1.0
+        scores = (refs @ q) / norms
+        best_idx = int(np.argmax(scores))
+        best_id, best_score = ids[best_idx], float(scores[best_idx])
 
         if best_id is not None and best_score >= match_threshold:
             return best_id, best_score
@@ -418,15 +538,26 @@ _tracker_instance: Optional[CrossCameraTracker] = None
 def get_cross_camera_tracker() -> CrossCameraTracker:
     """Get or create global cross-camera tracker.
 
-    Retention is 30 days, not the class default 24h. Two reasons:
-      * familiar-vs-new needs an entity's first sighting to age past a day —
-        with 24h retention everything reads as "NEW to the scene" forever; and
-      * the Vehicles view offers 24h / 7d / 30d windows, and a window we can't
-        actually answer would be a lie. Keeping 30 days makes the longest one
-        real as history accrues.
-    The cost is trivial at this scale: a month is on the order of 10k sighting
-    rows (~10MB of JSONL), each a small dict."""
+    The number below is a MEMORY working set, not a retention policy. Nothing
+    is ever deleted: cross_camera_sightings.jsonl is append-only, and the
+    learned appearance galleries are now persisted too, so what the system
+    knows survives restarts and grows without bound on disk.
+
+    What it costs to hold in RAM is the only reason there is a limit at all.
+    Measured on the live box: ~2.4MB of sighting JSONL per 5 days, so a year is
+    ~175MB on disk and several times that as Python dicts — too much for a
+    3.8GB box that is already using 600MB. A year in memory would be a slow
+    death by swapping; a year on disk is 175MB of a 50GB free partition.
+
+    So: hold a generous working set in RAM, keep everything on disk, and read
+    the archive for anything older. Override with VANTAGE_MEMORY_DAYS if this
+    deployment has memory to spare.
+    """
     global _tracker_instance
     if _tracker_instance is None:
-        _tracker_instance = CrossCameraTracker(retention_hours=24 * 30)
+        try:
+            days = int(os.environ.get("VANTAGE_MEMORY_DAYS", "180"))
+        except ValueError:
+            days = 180
+        _tracker_instance = CrossCameraTracker(retention_hours=24 * max(1, days))
     return _tracker_instance
