@@ -1199,8 +1199,13 @@ def _who_in_frame(event) -> Optional[str]:
             if sight.matched_person_id:
                 return labels.get(sight.matched_person_id)
             v = _np.asarray(sight.embedding, dtype=_np.float32).ravel()
+            from alibi.watchlist import rejections as _r
+            blocked = {pid for pid, ids in _r.all_rejections().items()
+                       if sight.sighting_id in ids}
             best, score = None, 0.6          # never guess below this
             for pid, gal in galleries.items():
+                if pid in blocked:
+                    continue                 # told this isn't them
                 sc = matcher.cosine_similarity(v, gal)
                 if sc >= score:
                     best, score = pid, sc
@@ -5411,11 +5416,18 @@ async def people_recent(limit: int = 60, hours: int = 168, window: str = "",
     # forever. Comparing each sighting against the enrolled embeddings here means
     # naming a face names it on this picture and on every past sighting of it,
     # immediately. Conservative threshold — we never guess a stranger's identity.
+    from alibi.watchlist import rejections as _rej
+    _ruled_out = _rej.all_rejections()
+
     def _match_pid(s):
         if s.matched_person_id:
             return s.matched_person_id
         if not embeddings or not getattr(s, "embedding", None):
             return None
+        # "That isn't them" must OUTRANK similarity. Without this the label
+        # comes straight back on the next page load, however emphatically it
+        # was cleared — an undo that undoes nothing.
+        blocked = {pid for pid, ids in _ruled_out.items() if s.sighting_id in ids}
         try:
             import numpy as _np
             v = _np.asarray(s.embedding, dtype=_np.float32).ravel()
@@ -5427,6 +5439,8 @@ async def people_recent(limit: int = 60, hours: int = 168, window: str = "",
             _m = FaceMatcher()
             best_pid, best = None, 0.6
             for pid_, gallery in embeddings.items():
+                if pid_ in blocked:
+                    continue                      # ruled out for this face
                 # Gallery-aware: scores against the person's BEST confirmed view.
                 score = _m.cosine_similarity(v, gallery)
                 if score >= best:
