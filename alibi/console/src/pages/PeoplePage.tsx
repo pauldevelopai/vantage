@@ -5,6 +5,7 @@ import { AuthImg } from '../components/AuthImg';
 import { CropImg } from '../components/CropImg';
 import type { PersonRow, PersonHistoryResult } from '../lib/types';
 import { TimeWindow, windowPhrase, type Win } from '../components/TimeWindow';
+import { FacesPage } from './FacesPage';
 
 /**
  * People — "who has been here, and where have they been before?"
@@ -32,6 +33,9 @@ export function PeoplePage() {
   const [err, setErr] = useState<string | null>(null);
   const [selected, setSelected] = useState<PersonRow | null>(null);
   const [win, setWin] = useState<Win>('7d');
+  // The enrolled roster lives here too, but People is already the busiest page
+  // in the app — so it opens on request rather than pushing the sightings down.
+  const [showRoster, setShowRoster] = useState(false);
 
   async function load(w: Win = win) {
     try {
@@ -122,6 +126,28 @@ export function PeoplePage() {
               </button>
             );
           })}
+        </div>
+      )}
+
+      {/* Everyone you've named — the former Faces page, rendered whole so no
+          control or call is lost in the move. Its own route still works. */}
+      {hasRole('supervisor') && (
+        <div className="mt-8 bg-white shadow rounded-lg">
+          <button onClick={() => setShowRoster(v => !v)}
+                  className="w-full flex items-center justify-between px-6 py-4 text-left">
+            <span>
+              <span className="text-lg font-medium text-gray-900">Everyone you've named</span>
+              <span className="block text-sm text-gray-500">
+                The people who belong here, plus enrolling from a photo and searching by one.
+              </span>
+            </span>
+            <span className="flex-none text-sm text-gray-400">{showRoster ? 'Hide ▲' : 'Show ▼'}</span>
+          </button>
+          {showRoster && (
+            <div className="px-6 pb-6 border-t border-gray-100 pt-4">
+              <FacesPage embedded />
+            </div>
+          )}
         </div>
       )}
 

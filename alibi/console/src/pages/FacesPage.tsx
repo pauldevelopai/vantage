@@ -39,7 +39,7 @@ function timeAgo(iso: string): string {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
-export function FacesPage() {
+export function FacesPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [entries, setEntries] = useState<FaceEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -137,8 +137,8 @@ export function FacesPage() {
   }
 
   return (
-    <div className="px-4 sm:px-6 lg:px-8">
-      <div className="sm:flex sm:items-center">
+    <div className={embedded ? "" : "px-4 sm:px-6 lg:px-8"}>
+{!embedded &&       <div className="sm:flex sm:items-center">
         <div className="sm:flex-auto">
           <h1 className="text-2xl font-semibold text-gray-900">Faces</h1>
           <p className="mt-2 text-sm text-gray-700">
@@ -147,7 +147,7 @@ export function FacesPage() {
             on an unknown face on the Overview.
           </p>
         </div>
-      </div>
+      </div>}
 
       {/* Enrolled people — face cards from real camera sightings */}
       <div className="mt-8">

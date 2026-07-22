@@ -109,7 +109,6 @@ function Layout({ children }: { children: React.ReactNode }) {
   // One source of nav truth. 18 destinations don't fit on one row (they clipped),
   // so on desktop they collapse into a few labelled dropdown groups, and on a
   // phone into the hamburger drawer. Role-gates drop items an operator can't see.
-  const sup = hasRole('supervisor') || hasRole('admin');
   const adm = hasRole('admin');
   type NavItem = { to: string; label: string };
   const navGroups: { title: string | null; items: NavItem[] }[] = [
@@ -124,9 +123,9 @@ function Layout({ children }: { children: React.ReactNode }) {
       { to: '/people', label: 'People' }, { to: '/patterns', label: 'Patterns' },
       { to: '/reports', label: 'Reports' }, { to: '/search', label: 'Search' },
       { to: '/metrics', label: 'Metrics' }, { to: '/vehicle-search', label: 'Vehicles' },
-      // Review and Hotlist are sections of Vehicles now. Their routes still
-      // resolve, so old links keep working — they just aren't destinations.
-      ...(sup ? [{ to: '/faces', label: 'Faces' }] : []),
+      // Faces is a section of People, as Review and Hotlist are of Vehicles.
+      // Their routes still resolve, so old links keep working — they simply
+      // aren't destinations of their own any more.
     ] },
     { title: 'Admin', items: adm ? [{ to: '/costs', label: 'Costs' }, { to: '/settings', label: 'Settings' }] : [] },
     // Intel sits past Admin, at the end of the row — a destination in its own
