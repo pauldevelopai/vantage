@@ -117,13 +117,19 @@ function Layout({ children }: { children: React.ReactNode }) {
     // Intel is a destination in its own right, not a sub-item of Intelligence.
     { title: null, items: [{ to: '/intel', label: 'Intel' }] },
     { title: 'Setup', items: [{ to: '/cameras', label: 'Cameras' }, { to: '/recorders', label: 'Recorders' }, { to: '/sites', label: 'Sites' }] },
+    // One Intelligence menu. The old Watchlist group split each workflow in
+    // two — you named someone under People and the result lived under Faces,
+    // named a car under Vehicles and confirmed it under Review. The
+    // supervisor-only items keep their role gate, they just sit here now.
     { title: 'Intelligence', items: [
       { to: '/advisor', label: 'Advisor' }, { to: '/incidents', label: 'Incidents' },
       { to: '/people', label: 'People' }, { to: '/patterns', label: 'Patterns' },
       { to: '/reports', label: 'Reports' }, { to: '/search', label: 'Search' },
       { to: '/metrics', label: 'Metrics' }, { to: '/vehicle-search', label: 'Vehicles' },
+      ...(sup ? [{ to: '/faces', label: 'Faces' },
+                 { to: '/vehicle-review', label: 'Review' },
+                 { to: '/hotlist', label: 'Hotlist' }] : []),
     ] },
-    { title: 'Watchlist', items: sup ? [{ to: '/vehicle-review', label: 'Review' }, { to: '/hotlist', label: 'Hotlist' }, { to: '/faces', label: 'Faces' }] : [] },
     { title: 'Admin', items: adm ? [{ to: '/costs', label: 'Costs' }, { to: '/settings', label: 'Settings' }] : [] },
   ].filter(g => g.title === null || g.items.length > 0);
 
