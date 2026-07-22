@@ -114,8 +114,6 @@ function Layout({ children }: { children: React.ReactNode }) {
   type NavItem = { to: string; label: string };
   const navGroups: { title: string | null; items: NavItem[] }[] = [
     { title: null, items: [{ to: '/overview', label: 'Overview' }] },
-    // Intel is a destination in its own right, not a sub-item of Intelligence.
-    { title: null, items: [{ to: '/intel', label: 'Intel' }] },
     { title: 'Setup', items: [{ to: '/cameras', label: 'Cameras' }, { to: '/recorders', label: 'Recorders' }, { to: '/sites', label: 'Sites' }] },
     // One Intelligence menu. The old Watchlist group split each workflow in
     // two — you named someone under People and the result lived under Faces,
@@ -131,6 +129,9 @@ function Layout({ children }: { children: React.ReactNode }) {
                  { to: '/hotlist', label: 'Hotlist' }] : []),
     ] },
     { title: 'Admin', items: adm ? [{ to: '/costs', label: 'Costs' }, { to: '/settings', label: 'Settings' }] : [] },
+    // Intel sits past Admin, at the end of the row — a destination in its own
+    // right rather than a sub-item of Intelligence.
+    { title: null, items: [{ to: '/intel', label: 'Intel' }] },
   ].filter(g => g.title === null || g.items.length > 0);
 
   // Close any open dropdown / the mobile drawer whenever the route changes.
