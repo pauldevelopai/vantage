@@ -115,6 +115,37 @@ function EditCameraModal({ camera, sites, onClose, onSaved }: { camera: Camera; 
   );
 }
 
+/**
+ * Is this camera actually being recorded?
+ *
+ * "Recording" means something is alive and pointed at it — not that a picture
+ * arrived recently. Frames are only sent when something changes, so a working
+ * camera on a still driveway is quiet, not dead. The list used to show a dead
+ * camera and a live one identically, which it did for two days.
+ */
+function RecordingBadge({ cam }: { cam: any }) {
+  const state = cam.state || (cam.watching ? 'quiet' : 'never');
+  const look: Record<string, string> = {
+    live: 'bg-emerald-100 text-emerald-800',
+    quiet: 'bg-emerald-50 text-emerald-700',
+    stopped: 'bg-amber-100 text-amber-800',
+    never: 'bg-gray-100 text-gray-500',
+  };
+  const dot: Record<string, string> = {
+    live: 'bg-emerald-500 animate-pulse',
+    quiet: 'bg-emerald-500',
+    stopped: 'bg-amber-500',
+    never: 'bg-gray-400',
+  };
+  return (
+    <span title={cam.detail || ''}
+          className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ${look[state] || look.never}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${dot[state] || dot.never}`} />
+      {cam.label || (cam.watching ? 'Recording' : 'Not recording')}
+    </span>
+  );
+}
+
 export function CamerasPage() {
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [loading, setLoading] = useState(true);
@@ -974,10 +1005,13 @@ export function CamerasPage() {
           {cameras.map(cam => (
             <div key={cam.camera_id} className="bg-white shadow rounded-lg p-4 flex items-center justify-between">
               <div className="flex items-center gap-4 min-w-0">
-                <span className="flex-shrink-0 text-2xl" role="img" aria-label="camera">📷</span>
+                <span className="flex-shrink-0 text-2xl" role="img" aria-label="camera">
+                  {cam.source_type === 'mobile' ? '📱' : '📷'}
+                </span>
                 <div className="min-w-0">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-medium text-gray-900 truncate">{cam.name}</span>
+                    <RecordingBadge cam={cam} />
                     <span className="text-xs text-gray-400 font-mono">{cam.camera_id}</span>
                     {cam.area && (
                       <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
@@ -986,7 +1020,13 @@ export function CamerasPage() {
                     )}
                   </div>
                   <div className="text-xs text-gray-500 truncate font-mono" title={maskUrl(cam.source)}>
-                    {cam.source ? maskUrl(cam.source) : 'No stream URL — click Edit to add one'}
+                    {cam.source_type === 'mobile'
+                      ? `Phone camera${cam.feeder ? ` · ${cam.feeder}` : ''}`
+                      : cam.source ? maskUrl(cam.source) : 'No stream URL — click Edit to add one'}
+                  </div>
+                  <div className="text-xs text-gray-400 mt-0.5">
+                    {cam.detail}
+                    {cam.feeder && cam.source_type !== 'mobile' && ` · via ${cam.feeder}`}
                   </div>
                 </div>
               </div>

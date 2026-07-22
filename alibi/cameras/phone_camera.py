@@ -206,7 +206,27 @@ PHONE_CAMERA_HTML = r"""<!doctype html>
     return (diff / a.length / 255) > CHANGE;
   }
 
+  // Say we're alive even when nothing moves. Without this, a phone watching a
+  // still room looks identical to a phone that has been switched off.
+  var lastBeat = 0;
+  async function heartbeat() {
+    if (!creds || Date.now() - lastBeat < 60000) return;
+    lastBeat = Date.now();
+    try {
+      await fetch(API + '/cameras/bridge/heartbeat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Bridge-Id': creds.bridge_id,
+          'X-Bridge-Token': creds.token
+        },
+        body: '{}'
+      });
+    } catch (e) { /* the next tick tries again */ }
+  }
+
   async function tick() {
+    heartbeat();
     var sig = signature();
     if (!changed(prev, sig)) { setState('Watching — nothing moving', 'muted'); return; }
     prev = sig;
@@ -246,6 +266,8 @@ PHONE_CAMERA_HTML = r"""<!doctype html>
   function startWatching() {
     if (!creds) return;
     prev = null;
+    lastBeat = 0;
+    heartbeat();
     timer = setInterval(tick, INTERVAL_MS);
     $('dot').classList.add('live');
     $('startBtn').classList.add('hide');

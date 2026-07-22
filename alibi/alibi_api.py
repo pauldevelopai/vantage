@@ -2084,14 +2084,76 @@ class CameraUpdateRequest(BaseModel):
     vms_config: Optional[dict] = None
 
 
+def _note_camera_alive(camera_id: str, bridge_id: str) -> None:
+    """Record that a picture arrived from this camera, via this feeder.
+
+    A phone posts under a camera_id nobody registered, so the first frame is
+    also its introduction — otherwise you pair a handset, it starts sending,
+    and the Cameras page never mentions it.
+    """
+    from alibi.cameras.bridge import get_bridge_registry
+
+    store = get_camera_store()
+    now = datetime.now().isoformat()
+    cam = store.get(camera_id)
+    if cam is None:
+        name = camera_id
+        try:
+            for b in get_bridge_registry().list_bridges():
+                if b.get("bridge_id") == bridge_id:
+                    name = b.get("name") or camera_id
+                    break
+        except Exception:
+            pass
+        store.add(Camera(camera_id=camera_id, name=name, source="phone",
+                         source_type="mobile", enabled=True,
+                         location="Phone camera", status="online", last_seen=now,
+                         vms_config={"bridge_id": bridge_id}))
+        print(f"[cameras] registered {camera_id} ({name}) from its first frame", flush=True)
+        return
+
+    cfg = dict(cam.vms_config or {})
+    cfg["bridge_id"] = bridge_id
+    store.update(camera_id, {"status": "online", "last_seen": now, "vms_config": cfg})
+
+
 @app.get("/cameras", tags=["Cameras"])
 async def list_cameras(
     current_user: User = Depends(get_current_user),
 ):
-    """List all registered cameras with status."""
+    """Every camera, and whether anything is actually watching it.
+
+    "Recording" is not the same as "a picture arrived recently": frames are
+    only sent when something changes, so a working camera on a still driveway
+    is quiet, not dead. The feeder's check-in decides whether it is being
+    watched; the last frame is reported separately.
+    """
+    from alibi.cameras.bridge import get_bridge_registry
+    from alibi.cameras import liveness
+
     store = get_camera_store()
-    cameras = store.list_all()
-    return {"cameras": [c.to_dict() for c in cameras]}
+    feeders = {}
+    try:
+        for b in get_bridge_registry().list_bridges():
+            feeders[b.get("bridge_id")] = b
+    except Exception:
+        pass
+
+    now = datetime.now()
+    out = []
+    for c in store.list_all():
+        d = c.to_dict()
+        bridge_id = (c.vms_config or {}).get("bridge_id")
+        feeder = feeders.get(bridge_id)
+        if feeder is None and len(feeders) == 1 and c.source_type != "mobile":
+            # Fixed cameras predate the bridge link. With a single recorder
+            # there is no ambiguity about which one reads them.
+            feeder = next(iter(feeders.values()))
+        d["feeder"] = (feeder or {}).get("name")
+        d["feeder_online"] = bool((feeder or {}).get("online"))
+        d.update(liveness.describe((feeder or {}).get("last_seen"), c.last_seen, now=now))
+        out.append(d)
+    return {"cameras": out}
 
 
 @app.post("/cameras", tags=["Cameras"])
@@ -3692,6 +3754,15 @@ async def bridge_ingest_frame(camera_id: str, request: Request,
     data = await request.body()
     if not data:
         raise HTTPException(status_code=400, detail="Empty frame")
+    # Note the arrival BEFORE the throttle: a frame we chose not to analyse is
+    # still proof the camera is alive, and the Cameras page needs that to tell
+    # "recording, nothing moving" from "dead since Tuesday". Also registers a
+    # phone the first time it sends anything, so it appears in the list.
+    try:
+        _note_camera_alive(camera_id, bridge_id)
+    except Exception as e:
+        print(f"[bridge] camera liveness note failed: {e}", flush=True)
+
     if not fa.should_analyze(camera_id, _time.time()):
         return {"analyzed": False, "reason": "throttled"}
 

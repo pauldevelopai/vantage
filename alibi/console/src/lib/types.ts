@@ -147,6 +147,18 @@ export interface Camera {
   status: string;
   last_seen: string | null;
   vms_config: Record<string, any>;
+
+  /** Whether anything is actually watching this camera right now — NOT the same
+   *  as "a picture arrived recently". Frames are only sent when something
+   *  changes, so a working camera on a still driveway is quiet, not dead.
+   *  See alibi/cameras/liveness.py. */
+  watching?: boolean;
+  state?: 'live' | 'quiet' | 'stopped' | 'never';
+  label?: string;
+  detail?: string;
+  /** The recorder or handset feeding it. */
+  feeder?: string | null;
+  feeder_online?: boolean;
 }
 
 export interface TrailEntry {
