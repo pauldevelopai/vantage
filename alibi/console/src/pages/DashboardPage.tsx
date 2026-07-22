@@ -140,6 +140,13 @@ export function DashboardPage() {
             <p className="text-sm text-slate-500">
               Real detections from your cameras, {windowPhrase(range)} · updated {data ? timeAgo(data.generated_at) : '…'}
             </p>
+            <p className="mt-1 text-xs">
+              <Link to="/advisor" className="text-indigo-400 hover:text-indigo-300 no-underline">
+                What needs attention →
+              </Link>
+              <Link to="/search" className="ml-4 text-slate-500 hover:text-slate-300 no-underline">Search</Link>
+              <Link to="/metrics" className="ml-4 text-slate-500 hover:text-slate-300 no-underline">Metrics</Link>
+            </p>
           </div>
           <div className="flex items-center gap-1 p-1 rounded-lg bg-slate-900/70 border border-slate-800">
             {RANGES.map(r => (
@@ -245,6 +252,9 @@ export function DashboardPage() {
                 <Panel className="mb-4" delay={210}>
                   <div className="flex items-center justify-between mb-3">
                     <h2 className="text-[11px] font-semibold text-slate-300 uppercase tracking-[0.14em]">Reports from the ground</h2>
+                    <Link to="/reports" className="text-[10px] text-indigo-400 hover:text-indigo-300 no-underline mr-2">
+                      all reports →
+                    </Link>
                     <button onClick={() => setLogReport(true)}
                             className="text-[10px] text-indigo-400 hover:text-indigo-300 border border-indigo-500/30 hover:border-indigo-400/60 rounded px-2 py-0.5">
                       + Log a report
