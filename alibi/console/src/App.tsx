@@ -124,9 +124,9 @@ function Layout({ children }: { children: React.ReactNode }) {
       { to: '/people', label: 'People' }, { to: '/patterns', label: 'Patterns' },
       { to: '/reports', label: 'Reports' }, { to: '/search', label: 'Search' },
       { to: '/metrics', label: 'Metrics' }, { to: '/vehicle-search', label: 'Vehicles' },
-      ...(sup ? [{ to: '/faces', label: 'Faces' },
-                 { to: '/vehicle-review', label: 'Review' },
-                 { to: '/hotlist', label: 'Hotlist' }] : []),
+      // Review and Hotlist are sections of Vehicles now. Their routes still
+      // resolve, so old links keep working — they just aren't destinations.
+      ...(sup ? [{ to: '/faces', label: 'Faces' }] : []),
     ] },
     { title: 'Admin', items: adm ? [{ to: '/costs', label: 'Costs' }, { to: '/settings', label: 'Settings' }] : [] },
     // Intel sits past Admin, at the end of the row — a destination in its own

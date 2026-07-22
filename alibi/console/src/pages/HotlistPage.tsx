@@ -28,7 +28,7 @@ function reasonLabel(r: string) {
   return REASONS.find(x => x.value === r)?.label || r;
 }
 
-export function HotlistPage() {
+export function HotlistPage({ embedded = false }: { embedded?: boolean } = {}) {
   const canEdit = hasRole('supervisor') || hasRole('admin');
   const [entries, setEntries] = useState<HotlistEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -82,14 +82,14 @@ export function HotlistPage() {
     : entries;
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-6">
-      <div className="mb-2">
+    <div className={embedded ? "" : 'max-w-4xl mx-auto px-4 py-6'}>
+      {!embedded && <div className="mb-2">
         <h1 className="text-2xl font-semibold text-gray-900">Hotlist</h1>
         <p className="text-sm text-gray-500">
           Plates to flag. Every plate your cameras read is checked against this list — a match
           raises the incident for review.
         </p>
-      </div>
+      </div>}
 
       <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 mb-5 text-sm text-blue-900">
         This list is what you put in it — lawful and dependable, with no outside dependency.

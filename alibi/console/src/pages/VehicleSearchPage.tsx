@@ -4,6 +4,9 @@ import { CropImg } from '../components/CropImg';
 import { VehicleHistoryModal } from '../components/VehicleHistoryModal';
 import type { TrailEntry } from '../lib/types';
 import { WINDOWS, type Win } from '../components/TimeWindow';
+import { VehicleReviewPage } from './VehicleReviewPage';
+import { HotlistPage } from './HotlistPage';
+import { hasRole } from '../lib/auth';
 
 interface VehicleSighting {
   sighting_id: string;
@@ -501,6 +504,32 @@ export function VehicleSearchPage() {
         <VehicleHistoryModal entityId={openVehicle}
                              onClose={() => setOpenVehicle(null)}
                              onSaved={() => { setOpenVehicle(null); setReload(r => r + 1); }} />
+      )}
+
+      {/* Everything about vehicles in one place. These are the former Review
+          and Hotlist pages rendered whole — same components, same code, so no
+          control and no call can be lost in the move. Their own routes still
+          work for anyone who bookmarked them. */}
+      {hasRole('supervisor') && (
+        <>
+          <div className="mt-8 bg-white shadow rounded-lg p-6">
+            <h2 className="text-lg font-medium text-gray-900">Confirm what these are</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              The AI guessed a make and model from a real crop. Confirming builds a
+              locally-labelled set — back-office only, never shown to clients.
+            </p>
+            <VehicleReviewPage embedded />
+          </div>
+
+          <div className="mt-6 bg-white shadow rounded-lg p-6">
+            <h2 className="text-lg font-medium text-gray-900">Plates to flag</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              Every plate your cameras read is checked against this list — a match raises
+              the incident for review.
+            </p>
+            <HotlistPage embedded />
+          </div>
+        </>
       )}
     </div>
   );

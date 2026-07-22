@@ -25,7 +25,7 @@ function claimText(c: ReviewItem['claimed']): string {
   return parts.length ? parts.join(' ') : 'unlabelled vehicle';
 }
 
-export function VehicleReviewPage() {
+export function VehicleReviewPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [pending, setPending] = useState<ReviewItem[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [corpus, setCorpus] = useState(0);
@@ -56,8 +56,8 @@ export function VehicleReviewPage() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-6">
-      <div className="mb-4">
+    <div className={embedded ? "" : 'max-w-6xl mx-auto px-4 py-6'}>
+      {!embedded && <div className="mb-4">
         <h1 className="text-2xl font-semibold text-gray-900">Vehicle review</h1>
         <p className="text-sm text-gray-500">
           Confirm or correct the make/model the AI guessed on real crops. Confirmed rows build a
@@ -69,7 +69,7 @@ export function VehicleReviewPage() {
           <span><b className="text-gray-900">{counts.rejected || 0}</b> rejected</span>
           <span className="text-emerald-600"><b>{corpus}</b> in training corpus</span>
         </div>
-      </div>
+      </div>}
 
       {err && <div className="my-3 p-3 bg-red-50 text-red-700 text-sm rounded-md">{err}</div>}
 
