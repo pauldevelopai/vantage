@@ -1136,6 +1136,34 @@ def _display_names() -> dict:
     return names
 
 
+def _attribute_sightings(sighting_ids, person_id: str) -> int:
+    """Write the name back onto the stored faces.
+
+    Every face in the archive read matched=None, including the one a person was
+    enrolled FROM — so the store held pictures of Paul with nothing recording
+    that they were Paul, and a new picture of him was compared against a single
+    template. Naming someone now marks those sightings, and effective_galleries
+    reads them back, so the saved directory of faces and names is real and
+    grows every time you confirm one.
+    """
+    from alibi.watchlist.face_sighting_store import get_face_sighting_store
+
+    wanted = {s for s in (sighting_ids or []) if s}
+    if not wanted:
+        return 0
+    store = get_face_sighting_store()
+    marked = 0
+    try:
+        for sight in store.load_all():
+            if sight.sighting_id in wanted and sight.matched_person_id != person_id:
+                sight.matched_person_id = person_id
+                store.add_sighting(sight)      # append-only; last write wins
+                marked += 1
+    except Exception as e:
+        print(f"[watchlist] could not attribute sightings: {e}", flush=True)
+    return marked
+
+
 def _who_in_frame(event) -> Optional[str]:
     """The name of an enrolled person visible in this event's frame, or None.
 
@@ -1157,7 +1185,8 @@ def _who_in_frame(event) -> Optional[str]:
             return None
 
         ws = WatchlistStore()
-        galleries = ws.get_galleries()
+        from alibi.watchlist.watchlist_store import effective_galleries
+        galleries = effective_galleries()      # enrolled + every attributed face
         if not galleries:
             return None
         labels = {pid: e.label for pid, e in ws._get_active_entries().items()}
@@ -2439,6 +2468,7 @@ async def enroll_face_from_sighting(
         },
     ))
 
+    _attribute_sightings([sighting_id], person_id)
     get_store().append_audit("watchlist_enrolled", {
         "user": current_user.username,
         "person_id": person_id,
@@ -4742,6 +4772,7 @@ async def claim_faces(person_id: str, payload: ClaimFacesRequest,
         ))
         added += 1
 
+    _attribute_sightings(wanted, person_id)
     views = len(ws.get_galleries().get(person_id, []))
     get_store().append_audit("faces_claimed", {
         "user": current_user.username, "person_id": person_id,
@@ -5318,10 +5349,10 @@ async def people_recent(limit: int = 60, hours: int = 168, window: str = "",
             note = (e.metadata or {}).get("notes")
             if note:
                 details[pid_] = note
-        # Galleries, not single templates: every confirmed view of a person
-        # counts, so someone enrolled at the gate is still found in the
-        # driveway looking down at a phone.
-        embeddings = _ws.get_galleries()
+        # Every saved face we know the name of — enrolled templates plus every
+        # sighting already attributed to that person.
+        from alibi.watchlist.watchlist_store import effective_galleries
+        embeddings = effective_galleries()
     except Exception:
         pass
 
@@ -5571,6 +5602,7 @@ async def confirm_face(payload: ConfirmFaceRequest,
                   "notes": payload.details.strip()[:2000] or None},
     ))
     views = len(store_.get_galleries().get(person_id, []))
+    _attribute_sightings([sighting_id], person_id)
     get_store().append_audit("face_recovered_enrolled", {
         "user": current_user.username, "person_id": person_id, "label": label,
         "sighting_id": sighting_id, "score": pending["score"],

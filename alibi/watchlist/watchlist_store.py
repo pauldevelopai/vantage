@@ -206,3 +206,35 @@ class WatchlistStore:
     def count(self) -> int:
         """Get total number of entries"""
         return len(self.load_all())
+
+
+def effective_galleries() -> Dict[str, np.ndarray]:
+    """Every saved face we know the name of, per person.
+
+    The enrolled templates are only part of the answer. Each face sighting the
+    archive has already attributed to someone is another view of them, and
+    ignoring those meant a face could sit in the store labelled Paul while a
+    new picture of Paul was compared against one photograph and declined.
+
+    So: watchlist entries PLUS every attributed sighting, deduplicated. Widening
+    what we compare against is the honest way to recognise more people —
+    lowering the threshold would just mean guessing more often.
+    """
+    from alibi.watchlist.face_sighting_store import get_face_sighting_store
+
+    galleries = {pid: list(g) for pid, g in WatchlistStore().get_galleries().items()}
+    try:
+        for sight in get_face_sighting_store().load_all():
+            pid = sight.matched_person_id
+            if pid and pid in galleries and sight.embedding:
+                galleries[pid].append(np.asarray(sight.embedding, dtype=np.float32))
+    except Exception as e:
+        print(f"[watchlist] could not read the face archive: {e}")
+
+    out = {}
+    for pid, views in galleries.items():
+        arr = np.array([np.asarray(v, dtype=np.float32).ravel() for v in views],
+                       dtype=np.float32)
+        if arr.size:
+            out[pid] = np.unique(arr.round(6), axis=0)
+    return out
