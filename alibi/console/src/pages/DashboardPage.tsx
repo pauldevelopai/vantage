@@ -211,31 +211,68 @@ export function DashboardPage() {
                                    onOpenVehicle={(eid) => setVehicleHistory(eid)} />
                 </Panel>
 
-                {/* Your vehicles — the persistent list of cars you've named. It
-                    stays here for good (that's where a just-named car "goes"),
-                    visible even when it hasn't been seen lately. */}
-                {(data.named_vehicles?.length ?? 0) > 0 && (
+                {/* VEHICLES — one section, everything about cars. These were four
+                    panels scattered down the page (your named cars up here,
+                    recurring/seen buried in the patterns panel); brought
+                    together so a vehicle question is answered in one place. */}
+                {((data.named_vehicles?.length ?? 0) > 0
+                  || (data.out_of_ordinary_vehicles?.length ?? 0) > 0
+                  || (data.recurring_vehicles?.length ?? 0) > 0
+                  || (data.recent_vehicles?.length ?? 0) > 0) && (
                   <Panel className="mb-4" delay={193}>
-                    <div className="flex items-center justify-between mb-3">
-                      <h2 className="text-[11px] font-semibold text-slate-300 uppercase tracking-[0.14em]">Your vehicles</h2>
-                      <span className="text-[10px] text-slate-600 font-mono hidden sm:inline">named &amp; remembered · kept even when idle</span>
+                    <div className="flex items-center justify-between mb-4">
+                      <h2 className="text-sm font-semibold text-slate-100 uppercase tracking-[0.16em]">Vehicles</h2>
+                      <Link to="/vehicle-search" className="text-[10px] text-indigo-400 hover:text-indigo-300 no-underline">all vehicles →</Link>
                     </div>
-                    <NamedVehiclesPanel vehicles={data.named_vehicles || []}
-                                        onOpen={(eid) => setVehicleHistory(eid)} />
-                  </Panel>
-                )}
 
-                {/* Out of the ordinary — the cars that are NOT the usual scene,
-                    with how often each came down the road and when. Residents,
-                    regulars and named vehicles are excluded by definition. */}
-                {(data.out_of_ordinary_vehicles?.length ?? 0) > 0 && (
-                  <Panel className="mb-4" delay={195}>
-                    <div className="flex items-center justify-between mb-3">
-                      <h2 className="text-[11px] font-semibold text-slate-300 uppercase tracking-[0.14em]">Out of the ordinary</h2>
-                      <span className="text-[10px] text-slate-600 font-mono hidden sm:inline">not one of the usual cars · how often &amp; when</span>
-                    </div>
-                    <OutOfOrdinaryPanel vehicles={data.out_of_ordinary_vehicles || []}
-                                        onOpen={(eid) => setVehicleHistory(eid)} />
+                    {/* Your named cars — the persistent saved list. */}
+                    {(data.named_vehicles?.length ?? 0) > 0 && (
+                      <div className="mb-5">
+                        <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-2">
+                          Yours <span className="text-slate-600 normal-case tracking-normal">— named &amp; remembered, kept even when idle</span>
+                        </h3>
+                        <NamedVehiclesPanel vehicles={data.named_vehicles || []}
+                                            onOpen={(eid) => setVehicleHistory(eid)} />
+                      </div>
+                    )}
+
+                    {/* Out of the ordinary — not the usual cars. */}
+                    {(data.out_of_ordinary_vehicles?.length ?? 0) > 0 && (
+                      <div className="mb-5 pt-4 border-t border-slate-800/70">
+                        <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-2">
+                          Out of the ordinary <span className="text-slate-600 normal-case tracking-normal">— not one of the usual cars · how often &amp; when</span>
+                        </h3>
+                        <OutOfOrdinaryPanel vehicles={data.out_of_ordinary_vehicles || []}
+                                            onOpen={(eid) => setVehicleHistory(eid)} />
+                      </div>
+                    )}
+
+                    {/* Every recurring vehicle, linked by appearance. */}
+                    {(data.recurring_vehicles?.length ?? 0) > 0 && (
+                      <div className="mb-5 pt-4 border-t border-slate-800/70">
+                        <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-2">
+                          All recurring vehicles <span className="text-slate-600 normal-case tracking-normal">— linked by appearance · name yours and it reads as familiar</span>
+                        </h3>
+                        <ul className="space-y-1.5">
+                          {data.recurring_vehicles.map(v => (
+                            <RecurringVehicleRow key={v.entity_id} v={v} onSaved={() => load(range)}
+                                                 onOpen={() => setVehicleHistory(v.entity_id)} />
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* Raw recent frames. */}
+                    {(data.recent_vehicles?.length ?? 0) > 0 && (
+                      <div className="pt-4 border-t border-slate-800/70">
+                        <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-2">
+                          Recently seen <span className="text-slate-600 normal-case tracking-normal">— details only when read from the image</span>
+                        </h3>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
+                          {data.recent_vehicles.map((v, i) => <VehicleCard key={`${v.event_id}-${i}`} v={v} i={i} />)}
+                        </div>
+                      </div>
+                    )}
                   </Panel>
                 )}
 
@@ -360,21 +397,6 @@ export function DashboardPage() {
                   </Panel>
                 )}
 
-                {data.recent_vehicles?.length > 0 && (
-                  <Panel className="mb-4" delay={310}>
-                    <div className="flex items-center justify-between mb-3">
-                      <h2 className="text-[11px] font-semibold text-slate-300 uppercase tracking-[0.14em]">Vehicles seen</h2>
-                      <div className="flex items-center gap-3">
-                        <span className="text-[10px] text-slate-600 font-mono hidden sm:inline">details only when read from the image</span>
-                        <Link to="/vehicle-search" className="text-[10px] text-indigo-400 hover:text-indigo-300 no-underline">all vehicles →</Link>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
-                      {data.recent_vehicles.map((v, i) => <VehicleCard key={`${v.event_id}-${i}`} v={v} i={i} />)}
-                    </div>
-                  </Panel>
-                )}
-
                 {data.patterns && (
                   <Panel className="mb-4" delay={315}>
                     <PanelHeadLinked title="Activity patterns" linkTo="/patterns" linkLabel="full patterns →"
@@ -382,25 +404,12 @@ export function DashboardPage() {
                                  ? `busiest ${String(data.patterns.busiest_hour).padStart(2, '0')}:00–${String((data.patterns.busiest_hour + 1) % 24).padStart(2, '0')}:00 · ${data.patterns.busiest_camera || ''}`
                                  : 'no activity in this window'} />
                     <PatternsHeatmap p={data.patterns} />
-                    {data.pattern_findings?.length > 0 && (
+                    {(data.pattern_findings || []).some(f => f.kind === 'people') && (
                       <div className="mt-4 pt-3 border-t border-slate-800/70">
                         <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-2">
-                          What's happening <span className="text-slate-600 normal-case tracking-normal">— familiar vs new, from your own cameras</span>
+                          When people come and go <span className="text-slate-600 normal-case tracking-normal">— from your own cameras</span>
                         </h3>
-                        <FindingsList findings={data.pattern_findings} />
-                      </div>
-                    )}
-                    {data.recurring_vehicles?.length > 0 && (
-                      <div className="mt-4 pt-3 border-t border-slate-800/70">
-                        <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-2">
-                          Recurring vehicles <span className="text-slate-600 normal-case tracking-normal">— linked by appearance · name yours and it reads as familiar</span>
-                        </h3>
-                        <ul className="space-y-1.5">
-                          {data.recurring_vehicles.map(v => (
-                            <RecurringVehicleRow key={v.entity_id} v={v} onSaved={() => load(range)}
-                                                 onOpen={() => setVehicleHistory(v.entity_id)} />
-                          ))}
-                        </ul>
+                        <FindingsList findings={(data.pattern_findings || []).filter(f => f.kind === 'people')} />
                       </div>
                     )}
                   </Panel>
