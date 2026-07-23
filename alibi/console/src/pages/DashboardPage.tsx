@@ -760,24 +760,32 @@ const KIND_META: Record<string, string> = {
 };
 
 /**
- * What an alert card should be TITLED — the reason it's on the list, not a bare
- * "Person". A confirmed human label wins; then a recognised name; then the
- * behaviour that flagged it; then a reason-led description of the subject.
+ * The heading is always the ALERT — what kind of thing this is and why it's on
+ * the list — never a bare subject name. A person's identity (Paul) is a detail
+ * shown beneath, not the headline: "Paul" alone doesn't say why you're looking.
+ * The behaviour that flagged it, or "unidentified person" / "known person",
+ * leads; alertSubject() carries the name.
  */
 function alertHeadline(s: import('../lib/types').DashboardSituation): string {
-  if (s.confirmed?.label) return `“${s.confirmed.label}”`;
-  if (s.who) return s.who;                                   // a person we know
+  if (s.confirmed?.label) return `Confirmed — “${s.confirmed.label}”`;
   const kindLabel: Record<string, string> = {
     at_vehicles: 'Someone at the vehicles', dwell: 'Someone lingering',
     repeated_passes: 'Repeated passes of the property', after_hours: 'Activity after hours',
-    new_vehicle: 'An unfamiliar vehicle',
+    new_vehicle: 'Unfamiliar vehicle',
   };
   if (s.kind && kindLabel[s.kind]) return kindLabel[s.kind];
-  if (s.event_type === 'person_detected') return 'Unidentified person';
+  if (s.event_type === 'person_detected') return s.who ? 'Known person' : 'Unidentified person';
   if (s.event_type === 'vehicle_detected') {
-    return (s.why || []).includes('unfamiliar') ? 'Unfamiliar vehicle' : 'Vehicle';
+    if (s.owner_label) return 'Known vehicle';
+    return (s.why || []).includes('unfamiliar') ? 'Unfamiliar vehicle' : 'Vehicle seen';
   }
   return s.title || typeMeta(s.event_type || '').label;
+}
+
+/** The identity, if we have one — shown as a detail under the alert heading. */
+function alertSubject(s: import('../lib/types').DashboardSituation): string | null {
+  if (s.confirmed?.label) return null;               // already in the heading
+  return s.who || s.owner_label || null;
 }
 
 /**
@@ -872,6 +880,7 @@ function SituationsPanel({ situations, total, onChanged, onOpenVehicle }: { situ
               </div>
               <div className="mt-1 text-sm font-medium text-slate-100 truncate">
                 {alertHeadline(s)}
+                {alertSubject(s) && <span className="text-slate-300 font-normal"> · {alertSubject(s)}</span>}
                 {s.confirmed?.by && <span className="text-[10px] font-normal text-slate-500"> — confirmed by {s.confirmed.by}</span>}
               </div>
               {realDesc(s.description) && (

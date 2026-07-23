@@ -424,6 +424,7 @@ export interface DashboardSituation {
   why?: string[];   // short reasons this ranked where it did
   watchlist_hit?: boolean;
   hotlist_hit?: boolean;
+  owner_label?: string | null;   // a named vehicle's owner label
 }
 
 /** A vehicle the owner has named — the persistent "known vehicles" database.

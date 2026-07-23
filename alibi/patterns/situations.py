@@ -266,6 +266,15 @@ def importance_score(row: Dict[str, Any], now: Optional[datetime] = None,
     if concerns >= 2:
         base *= 1.0 + CO_OCCURRENCE_LIFT * (concerns - 1)
 
+    # A person you have NAMED is not an alert for being present — "Paul is home"
+    # is the opposite of a concern. Dampen hard when they are just here, and
+    # only lightly when they are ALSO doing something worth a look (lingering at
+    # 2am is worth noting whoever it is). A named car is routine the same way.
+    known = bool(row.get("who")) or bool(row.get("owner_label"))
+    if known:
+        behaving = f["behaviour"] >= 0.5 or f["flagged"] >= 0.5
+        base *= 0.7 if behaving else 0.25
+
     if row.get("tier") == "review":
         base += 0.8                                  # the system already flagged it
 

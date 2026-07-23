@@ -235,3 +235,19 @@ def test_every_ranked_alert_can_explain_itself():
     ])
     assert ranked[0]["why"]        # a non-empty list of reasons
     assert "importance" in ranked[0]
+
+
+def test_a_known_person_just_present_is_not_an_alert():
+    """Paul being home is the opposite of a concern — a recognised person must
+    sink below an unidentified one, but still surface if they're behaving oddly."""
+    from datetime import datetime
+    from alibi.patterns.situations import importance_score
+    now = datetime(2026, 7, 22, 12, 0, 0)
+    known = {"event_type": "person_detected", "who": "Paul", "severity": 4,
+             "ts": "2026-07-22T15:00", "tier": "noted"}
+    stranger = {"event_type": "person_detected", "severity": 4,
+                "ts": "2026-07-22T15:00", "tier": "noted"}
+    lurking = {"event_type": "person_detected", "who": "Paul", "kind": "dwell",
+               "severity": 4, "ts": "2026-07-22T02:00", "tier": "review"}
+    assert importance_score(stranger, now) > importance_score(known, now)
+    assert importance_score(lurking, now) > importance_score(known, now)
