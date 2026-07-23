@@ -139,3 +139,53 @@ def test_the_filesystem_connector_reads_a_directory(tmp_path):
     items = list(get("filesystem").fetch(src))
     assert {i.external_id for i in items} == {"a.jpg", "sub/b.png"}
     assert all(i.content for i in items)
+
+
+# ── the vision wiring (embed + index + search) ───────────────────────────
+
+def test_embed_and_index_carry_provenance_into_a_searchable_store(tmp_path, monkeypatch):
+    """The whole point of wiring: an ingested crop becomes a vector you can
+    search, and the row you get back still knows what authorised it."""
+    import numpy as np
+    from alibi.ingest import vision
+
+    # A fake embedder so the test needs no torchreid: embeds by content length,
+    # so identical bytes land on identical vectors.
+    class _Fake:
+        available = True
+        def embed(self, frame):
+            return np.ones(8, dtype=np.float32) * (float(frame.sum()) or 1.0)
+    monkeypatch.setattr(vision, "_embedder", lambda kind: _Fake())
+    monkeypatch.setattr(vision, "_decode", lambda item: np.array([[len(item.content or b"")]]))
+
+    store = vision.VectorStore(path=tmp_path / "vecs.jsonl")
+    led = Ledger(path=tmp_path / "ledger.jsonl")
+    item = Item(external_id="car.jpg", kind="image", content=b"a-car-crop")
+    ingest(_src(source_id="cams"), _Fake2([item]),
+           embed=vision.make_embed("vehicle"),
+           index=vision.make_index(store), ledger=led)
+
+    assert store.stats()["with_vectors"] == 1
+    # search it back with the same vector
+    row0 = store._load()[0]
+    hits = store.search(row0["vector"])
+    assert hits and hits[0][0]["provenance"]["authorised_by"] == "Paul"
+
+
+def test_metadata_only_items_still_index_without_a_vector(tmp_path, monkeypatch):
+    import numpy as np
+    from alibi.ingest import vision
+    monkeypatch.setattr(vision, "_decode", lambda item: None)   # nothing to embed
+    store = vision.VectorStore(path=tmp_path / "vecs.jsonl")
+    led = Ledger(path=tmp_path / "ledger.jsonl")
+    ingest(_src(), _Fake2([Item(external_id="note", kind="image", content=b"x")]),
+           embed=vision.make_embed("vehicle"),
+           index=vision.make_index(store), ledger=led)
+    s = store.stats()
+    assert s["indexed"] == 1 and s["metadata_only"] == 1
+
+
+class _Fake2:
+    name = "fake2"
+    def __init__(self, items): self.items = items
+    def fetch(self, source, since=None): yield from self.items

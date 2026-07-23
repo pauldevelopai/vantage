@@ -5708,6 +5708,66 @@ class ClassifierToggle(BaseModel):
     enabled: bool
 
 
+class IngestRequest(BaseModel):
+    connector: str = "filesystem"
+    config: dict = {}
+    basis: str                         # own_cameras | licensed | ... (enforced)
+    authorised_by: str
+    licence: str = ""
+    contains_people: bool = False
+    kind: str = "vehicle"              # which ReID embedder
+    limit: Optional[int] = None
+
+
+@app.get("/ingest/status", tags=["Ingest"])
+async def ingest_status(current_user: User = Depends(get_current_user)):
+    """What the ingestion index holds, and how it is authorised."""
+    from alibi.ingest import registry
+    from alibi.ingest.vision import VectorStore
+    import alibi.ingest.connectors.filesystem  # noqa: F401 — registers it
+    from alibi.ingest.source import BASES
+    return {"connectors": registry.available(),
+            "bases": BASES,
+            "index": VectorStore().stats()}
+
+
+@app.post("/ingest/run", tags=["Ingest"])
+async def ingest_run(req: IngestRequest,
+                     current_user: User = Depends(require_role([Role.ADMIN]))):
+    """Import from an authorised source into the searchable ReID index.
+
+    The Source refuses to exist without a lawful basis and a named authoriser;
+    material containing people is refused under any basis that does not permit
+    people. Embedding uses the same ReID model as the live camera path.
+    """
+    from fastapi.concurrency import run_in_threadpool
+    from alibi.ingest import Source, ingest as run_ingest, registry
+    from alibi.ingest.source import ProvenanceError
+    from alibi.ingest.vision import make_embed, make_index, VectorStore
+    import alibi.ingest.connectors.filesystem  # noqa: F401
+
+    try:
+        source = Source(source_id=f"{req.connector}:{req.config.get('path', req.connector)}",
+                        connector=req.connector, config=req.config,
+                        basis=req.basis, authorised_by=req.authorised_by,
+                        licence=req.licence, contains_people=req.contains_people)
+        connector = registry.get(req.connector)
+    except ProvenanceError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except KeyError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    store = VectorStore()
+    report = await run_in_threadpool(lambda: run_ingest(
+        source, connector, embed=make_embed(req.kind),
+        index=make_index(store), limit=req.limit))
+    get_store().append_audit("ingest_run", {
+        "user": current_user.username, "source": source.source_id,
+        "basis": req.basis, "ingested": report.ingested,
+        "duplicates": report.duplicates, "failed": report.failed})
+    return {**report.as_dict(), "index": store.stats()}
+
+
 @app.get("/vehicles/classifier", tags=["Vehicles"])
 async def vehicle_classifier_status(current_user: User = Depends(get_current_user)):
     """What the local make/model classifier has learned, and from what."""
