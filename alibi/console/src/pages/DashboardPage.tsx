@@ -141,6 +141,17 @@ export function DashboardPage() {
   const hasSuspicious = (data?.out_of_ordinary_vehicles?.length ?? 0) > 0
     || (data?.suspicious_vehicles?.length ?? 0) > 0;
 
+  // People split the same three honest ways as vehicles:
+  //  · People you know — enrolled/recognised.
+  //  · Suspected — the system's unconfirmed guess at who they are ("looks like
+  //    Conrad?"), waiting on your one-click confirm.
+  //  · General — captured, no identity and no suspicion: strangers and the
+  //    body-only shots where no face was readable.
+  const rp = data?.recent_people || [];
+  const knownFaces = rp.filter(p => p.matched_label);
+  const suspectedPeople = rp.filter(p => !p.matched_label && p.suggested_label);
+  const generalPeople = rp.filter(p => !p.matched_label && !p.suggested_label);
+
   return (
     <div className="min-h-screen bg-[#070912] vg-grid -mx-4 -my-6 px-4 py-6 sm:px-6">
       <style>{CSS}</style>
@@ -370,33 +381,68 @@ export function DashboardPage() {
                       <Link to="/people" className="text-[10px] text-indigo-400 hover:text-indigo-300 no-underline">full history →</Link>
                     </div>
 
-                    {/* Known people — enrolled, persistent, with how often &
-                        when, exactly like "Your vehicles". */}
-                    {(data.known_people?.length ?? 0) > 0 && (
-                      <div className="mb-5">
-                        <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-2">
-                          People you know <span className="text-slate-600 normal-case tracking-normal">— named &amp; remembered, kept even when idle</span>
-                        </h3>
+                    {/* PEOPLE YOU KNOW — enrolled roster (persistent, with rhythm)
+                        and the recognised faces seen recently. */}
+                    <div className="mb-5">
+                      <h3 className="text-[10px] font-semibold text-emerald-400/90 uppercase tracking-[0.14em] mb-2">
+                        People you know <span className="text-slate-600 normal-case tracking-normal">— named &amp; recognised · kept even when idle</span>
+                      </h3>
+                      {(data.known_people?.length ?? 0) > 0 ? (
                         <ul className="space-y-1.5">
                           {data.known_people!.map(kp => <KnownPersonRow key={kp.person_id} kp={kp} />)}
                         </ul>
-                      </div>
-                    )}
-
-                    {/* Everyone the cameras saw recently — the face grid, with
-                        naming and history on each. */}
-                    {(data.recent_people?.length ?? 0) > 0 && (
-                      <div className={(data.known_people?.length ?? 0) > 0 ? 'pt-4 border-t border-slate-800/70' : ''}>
-                        <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-2">
-                          Recently seen <span className="text-slate-600 normal-case tracking-normal">— enrolled people are named, strangers never are</span>
-                        </h3>
-                        <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-3">
-                          {data.recent_people.map((p, i) => (
+                      ) : (
+                        <p className="text-[11px] text-slate-600 leading-relaxed">
+                          No named people yet. Confirm a face below and it moves here — recognised from then on.
+                        </p>
+                      )}
+                      {knownFaces.length > 0 && (
+                        <div className="mt-2 grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-3">
+                          {knownFaces.map((p, i) => (
                             <PersonCard key={p.sighting_id} p={p} i={i} onEnrolled={() => load(range)} />
                           ))}
                         </div>
-                      </div>
-                    )}
+                      )}
+                    </div>
+
+                    {/* SUSPECTED — the system's best guess at who someone is, not
+                        yet confirmed. One click on "✓ Yes" teaches it. */}
+                    <div className="mb-5 pt-4 border-t border-slate-800/70">
+                      <h3 className="text-[10px] font-semibold text-amber-400/90 uppercase tracking-[0.14em] mb-2">
+                        Suspected people <span className="text-slate-600 normal-case tracking-normal">— the system's unconfirmed guess at who they are · confirm to teach it</span>
+                      </h3>
+                      {suspectedPeople.length > 0 ? (
+                        <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-3">
+                          {suspectedPeople.map((p, i) => (
+                            <PersonCard key={p.sighting_id} p={p} i={i} onEnrolled={() => load(range)} />
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-slate-600 leading-relaxed">
+                          Nothing to confirm right now. When a face looks like someone you've named but isn't
+                          a certain match, it appears here for you to confirm with one click.
+                        </p>
+                      )}
+                    </div>
+
+                    {/* GENERAL — captured, but no identity and no suspicion:
+                        strangers, and the body-only shots with no readable face. */}
+                    <div className="pt-4 border-t border-slate-800/70">
+                      <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-2">
+                        General people <span className="text-slate-600 normal-case tracking-normal">— captured passing through · unidentified, strangers stay strangers</span>
+                      </h3>
+                      {generalPeople.length > 0 ? (
+                        <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-3">
+                          {generalPeople.map((p, i) => (
+                            <PersonCard key={p.sighting_id || `gen-${i}`} p={p} i={i} onEnrolled={() => load(range)} />
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-slate-600 leading-relaxed">
+                          Nobody unidentified in this window.
+                        </p>
+                      )}
+                    </div>
                   </Panel>
                 )}
 
@@ -950,12 +996,18 @@ function SituationsPanel({ situations, total, onChanged, onOpenVehicle }: { situ
   const [teaching, setTeaching] = useState<string | null>(null);
 
   // Teach the panel this subject isn't worth flagging. It sinks in the ranking
-  // (never hidden), and the change carries to every future alert about them.
-  async function notWorth(subjectKey?: string | null, kind?: string | null) {
-    if (!subjectKey) return;
-    setTeaching(subjectKey);
+  // (never hidden), and the change carries to every future alert about them. If
+  // the alert is a "Needs review" incident, this also RESOLVES that review —
+  // marks the incident dismissed — so the badge clears instead of nagging.
+  async function notWorth(subjectKey?: string | null, kind?: string | null, incidentId?: string | null) {
+    if (!subjectKey && !incidentId) return;
+    setTeaching(subjectKey || incidentId || '');
     try {
-      await api.alertFeedback(subjectKey, 'dismiss', kind || undefined);
+      if (subjectKey) await api.alertFeedback(subjectKey, 'dismiss', kind || undefined);
+      if (incidentId) await api.recordDecision(incidentId, {
+        action_taken: 'dismissed', was_true_positive: false,
+        operator_notes: 'Reviewed on the overview — not worth flagging',
+      });
       onChanged();
     } catch { /* leave the card as-is */ } finally { setTeaching(null); }
   }
@@ -1080,14 +1132,19 @@ function SituationsPanel({ situations, total, onChanged, onOpenVehicle }: { situ
                     Confirm what happened…
                   </button>
                 )}
-                {/* Teach the ranker. Available on any alert with a subject —
-                    including the criteria/routine rows that have no incident. */}
-                {canConfirm && s.subject_key && !s.confirmed && (
-                  <button onClick={() => notWorth(s.subject_key, s.kind || s.event_type)}
-                          disabled={teaching === s.subject_key}
-                          title="This isn't worth flagging — the panel will rank it lower from now on"
+                {/* Resolve / teach. On a "Needs review" incident this clears the
+                    review (marks it dismissed); on any alert it also teaches the
+                    ranker to rank this subject lower. Works on the criteria and
+                    routine rows too, which have no incident. */}
+                {canConfirm && (s.subject_key || s.incident_id) && !s.confirmed && (
+                  <button onClick={() => notWorth(s.subject_key, s.kind || s.event_type, s.incident_id)}
+                          disabled={teaching === (s.subject_key || s.incident_id)}
+                          title={s.tier === 'review'
+                            ? "Reviewed — not worth flagging. Clears the review and ranks it lower from now on."
+                            : "Not worth flagging — the panel will rank this lower from now on"}
                           className="text-[10px] text-slate-500 hover:text-slate-200 border border-slate-800 hover:border-slate-600 rounded px-1.5 py-0.5 disabled:opacity-50">
-                    {teaching === s.subject_key ? '…' : 'Not worth flagging'}
+                    {teaching === (s.subject_key || s.incident_id) ? '…'
+                      : s.tier === 'review' ? 'Reviewed — all clear' : 'Not worth flagging'}
                   </button>
                 )}
               </div>
