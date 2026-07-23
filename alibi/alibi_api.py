@@ -1996,9 +1996,22 @@ async def dashboard_overview(range: str = "24h",
         # recent. `alerts_total` is how many candidates there were, so the UI
         # can say how many fell below the top ten.
         from alibi.patterns.situations import rank_alerts
+        # Feed the site's real hours in so "unusual hour" is judged against THIS
+        # property's rhythm, not a generic day/night curve. Sites store
+        # open/close; the scorer wants start/end.
+        _nh = None
+        try:
+            from alibi.site_profile import get_site_profile_store
+            _s = get_site_profile_store().list()
+            _sh = (_s[0].normal_hours or {}) if _s else {}
+            if _sh.get("open") is not None or _sh.get("close") is not None:
+                _nh = {"start": int(str(_sh.get("open", 7))[:2] or 7),
+                       "end": int(str(_sh.get("close", 21))[:2] or 21)}
+        except Exception:
+            _nh = None
         all_rows = situations + criteria_rows
         alerts_total = len(all_rows)
-        situations = rank_alerts(all_rows, limit=10)
+        situations = rank_alerts(all_rows, limit=10, normal_hours=_nh)
     except Exception as e:
         print(f"[dashboard] criteria situations unavailable: {e}")
         alerts_total = len(situations)

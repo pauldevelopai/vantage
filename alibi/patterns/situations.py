@@ -139,64 +139,167 @@ def vehicle_descriptor(colour: Optional[str], body: Optional[str],
     return " ".join(parts) if parts else None
 
 
-# What makes something worth a person's attention, as a score rather than a
-# bucket. The point of the panel is to surface what MIGHT be a crime, or is
-# unusual, or is important — so unfamiliarity and behaviour score high, and a
-# resident car you named scores low. Everything is scored, so the top ten can
-# always be filled with the ten most notable things, worst first.
-def importance_score(row: Dict[str, Any]) -> float:
-    s = 0.0
+# ── how important is this, really? ──────────────────────────────────────
+#
+# The old scorer was a flat lookup table: at_vehicles = 65, dwell = 55, and so
+# on, added up. That is rigid in three ways — the signals are coarse buckets,
+# they only ever add (so a stranger who is ALSO after hours ALSO lingering is
+# treated as three small things, not one worrying one), and nothing decays or
+# reads the site's own rhythm.
+#
+# This is a multi-factor model instead. Each factor is CONTINUOUS in [0, 1]
+# (how strong is this concern?), sharpened by real magnitudes when they exist —
+# a ten-minute dwell scores higher than a two-minute one, a car seen once
+# scores higher than one seen forty times. Factors combine by weight, then
+# COMPOUND: several independent concerns occurring together lift the whole,
+# because that is exactly what a real threat looks like. Fresh things weigh a
+# little more than stale ones. And the weights live in one dict, so they can be
+# tuned — or later learned from the confirmations the owner already makes —
+# rather than being scattered constants.
+
+# One place to tune. Higher = that concern matters more.
+WEIGHTS: Dict[str, float] = {
+    "flagged": 3.0,      # a hotlist plate / watchlist face — strongest auto signal
+    "behaviour": 1.3,    # observed actions: at-vehicles, dwell, repeated passes
+    "novelty": 0.9,      # how unfamiliar — a car barely ever here
+    "stranger": 0.85,    # a person we cannot name
+    "time": 0.7,         # how unusual the hour is for this site
+    "severity": 0.6,     # the detector/VLM's own severity
+}
+
+# Each additional independent concern present lifts the total by this much —
+# the compounding that makes co-occurring signals worth more than their sum.
+CO_OCCURRENCE_LIFT = 0.25
+
+# A human confirmation is not a factor to be weighed — it is ground truth, and
+# sits above every computed score.
+CONFIRMED_FLOOR = 100.0
+
+
+def _clamp01(x: float) -> float:
+    return max(0.0, min(1.0, x))
+
+
+def _hour_anomaly(ts: str, normal_hours: Optional[dict]) -> float:
+    """How unusual is this time of day — for THIS site if we know its hours,
+    else a smooth day/night curve. Continuous, not an after-hours flag."""
+    try:
+        hour = datetime.fromisoformat(str(ts).replace("Z", "")).hour
+    except (ValueError, TypeError):
+        return 0.3
+    if normal_hours:
+        start = int(normal_hours.get("start", 7))
+        end = int(normal_hours.get("end", 21))
+        inside = (start <= hour < end) if start <= end else (hour >= start or hour < end)
+        return 0.15 if inside else 0.85
+    # No site hours set: deep night is more notable than midday, smoothly.
+    if 0 <= hour < 5 or hour >= 23:
+        return 0.75
+    if 5 <= hour < 7 or 21 <= hour < 23:
+        return 0.45
+    return 0.12
+
+
+def _recency_weight(ts: str, now: datetime) -> float:
+    """Fresh things weigh a little more; old ones decay toward a floor rather
+    than to nothing, so a genuinely serious old alert is not buried."""
+    try:
+        age_h = max(0.0, (now - datetime.fromisoformat(str(ts).replace("Z", ""))).total_seconds() / 3600.0)
+    except (ValueError, TypeError):
+        return 1.0
+    import math
+    return 0.7 + 0.3 * math.exp(-age_h / 48.0)   # ~1.0 now, ~0.7 after days
+
+
+def alert_factors(row: Dict[str, Any], normal_hours: Optional[dict] = None) -> Dict[str, float]:
+    """The continuous [0,1] concern of each factor for this row. Pure and
+    inspectable, so a card can show WHY it ranked where it did."""
     kind = row.get("kind", "")
-    tier = row.get("tier", "")
 
-    # A human already looked and confirmed — nothing outranks that.
-    if tier == "confirmed":
-        s += 200
-    elif tier == "review":
-        s += 70
-
-    # A flagged plate or a watchlisted face is the strongest AUTOMATIC signal —
-    # above any behaviour, below only a human's confirmation.
-    if row.get("hotlist_hit") or row.get("watchlist_hit"):
-        s += 150
-
-    # Behaviour worth a look — observed actions, not appearance.
-    s += {"at_vehicles": 65, "dwell": 55, "repeated_passes": 50,
-          "after_hours": 45, "out_of_ordinary": 42, "new_vehicle": 35}.get(kind, 0)
-
-    s += float(row.get("severity") or 0) * 4
-
-    # Unfamiliarity. A car that is barely ever here is more notable than the one
-    # that is always here; a resident you named is the scene, not an alert.
-    fam = row.get("familiarity")
-    s += {"new": 26, "occasional": 16, "regular": 6, "resident": -18}.get(fam, 0)
+    behaviour = {"at_vehicles": 1.0, "dwell": 0.85, "repeated_passes": 0.8,
+                 "after_hours": 0.7, "out_of_ordinary": 0.65,
+                 "new_vehicle": 0.5}.get(kind, 0.0)
+    dwell_min = row.get("dwell_minutes")
+    if isinstance(dwell_min, (int, float)):
+        behaviour = max(behaviour, _clamp01(dwell_min / 10.0))   # 10 min = full
     passes = row.get("passes")
-    if isinstance(passes, (int, float)) and passes <= 2:
-        s += 14                                  # seen once or twice = unusual
+    if kind == "repeated_passes" and isinstance(passes, (int, float)):
+        behaviour = max(behaviour, _clamp01(passes / 6.0))
 
-    # A stranger is more notable than someone you named; a named car is routine.
-    if row.get("event_type") == "person_detected":
-        s += 22 if not row.get("who") else -12
+    fam = row.get("familiarity")
+    novelty = {"new": 0.8, "occasional": 0.5, "regular": 0.2,
+               "resident": 0.0}.get(fam, 0.3 if fam is None else 0.0)
+    if isinstance(passes, (int, float)):
+        novelty = max(novelty, _clamp01(1.0 - passes / 20.0))    # 1 pass ≈ 0.95
     if row.get("owner_label"):
-        s -= 12
+        novelty = min(novelty, 0.05)                             # you named it
 
-    return s
+    stranger = 0.0
+    if row.get("event_type") == "person_detected":
+        stranger = 0.0 if row.get("who") else 0.7
+
+    return {
+        "flagged": 1.0 if (row.get("hotlist_hit") or row.get("watchlist_hit")) else 0.0,
+        "behaviour": behaviour,
+        "novelty": novelty,
+        "stranger": stranger,
+        "time": _hour_anomaly(row.get("ts", ""), normal_hours),
+        "severity": _clamp01(float(row.get("severity") or 0) / 5.0),
+    }
 
 
-def rank_alerts(rows: List[Dict[str, Any]], limit: int = 10) -> List[Dict[str, Any]]:
+def importance_score(row: Dict[str, Any], now: Optional[datetime] = None,
+                     normal_hours: Optional[dict] = None) -> float:
+    """A continuous, compounding, context-aware importance for one row."""
+    if row.get("tier") == "confirmed":
+        # Ground truth, plus its factors so two confirmed rows still order.
+        f = alert_factors(row, normal_hours)
+        return CONFIRMED_FLOOR + sum(WEIGHTS[k] * v for k, v in f.items())
+
+    f = alert_factors(row, normal_hours)
+    base = sum(WEIGHTS[k] * v for k, v in f.items())
+
+    # Compounding: how many independent concerns are genuinely present. Several
+    # weak-to-moderate signals together are the real shape of a threat.
+    concerns = sum(1 for k in ("flagged", "behaviour", "novelty", "stranger", "time")
+                   if f[k] >= 0.5)
+    if concerns >= 2:
+        base *= 1.0 + CO_OCCURRENCE_LIFT * (concerns - 1)
+
+    if row.get("tier") == "review":
+        base += 0.8                                  # the system already flagged it
+
+    base *= _recency_weight(row.get("ts", ""), now or datetime.utcnow())
+    return base
+
+
+def explain_score(row: Dict[str, Any], normal_hours: Optional[dict] = None) -> list:
+    """The factors that drove this row's rank, strongest first — for showing a
+    person why something is where it is, instead of an opaque number."""
+    names = {"flagged": "flagged plate/face", "behaviour": "notable behaviour",
+             "novelty": "unfamiliar", "stranger": "unidentified person",
+             "time": "unusual hour", "severity": "high severity"}
+    f = alert_factors(row, normal_hours)
+    return [names[k] for k, v in sorted(f.items(), key=lambda kv: -kv[1]) if v >= 0.4]
+
+
+def rank_alerts(rows: List[Dict[str, Any]], limit: int = 10,
+                now: Optional[datetime] = None,
+                normal_hours: Optional[dict] = None) -> List[Dict[str, Any]]:
     """The top `limit` things worth attention, worst first, each numbered.
 
-    Scores EVERY row by importance and keeps the highest, so the ten spots are
-    filled with the ten most notable things rather than padded with whatever is
-    most recent. Ties break by recency. Each returned row gains a 1-based
-    `rank`.
+    Scores EVERY row by the multi-factor model and keeps the highest, so the
+    ten spots hold the ten most notable things. Each returned row gains a
+    1-based `rank`, its `importance`, and a short `why`.
     """
+    now = now or datetime.utcnow()
     scored = sorted(rows, key=lambda r: str(r.get("ts") or ""), reverse=True)
-    scored.sort(key=lambda r: importance_score(r), reverse=True)   # stable: recency holds within a score
+    scored.sort(key=lambda r: importance_score(r, now, normal_hours), reverse=True)
     top = scored[:limit]
     for i, r in enumerate(top, 1):
         r["rank"] = i
-        r["importance"] = round(importance_score(r), 1)
+        r["importance"] = round(importance_score(r, now, normal_hours), 2)
+        r["why"] = explain_score(r, normal_hours)
     return top
 
 

@@ -857,6 +857,15 @@ function SituationsPanel({ situations, total, onChanged, onOpenVehicle }: { situ
               {realDesc(s.description) && (
                 <p className="mt-0.5 text-xs text-slate-500 line-clamp-2">{realDesc(s.description)}</p>
               )}
+              {/* Why it ranked here — the factors the scorer weighed, so the
+                  number isn't opaque. Empty for routine rows. */}
+              {s.why && s.why.length > 0 && (
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {s.why.map((w, wi) => (
+                    <span key={wi} className="text-[9px] px-1.5 py-0.5 rounded-full bg-slate-800 text-slate-400">{w}</span>
+                  ))}
+                </div>
+              )}
               <div className="mt-1.5 flex items-center gap-3">
                 {s.incident_id
                   ? <Link to={`/incidents/${s.incident_id}`}

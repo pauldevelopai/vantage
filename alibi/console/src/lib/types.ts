@@ -421,6 +421,7 @@ export interface DashboardSituation {
   /** 1-based position in the ranked top ten (1 = most important). */
   rank?: number;
   importance?: number;
+  why?: string[];   // short reasons this ranked where it did
   watchlist_hit?: boolean;
   hotlist_hit?: boolean;
 }

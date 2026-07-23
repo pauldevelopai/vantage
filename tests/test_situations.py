@@ -180,3 +180,58 @@ def test_rank_alerts_fills_up_to_ten_and_caps_there():
     ranked = rank_alerts(rows, limit=10)
     assert len(ranked) == 10
     assert [r["rank"] for r in ranked] == list(range(1, 11))
+
+
+# ── the multi-factor model: continuous, compounding, context-aware ───────
+
+def test_the_same_stranger_scores_higher_at_night():
+    from datetime import datetime
+    from alibi.patterns.situations import importance_score
+    now = datetime(2026, 7, 22, 12, 0, 0)
+    day = {"event_type": "person_detected", "ts": "2026-07-22T15:00", "tier": "noted"}
+    night = {"event_type": "person_detected", "ts": "2026-07-22T02:00", "tier": "noted"}
+    assert importance_score(night, now) > importance_score(day, now)
+
+
+def test_co_occurring_concerns_compound_above_their_parts():
+    from datetime import datetime
+    from alibi.patterns.situations import importance_score
+    now = datetime(2026, 7, 22, 12, 0, 0)
+    stranger = {"event_type": "person_detected", "ts": "2026-07-22T02:00", "tier": "noted"}
+    # same stranger, at night, now ALSO dwelling and system-flagged for review
+    compound = {"event_type": "person_detected", "kind": "dwell",
+                "ts": "2026-07-22T02:00", "tier": "review"}
+    s1 = importance_score(stranger, now)
+    s2 = importance_score(compound, now)
+    assert s2 > s1 * 1.5           # genuinely more than the sum of small parts
+
+
+def test_magnitude_sharpens_the_score():
+    """A ten-minute dwell must outweigh a two-minute one; a car seen once must
+    outweigh one seen forty times."""
+    from alibi.patterns.situations import importance_score
+    brief = {"kind": "dwell", "dwell_minutes": 2, "tier": "review", "ts": "2026-07-22T14:00"}
+    long = {"kind": "dwell", "dwell_minutes": 12, "tier": "review", "ts": "2026-07-22T14:00"}
+    assert importance_score(long) > importance_score(brief)
+
+    rare = {"event_type": "vehicle_detected", "passes": 1, "ts": "2026-07-22T14:00", "tier": "noted"}
+    common = {"event_type": "vehicle_detected", "passes": 40, "ts": "2026-07-22T14:00", "tier": "noted"}
+    assert importance_score(rare) > importance_score(common)
+
+
+def test_site_hours_make_time_context_specific():
+    from alibi.patterns.situations import importance_score
+    row = {"event_type": "person_detected", "ts": "2026-07-22T20:00", "tier": "noted"}
+    # a shop open till 22:00 vs a home closed at 18:00 — same 20:00 sighting
+    open_late = importance_score(row, normal_hours={"start": 7, "end": 22})
+    closed = importance_score(row, normal_hours={"start": 7, "end": 18})
+    assert closed > open_late
+
+
+def test_every_ranked_alert_can_explain_itself():
+    from alibi.patterns.situations import rank_alerts
+    ranked = rank_alerts([
+        {"event_type": "person_detected", "kind": "dwell", "ts": "2026-07-22T02:00", "tier": "review"},
+    ])
+    assert ranked[0]["why"]        # a non-empty list of reasons
+    assert "importance" in ranked[0]
