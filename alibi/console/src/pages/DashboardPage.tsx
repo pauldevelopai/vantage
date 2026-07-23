@@ -333,6 +333,23 @@ export function DashboardPage() {
                       </div>
                     )}
 
+                    {/* Everyone the cameras saw recently — the face grid, with
+                        naming and history on each. */}
+                    {(data.recent_people?.length ?? 0) > 0 && (
+                      <div className={(data.known_people?.length ?? 0) > 0 ? 'pt-4 border-t border-slate-800/70' : ''}>
+                        <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-2">
+                          Recently seen <span className="text-slate-600 normal-case tracking-normal">— enrolled people are named, strangers never are</span>
+                        </h3>
+                        <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-3">
+                          {data.recent_people.map((p, i) => (
+                            <PersonCard key={p.sighting_id} p={p} i={i} onEnrolled={() => load(range)} />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </Panel>
+                )}
+
                 <div className="mb-4">
                   <h2 className="text-sm font-semibold text-slate-100 uppercase tracking-[0.16em] mb-3">Intelligence</h2>
 
@@ -449,23 +466,6 @@ export function DashboardPage() {
 
                 </div>
 
-
-                    {/* Everyone the cameras saw recently — the face grid, with
-                        naming and history on each. */}
-                    {(data.recent_people?.length ?? 0) > 0 && (
-                      <div className={(data.known_people?.length ?? 0) > 0 ? 'pt-4 border-t border-slate-800/70' : ''}>
-                        <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-2">
-                          Recently seen <span className="text-slate-600 normal-case tracking-normal">— enrolled people are named, strangers never are</span>
-                        </h3>
-                        <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-3">
-                          {data.recent_people.map((p, i) => (
-                            <PersonCard key={p.sighting_id} p={p} i={i} onEnrolled={() => load(range)} />
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </Panel>
-                )}
 
 
 
