@@ -211,6 +211,17 @@ export function DashboardPage() {
                                    onOpenVehicle={(eid) => setVehicleHistory(eid)} />
                 </Panel>
 
+                <Panel delay={400}>
+                  <PanelHead title="Recent detections" right={`${data.recent.length} shown`} />
+                  {data.recent.length === 0 ? (
+                    <p className="text-xs text-slate-600 py-8 text-center">Nothing detected in this window.</p>
+                  ) : (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
+                      {data.recent.map((r, i) => <DetectionCard key={r.event_id} row={r} i={i} />)}
+                    </div>
+                  )}
+                </Panel>
+
                 {/* VEHICLES — one section, everything about cars. These were four
                     panels scattered down the page (your named cars up here,
                     recurring/seen buried in the patterns panel); brought
@@ -298,6 +309,30 @@ export function DashboardPage() {
                     These were scattered top-to-bottom (Watching-for up high,
                     the charts, heatmap and security nudges far below); a person
                     asking "what does the system make of this" now looks once. */}
+                {/* PEOPLE — structured like the Vehicles section: the people you
+                    know (persistent, with their rhythm) above, then everyone the
+                    cameras saw recently. Gives the box the same insight and
+                    interaction the Vehicles box has, instead of a flat grid. */}
+                {((data.known_people?.length ?? 0) > 0 || (data.recent_people?.length ?? 0) > 0) && (
+                  <Panel className="mb-4" delay={300}>
+                    <div className="flex items-center justify-between mb-4">
+                      <h2 className="text-sm font-semibold text-slate-100 uppercase tracking-[0.16em]">People</h2>
+                      <Link to="/people" className="text-[10px] text-indigo-400 hover:text-indigo-300 no-underline">full history →</Link>
+                    </div>
+
+                    {/* Known people — enrolled, persistent, with how often &
+                        when, exactly like "Your vehicles". */}
+                    {(data.known_people?.length ?? 0) > 0 && (
+                      <div className="mb-5">
+                        <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-2">
+                          People you know <span className="text-slate-600 normal-case tracking-normal">— named &amp; remembered, kept even when idle</span>
+                        </h3>
+                        <ul className="space-y-1.5">
+                          {data.known_people!.map(kp => <KnownPersonRow key={kp.person_id} kp={kp} />)}
+                        </ul>
+                      </div>
+                    )}
+
                 <div className="mb-4">
                   <h2 className="text-sm font-semibold text-slate-100 uppercase tracking-[0.16em] mb-3">Intelligence</h2>
 
@@ -414,29 +449,6 @@ export function DashboardPage() {
 
                 </div>
 
-                {/* PEOPLE — structured like the Vehicles section: the people you
-                    know (persistent, with their rhythm) above, then everyone the
-                    cameras saw recently. Gives the box the same insight and
-                    interaction the Vehicles box has, instead of a flat grid. */}
-                {((data.known_people?.length ?? 0) > 0 || (data.recent_people?.length ?? 0) > 0) && (
-                  <Panel className="mb-4" delay={300}>
-                    <div className="flex items-center justify-between mb-4">
-                      <h2 className="text-sm font-semibold text-slate-100 uppercase tracking-[0.16em]">People</h2>
-                      <Link to="/people" className="text-[10px] text-indigo-400 hover:text-indigo-300 no-underline">full history →</Link>
-                    </div>
-
-                    {/* Known people — enrolled, persistent, with how often &
-                        when, exactly like "Your vehicles". */}
-                    {(data.known_people?.length ?? 0) > 0 && (
-                      <div className="mb-5">
-                        <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-2">
-                          People you know <span className="text-slate-600 normal-case tracking-normal">— named &amp; remembered, kept even when idle</span>
-                        </h3>
-                        <ul className="space-y-1.5">
-                          {data.known_people!.map(kp => <KnownPersonRow key={kp.person_id} kp={kp} />)}
-                        </ul>
-                      </div>
-                    )}
 
                     {/* Everyone the cameras saw recently — the face grid, with
                         naming and history on each. */}
@@ -458,16 +470,6 @@ export function DashboardPage() {
 
 
 
-                <Panel delay={400}>
-                  <PanelHead title="Recent detections" right={`${data.recent.length} shown`} />
-                  {data.recent.length === 0 ? (
-                    <p className="text-xs text-slate-600 py-8 text-center">Nothing detected in this window.</p>
-                  ) : (
-                    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
-                      {data.recent.map((r, i) => <DetectionCard key={r.event_id} row={r} i={i} />)}
-                    </div>
-                  )}
-                </Panel>
               </>
             )}
 
@@ -1100,12 +1102,12 @@ function NamedVehiclesPanel({ vehicles, onOpen }: { vehicles: import('../lib/typ
       {vehicles.map((v, i) => (
         <li key={v.entity_id || i} className="flex items-center gap-2 text-xs flex-wrap">
           {v.frame_url && v.bbox
-            ? <button onClick={() => onOpen(v.entity_id)} className="w-9 h-9 flex-none rounded overflow-hidden bg-slate-900 border border-slate-700 hover:border-emerald-500">
+            ? <button onClick={() => onOpen(v.entity_id)} className="w-14 h-14 flex-none rounded-md overflow-hidden bg-slate-900 border border-slate-700 hover:border-emerald-500">
                 <CropImg src={v.frame_url} alt={v.label}
                          bbox={v.bbox as [number, number, number, number]} pad={0.3}
                          className="w-full h-full" />
               </button>
-            : <span className="w-9 h-9 flex-none rounded bg-slate-800 border border-slate-700 flex items-center justify-center text-[8px] text-slate-600">no pic</span>}
+            : <span className="w-14 h-14 flex-none rounded-md bg-slate-800 border border-slate-700 flex items-center justify-center text-[8px] text-slate-600">no pic</span>}
           <span className="text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded flex-none bg-emerald-600/80 text-white">YOURS</span>
           <button onClick={() => onOpen(v.entity_id)}
                   className="text-emerald-200 hover:text-white font-medium text-left underline decoration-dotted underline-offset-2">
@@ -1148,7 +1150,7 @@ function OutOfOrdinaryPanel({ vehicles, onOpen }: { vehicles: import('../lib/typ
         return (
           <li key={v.entity_id || i} className="flex items-center gap-2 text-xs flex-wrap">
             {v.frame_url && v.bbox
-              ? <button onClick={() => onOpen(v.entity_id)} className="w-9 h-9 flex-none rounded overflow-hidden bg-slate-900 border border-slate-700 hover:border-indigo-500">
+              ? <button onClick={() => onOpen(v.entity_id)} className="w-14 h-14 flex-none rounded-md overflow-hidden bg-slate-900 border border-slate-700 hover:border-indigo-500">
                   <CropImg src={v.frame_url} alt={v.descriptor || 'vehicle'}
                            bbox={v.bbox as [number, number, number, number]} pad={0.3}
                            className="w-full h-full" />
@@ -1198,7 +1200,7 @@ function RecurringVehicleRow({ v, onSaved, onOpen }: { v: RecurringVehicle; onSa
   return (
     <li className="flex items-center gap-2 text-xs flex-wrap">
       {v.frame_url && v.bbox
-        ? <button onClick={onOpen} className="w-9 h-9 flex-none rounded overflow-hidden bg-slate-900 border border-slate-700 hover:border-indigo-500">
+        ? <button onClick={onOpen} className="w-14 h-14 flex-none rounded-md overflow-hidden bg-slate-900 border border-slate-700 hover:border-indigo-500">
             <CropImg src={v.frame_url} alt={v.label}
                      bbox={v.bbox as [number, number, number, number]} pad={0.3}
                      className="w-full h-full" />
