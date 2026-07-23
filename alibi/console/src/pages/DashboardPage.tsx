@@ -123,32 +123,21 @@ export function DashboardPage() {
   const k = data?.kpis;
   const isEmpty = !!data && data.kpis.events === 0 && data.cameras.length === 0;
 
-  // Vehicles fall into three honest buckets on the Overview: cars that BELONG
-  // here (named, plus the familiar regulars), cars with a concrete reason to
-  // look (out-of-the-ordinary or flagged), and everything else just passing
-  // through. A car appears in EXACTLY ONE bucket.
+  // Vehicles fall into three honest buckets on the Overview, each car in EXACTLY
+  // ONE:
+  //  · SAFE — only cars you've NAMED. The backend folds every ReID fragment and
+  //    plate-spelling of a named car into one row, so a named car shows once.
+  //  · SUSPICIOUS — out-of-the-ordinary, a flagged plate, or a watchlisted person.
+  //  · GENERAL TRAFFIC — everything else captured: the recurring cars you HAVEN'T
+  //    named (with a "name it" control) plus one-off passers. An unnamed car is
+  //    never dressed up as a known one — the system can't prove an unnamed white
+  //    car is your white Toyota, so it doesn't pretend to; you name it and it
+  //    moves up to Safe.
   const ooSet = new Set((data?.out_of_ordinary_vehicles || []).map(v => v.entity_id));
-  const susEventIds = new Set((data?.suspicious_vehicles || []).map(v => v.event_id));
-  // A named car is already shown in the "Yours" strip above — so drop it from the
-  // familiar list, or "My Toyota" appears twice (once named, once recurring).
-  const namedIds = new Set((data?.named_vehicles || []).map(v => v.entity_id));
-  const normPlate = (p?: string | null) => (p || '').replace(/\s+/g, '').toUpperCase();
-  const namedPlates = new Set((data?.named_vehicles || []).map(v => normPlate(v.plate)).filter(Boolean));
-  const safeRecurring = (data?.recurring_vehicles || []).filter(v =>
-    !ooSet.has(v.entity_id)               // the unusual ones live under Suspicious
-    && !v.owner_label                     // already named → in the "Yours" strip
-    && !namedIds.has(v.entity_id)
-    && !(normPlate(v.plate) && namedPlates.has(normPlate(v.plate))));
-  // Every plate we consider "known" — named or a familiar regular. General
-  // traffic is what's left: captured, but none of the above.
-  const knownPlates = new Set<string>([
-    ...namedPlates,
-    ...(data?.recurring_vehicles || []).map(v => normPlate(v.plate)).filter(Boolean),
-  ]);
-  const generalTraffic = (data?.recent_vehicles || []).filter(v =>
-    !susEventIds.has(v.event_id)
-    && !(normPlate(v.plate) && knownPlates.has(normPlate(v.plate))));
-  const hasSafe = (data?.named_vehicles?.length ?? 0) > 0 || safeRecurring.length > 0;
+  const generalRecurring = (data?.recurring_vehicles || []).filter(v =>
+    !ooSet.has(v.entity_id)         // the unusual ones live under Suspicious
+    && !v.owner_label);             // named ones live under Safe
+  const hasSafe = (data?.named_vehicles?.length ?? 0) > 0;
   const hasSuspicious = (data?.out_of_ordinary_vehicles?.length ?? 0) > 0
     || (data?.suspicious_vehicles?.length ?? 0) > 0;
 
@@ -268,32 +257,21 @@ export function DashboardPage() {
                       <Link to="/vehicle-search" className="text-[10px] text-indigo-400 hover:text-indigo-300 no-underline">all vehicles →</Link>
                     </div>
 
-                    {/* SAFE — the cars that belong here: the ones you've named,
-                        and the familiar regulars the system keeps seeing. Click
-                        any to open that car's own pictures & history. */}
+                    {/* SAFE — only the cars you've NAMED. Every ReID fragment and
+                        plate-spelling of a named car is folded into one row by the
+                        backend, so each car appears exactly once. Click any to
+                        open that car's own pictures & history. */}
                     <div className="mb-5">
                       <h3 className="text-[10px] font-semibold text-emerald-400/90 uppercase tracking-[0.14em] mb-2">
-                        Safe <span className="text-slate-600 normal-case tracking-normal">— named &amp; familiar · regulars, kept even when idle</span>
+                        Safe <span className="text-slate-600 normal-case tracking-normal">— cars you've named · kept even when idle, one row each</span>
                       </h3>
                       {hasSafe ? (
-                        <>
-                          {(data.named_vehicles?.length ?? 0) > 0 && (
-                            <NamedVehiclesPanel vehicles={data.named_vehicles || []}
-                                                onOpen={(eid) => setVehicleHistory(eid)} />
-                          )}
-                          {safeRecurring.length > 0 && (
-                            <ul className="space-y-1.5 mt-2">
-                              {safeRecurring.map(v => (
-                                <RecurringVehicleRow key={v.entity_id} v={v} onSaved={() => load(range)}
-                                                     onOpen={() => setVehicleHistory(v.entity_id)} />
-                              ))}
-                            </ul>
-                          )}
-                        </>
+                        <NamedVehiclesPanel vehicles={data.named_vehicles || []}
+                                            onOpen={(eid) => setVehicleHistory(eid)} />
                       ) : (
                         <p className="text-[11px] text-slate-600 leading-relaxed">
-                          No known cars yet. Name a car in general traffic below and it moves here — read as
-                          familiar from then on, even when it hasn't been seen in a while.
+                          No named cars yet. In general traffic below, click “name it” on a car that's yours or
+                          a known regular — it moves here and reads as familiar from then on.
                         </p>
                       )}
                     </div>
@@ -333,21 +311,26 @@ export function DashboardPage() {
                       )}
                     </div>
 
-                    {/* GENERAL TRAFFIC — everything else captured passing through:
-                        not named, not a known regular, nothing flagged. Always
-                        shown so the third bucket is never just missing. */}
+                    {/* GENERAL TRAFFIC — every other car captured: the recurring
+                        ones you HAVEN'T named (each once, with "name it") and the
+                        raw recent frames. Nothing here is dressed up as a known
+                        car. Naming one moves it to Safe. Always shown so the third
+                        bucket is never just missing. */}
                     <div className="pt-4 border-t border-slate-800/70">
                       <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-2">
-                        General traffic <span className="text-slate-600 normal-case tracking-normal">— captured passing through · not named, nothing flagged</span>
+                        General traffic <span className="text-slate-600 normal-case tracking-normal">— captured passing through · not named, nothing flagged · “name it” to move a car to Safe</span>
                       </h3>
-                      {generalTraffic.length > 0 ? (
-                        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
-                          {generalTraffic.map((v, i) => <VehicleCard key={`${v.event_id}-${i}`} v={v} i={i} />)}
-                        </div>
+                      {generalRecurring.length > 0 ? (
+                        <ul className="space-y-1.5">
+                          {generalRecurring.map(v => (
+                            <RecurringVehicleRow key={v.entity_id} v={v} onSaved={() => load(range)}
+                                                 onOpen={() => setVehicleHistory(v.entity_id)} />
+                          ))}
+                        </ul>
                       ) : (
                         <p className="text-[11px] text-slate-600 leading-relaxed">
-                          No other cars in this window — everything captured was one of your own, a familiar
-                          regular, or already flagged above. An unrecognised car passing through would land here.
+                          No other cars in this window — everything captured was one you've named or already
+                          flagged above. An unrecognised car passing through would land here.
                         </p>
                       )}
                     </div>

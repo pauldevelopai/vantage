@@ -1971,12 +1971,17 @@ async def dashboard_overview(range: str = "24h",
                     furl, bbx = m.snapshot_url, list(m.bbox)
         from alibi.patterns.situations import visit_count as _vc
         from alibi.vehicles.evidence import best_plate as _bp
+        from alibi.vehicles.plate_match import is_plausible_plate as _plausible
         bp = _bp(trail, _plate_idx)
+        # Drop reads that are the burnt-in date/time overlay, not a plate — they
+        # gave one car several bogus "identities" ("2026QX") that never folded in.
+        raw_plate = bp["plate"] if bp else None
+        good_plate = raw_plate if (raw_plate and _plausible(raw_plate)) else None
         ev = {"frame_url": furl, "bbox": bbx,
               "colour": cols.most_common(1)[0][0] if cols else None,
               "body": bodies.most_common(1)[0][0] if bodies else None,
-              "plate": bp["plate"] if bp else None,
-              "plate_region": bp["region"] if bp else None,
+              "plate": good_plate,
+              "plate_region": (bp["region"] if bp else None) if good_plate else None,
               "visits": _vc([rr.get("timestamp") for rr in trail])}
         veh_evidence[entity_id] = ev
         return ev
@@ -1992,12 +1997,16 @@ async def dashboard_overview(range: str = "24h",
         ent = get_cross_camera_tracker().entity_summary("vehicle", hours=_VEH_BASELINE_HOURS)
         vlabels = get_vehicle_labels()
 
+        from alibi.vehicles.plate_match import resolve_label as _resolve_label
+
         def _owner_of(r):
             """The name for this cluster — set directly on it, OR inherited from
-            its plate (so naming one fragment names every fragment of that plate)."""
+            its plate (so naming one fragment names every fragment of that plate).
+            Plate inheritance tolerates OCR slips, so 'GFM4 0008' still resolves
+            to the car named on 'CSM4 0008'."""
             ev = _vehicle_evidence(r["entity_id"])
             return ((vlabels.get(r["entity_id"]) or {}).get("label")
-                    or (_plate_to_label.get(ev.get("plate")) if ev.get("plate") else None))
+                    or _resolve_label(ev.get("plate"), _plate_to_label))
 
         def _label_for(r):
             ev = _vehicle_evidence(r["entity_id"])
@@ -2285,42 +2294,64 @@ async def dashboard_overview(range: str = "24h",
     # leaves the out-of-ordinary list.
     named_vehicles: list = []
     try:
+        from alibi.vehicles.plate_match import plates_match as _pm, normalize_plate as _npl
         ent_by_id = {e["entity_id"]: e for e in ent}
-        seen = set()
+        # One record per NAMED cluster first — a plate off the label or the reads.
+        raw = []
         for eid, meta in (vlabels or {}).items():
             label = (meta or {}).get("label")
             if not label:
                 continue
             e = ent_by_id.get(eid)
             ev = _vehicle_evidence(eid) if e else {}
-            # Resolve the plate from the label OR the cluster's reads, then collapse
-            # duplicates: the same car named on several ReID fragments is ONE entry.
             plate = (meta or {}).get("plate") or (ev.get("plate") if ev else None)
-            if not e and plate:
-                for cand in ent:
-                    cev = _vehicle_evidence(cand["entity_id"])
-                    if cev.get("plate") and cev["plate"] == plate:
-                        e, ev, eid = cand, cev, cand["entity_id"]
-                        break
-            key = (label, plate) if plate else ("id", eid)
-            if key in seen:
-                continue
-            seen.add(key)
-            named_vehicles.append({
-                "entity_id": eid,
-                "label": label,
-                "plate": plate or (ev.get("plate") if ev else None),
+            raw.append({
+                "entity_id": eid, "label": label, "plate": plate,
                 "plate_region": ev.get("plate_region") if ev else None,
                 "frame_url": ev.get("frame_url") if ev else None,
                 "bbox": ev.get("bbox") if ev else None,
                 "last_seen": (e["last_seen"] if e else (meta or {}).get("set_at")),
-                "count": (e["count"] if e else None),
-                # Passes, not frames. A car parked in view is detected in every
-                # one, which is how this panel read "seen 4368x" for a vehicle
-                # that never moved.
-                "passes": (e.get("visits") if e else None),
+                "visits": (e.get("visits") if e else 0),
                 "cameras": [names.get(c, c) for c in (e["cameras"] if e else [])],
                 "seen_recently": bool(e),
+            })
+        # ...then collapse to ONE ROW PER CAR. On this scale the owner's name IS
+        # the identity: every ReID fragment and every plate spelling that carries
+        # the same name is the same car, so they fold into a single entry with
+        # the passes summed — this is what stops "My Toyota" appearing three
+        # times. Two different plates under one name (two cars, same nickname)
+        # stay separate.
+        groups: list = []
+        for r in sorted(raw, key=lambda x: str(x.get("last_seen") or ""), reverse=True):
+            g = None
+            for cand in groups:
+                same_name = cand["label"].strip().lower() == r["label"].strip().lower()
+                compat = (not cand["plate"] or not r["plate"]
+                          or _npl(cand["plate"]) == _npl(r["plate"])
+                          or _pm(cand["plate"], r["plate"]))
+                if same_name and compat:
+                    g = cand
+                    break
+            if g is None:
+                groups.append({**r, "passes": r["visits"] or 0})
+            else:
+                g["passes"] = (g.get("passes") or 0) + (r["visits"] or 0)
+                g["cameras"] = sorted(set(g["cameras"]) | set(r["cameras"]))
+                g["plate"] = g["plate"] or r["plate"]
+                g["plate_region"] = g.get("plate_region") or r.get("plate_region")
+                g["seen_recently"] = g["seen_recently"] or r["seen_recently"]
+                if not g.get("frame_url") and r.get("frame_url"):
+                    g["frame_url"], g["bbox"] = r["frame_url"], r["bbox"]
+        for g in groups:
+            named_vehicles.append({
+                "entity_id": g["entity_id"], "label": g["label"], "plate": g["plate"],
+                "plate_region": g.get("plate_region"),
+                "frame_url": g.get("frame_url"), "bbox": g.get("bbox"),
+                "last_seen": g.get("last_seen"), "count": None,
+                # Passes, not frames — summed across the folded fragments.
+                "passes": g.get("passes"),
+                "cameras": g.get("cameras", []),
+                "seen_recently": g.get("seen_recently"),
             })
         named_vehicles.sort(key=lambda v: str(v.get("last_seen") or ""), reverse=True)
     except Exception as e:
