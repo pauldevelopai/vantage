@@ -138,7 +138,23 @@ def ingest(source: Source, connector: Connector,
     report = RunReport(source_id=source.source_id,
                        started_at=datetime.utcnow().isoformat())
 
-    for item in connector.fetch(source, since=since):
+    # A connector generator can raise mid-stream — a network read timing out,
+    # a decode failing before the yield. That must end the RUN cleanly with
+    # what was gathered, not propagate out and lose the whole thing; a pipeline
+    # that dies on item 400,000 is not a pipeline.
+    def _stream():
+        it = iter(connector.fetch(source, since=since))
+        while True:
+            try:
+                yield next(it)
+            except StopIteration:
+                return
+            except Exception as e:
+                report.errors.append(f"connector stopped: {e}")
+                report.failed += 1
+                return
+
+    for item in _stream():
         report.seen += 1
         if limit and report.ingested >= limit:
             break

@@ -54,8 +54,8 @@ def _state() -> dict:
 
 def _save(state: dict) -> None:
     try:
-        MODEL_FILE.parent.mkdir(parents=True, exist_ok=True)
-        MODEL_FILE.write_text(json.dumps(state))
+        from alibi.atomic_json import write_json
+        write_json(MODEL_FILE, state)
     except Exception as e:  # pragma: no cover
         print(f"[vehicle-classifier] could not save: {e}")
 
@@ -82,6 +82,13 @@ def centroids_from(examples: List[Tuple[str, np.ndarray]]) -> Dict[str, list]:
 
     out = {}
     for label, vecs in by_label.items():
+        # Keep only the dominant dimension: a corpus embedded across an embedder
+        # change holds mixed widths, and np.stack on ragged shapes raises and
+        # takes the whole training run down. predict() already guards this way.
+        from collections import Counter
+        dims = Counter(v.shape[0] for v in vecs)
+        keep = dims.most_common(1)[0][0]
+        vecs = [v for v in vecs if v.shape[0] == keep]
         if len(vecs) < MIN_EXAMPLES_PER_LABEL:
             continue                      # not enough to be a class yet
         mean = np.mean(np.stack(vecs), axis=0)

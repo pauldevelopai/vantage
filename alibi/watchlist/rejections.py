@@ -22,6 +22,8 @@ back to being an unknown person, which is the honest state.
 from __future__ import annotations
 
 import json
+
+from alibi.atomic_json import write_json
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional, Set
@@ -53,10 +55,38 @@ def record(person_id: str, sighting_id: str, by: str = "",
     rows.append({"sighting_id": sighting_id, "by": by,
                  "ts": (now or datetime.utcnow()).isoformat()})
     try:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(data, indent=2))
+        write_json(p, data)
     except Exception as e:  # pragma: no cover
         print(f"[rejections] could not save: {e}")
+
+
+def clear(person_id: str, sighting_id: str,
+          path: Optional[Path] = None) -> bool:
+    """Forget a rejection — the operator has since confirmed this IS them.
+
+    Without this, confirming a face you earlier rejected leaves it attributed
+    to the person but still ruled out, so the gallery drops it: labelled and
+    invisible at once. Claiming must undo the rejection.
+    """
+    if not person_id or not sighting_id:
+        return False
+    p = path or REJECTIONS_FILE
+    data = _load(p)
+    rows = data.get(person_id)
+    if not rows:
+        return False
+    kept = [r for r in rows if r.get("sighting_id") != sighting_id]
+    if len(kept) == len(rows):
+        return False
+    if kept:
+        data[person_id] = kept
+    else:
+        data.pop(person_id, None)
+    try:
+        write_json(p, data)
+    except Exception as e:  # pragma: no cover
+        print(f"[rejections] could not clear: {e}")
+    return True
 
 
 def rejected_for(person_id: str, path: Optional[Path] = None) -> Set[str]:

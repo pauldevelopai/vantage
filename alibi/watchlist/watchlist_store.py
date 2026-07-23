@@ -15,6 +15,37 @@ from dataclasses import dataclass, asdict
 from alibi.encryption import get_encrypted_writer
 
 
+def stack_embeddings(embeddings) -> Optional[np.ndarray]:
+    """Stack a person's embeddings into (N, D), dropping any that don't fit.
+
+    A person can end up holding vectors of two different lengths — the ArcFace
+    backend is 512-d but its fallback is 128-d, so a face embedded while the
+    model was still loading, or a corrupt row, has a different width. np.array
+    on a ragged list raises, and that would take down EVERY gallery, every
+    People load and every Situation card at once. So keep the dominant
+    dimension (the most common, newest wins ties) and drop the rest with a note
+    rather than crashing the whole face path over one bad vector.
+    """
+    vecs = []
+    for e in embeddings:
+        v = np.asarray(e, dtype=np.float32).ravel()
+        if v.size:
+            vecs.append(v)
+    if not vecs:
+        return None
+
+    from collections import Counter
+    dims = Counter(v.shape[0] for v in vecs)
+    keep = dims.most_common(1)[0][0]
+    kept = [v for v in vecs if v.shape[0] == keep]
+    dropped = len(vecs) - len(kept)
+    if dropped:
+        print(f"[watchlist] dropped {dropped} embedding(s) of a non-dominant "
+              f"dimension (kept {keep}-d) — a fallback or corrupt vector",
+              flush=True)
+    return np.unique(np.stack(kept).round(6), axis=0)
+
+
 @dataclass
 class WatchlistEntry:
     """Entry in the watchlist"""
@@ -178,11 +209,8 @@ class WatchlistStore:
 
         out: Dict[str, np.ndarray] = {}
         for pid, embs in galleries.items():
-            arr = np.array(embs, dtype=np.float32)
-            # Renaming re-appends the same vector, so drop exact repeats —
-            # they add cost and no information.
-            arr = np.unique(arr.round(6), axis=0)
-            if arr.size:
+            arr = stack_embeddings(embs)      # dimension-safe; drops repeats
+            if arr is not None and arr.size:
                 out[pid] = arr
         return out
 
@@ -218,8 +246,38 @@ class WatchlistStore:
         return len(self.load_all())
 
 
+_EFFECTIVE_CACHE: Dict[str, Any] = {"sig": None, "value": None}
+
+
+def _archive_signature() -> tuple:
+    """A cheap fingerprint of everything effective_galleries reads.
+
+    The mtimes of the three backing files. Any write changes one, so a stale
+    cache is impossible — no write path has to remember to invalidate, which is
+    exactly the kind of thing that gets forgotten and shows a correction that
+    "didn't reflect".
+    """
+    from alibi.watchlist.face_sighting_store import get_face_sighting_store
+    from alibi.watchlist import rejections
+
+    paths = [
+        Path("alibi/data/watchlist.jsonl"),
+        Path(getattr(get_face_sighting_store(), "storage_path",
+                     "alibi/data/face_sightings.jsonl")),
+        rejections.REJECTIONS_FILE,
+    ]
+    sig = []
+    for p in paths:
+        try:
+            st = Path(p).stat()
+            sig.append((str(p), st.st_mtime_ns, st.st_size))
+        except OSError:
+            sig.append((str(p), 0, 0))
+    return tuple(sig)
+
+
 def effective_galleries() -> Dict[str, np.ndarray]:
-    """Every saved face we know the name of, per person.
+    """Every saved face we know the name of, per person. Cached on file mtime.
 
     The enrolled templates are only part of the answer. Each face sighting the
     archive has already attributed to someone is another view of them, and
@@ -233,6 +291,14 @@ def effective_galleries() -> Dict[str, np.ndarray]:
     from alibi.watchlist.face_sighting_store import get_face_sighting_store
 
     from alibi.watchlist import rejections
+
+    # Recompute only when a backing file has changed. This scans the whole face
+    # archive, and it is called on every People load and once per Situation
+    # card — without this, a busy Overview re-reads every stored face many
+    # times over.
+    sig = _archive_signature()
+    if _EFFECTIVE_CACHE["sig"] == sig and _EFFECTIVE_CACHE["value"] is not None:
+        return _EFFECTIVE_CACHE["value"]
 
     galleries = {pid: list(g) for pid, g in WatchlistStore().get_galleries().items()}
     rejected = rejections.all_rejections()
@@ -249,8 +315,10 @@ def effective_galleries() -> Dict[str, np.ndarray]:
 
     out = {}
     for pid, views in galleries.items():
-        arr = np.array([np.asarray(v, dtype=np.float32).ravel() for v in views],
-                       dtype=np.float32)
-        if arr.size:
-            out[pid] = np.unique(arr.round(6), axis=0)
+        arr = stack_embeddings(views)         # same dimension-safe stacking
+        if arr is not None and arr.size:
+            out[pid] = arr
+
+    _EFFECTIVE_CACHE["sig"] = sig
+    _EFFECTIVE_CACHE["value"] = out
     return out

@@ -21,7 +21,7 @@ pictures) or a red one on a working camera watching an empty driveway.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 # A feeder that has not checked in for this long is not watching any more.
@@ -35,14 +35,26 @@ FRESH_FRAME_MINUTES = 10
 
 
 def _parse(ts) -> Optional[datetime]:
+    """Always returns a NAIVE (UTC) datetime, or None.
+
+    `now` here is naive-UTC, and the rest of the system stamps times with
+    datetime.utcnow(). A timestamp carrying an offset — "…+02:00", a common
+    serialisation — parses to an AWARE datetime, and subtracting a naive from
+    an aware raises TypeError. describe() has no guard, so one such timestamp
+    would take down the whole Cameras page. Drop the tzinfo so every comparison
+    is naive-vs-naive.
+    """
     if not ts:
         return None
-    if isinstance(ts, datetime):
-        return ts
-    try:
-        return datetime.fromisoformat(str(ts).replace("Z", "").strip())
-    except (ValueError, TypeError):
-        return None
+    d = ts if isinstance(ts, datetime) else None
+    if d is None:
+        try:
+            d = datetime.fromisoformat(str(ts).replace("Z", "").strip())
+        except (ValueError, TypeError):
+            return None
+    if d.tzinfo is not None:
+        d = d.astimezone(timezone.utc).replace(tzinfo=None)
+    return d
 
 
 def describe(feeder_last_seen, last_frame_ts, now: Optional[datetime] = None) -> dict:
@@ -52,7 +64,7 @@ def describe(feeder_last_seen, last_frame_ts, now: Optional[datetime] = None) ->
     last picture. Returns {watching, state, label, detail} — `state` for a
     colour, `label` and `detail` for a person.
     """
-    now = now or datetime.now()
+    now = now or datetime.utcnow()      # match the utcnow the feeders stamp
     feeder = _parse(feeder_last_seen)
     frame = _parse(last_frame_ts)
 

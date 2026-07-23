@@ -1151,11 +1151,15 @@ def _attribute_sightings(sighting_ids, person_id: str) -> int:
     wanted = {s for s in (sighting_ids or []) if s}
     if not wanted:
         return 0
+    from alibi.watchlist import rejections
     store = get_face_sighting_store()
     marked = 0
     try:
         for sight in store.load_all():
             if sight.sighting_id in wanted and sight.matched_person_id != person_id:
+                # Confirming overrides any earlier "not them" for this face, or
+                # the gallery would drop it and it would be labelled-but-unseen.
+                rejections.clear(person_id, sight.sighting_id)
                 sight.matched_person_id = person_id
                 store.add_sighting(sight)      # append-only; last write wins
                 marked += 1
@@ -2184,7 +2188,7 @@ def _note_camera_alive(camera_id: str, bridge_id: str) -> None:
     from alibi.cameras.bridge import get_bridge_registry
 
     store = get_camera_store()
-    now = datetime.now().isoformat()
+    now = datetime.utcnow().isoformat()   # feeders stamp utcnow; keep one clock
     cam = store.get(camera_id)
     if cam is None:
         name = camera_id
@@ -2229,7 +2233,7 @@ async def list_cameras(
     except Exception:
         pass
 
-    now = datetime.now()
+    now = datetime.utcnow()               # compare against the feeder's utcnow
     out = []
     for c in store.list_all():
         d = c.to_dict()
@@ -2318,7 +2322,7 @@ async def test_camera_connection(
 
     # Update camera status based on test result
     new_status = "online" if result.get("ok") else "offline"
-    store.update_status(camera_id, new_status, datetime.now().isoformat() if result.get("ok") else None)
+    store.update_status(camera_id, new_status, datetime.utcnow().isoformat() if result.get("ok") else None)
 
     return result
 
