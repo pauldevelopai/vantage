@@ -413,6 +413,10 @@ export interface KnownPerson {
   last_seen: string | null;
   first_seen: string | null;
   views_on_file: number;
+  /** A representative face crop — freshest sighting, else the enrolment frame —
+   *  so every known person shows a real picture, seen recently or not. */
+  frame_url?: string | null;
+  bbox?: number[] | null;
 }
 
 export interface DashboardSituation {

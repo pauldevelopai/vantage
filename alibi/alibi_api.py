@@ -1420,11 +1420,34 @@ def _known_people(names: dict, cutoff) -> list:
     matcher = FaceMatcher()
     rej = _r.all_rejections()
 
+    # A representative FACE PHOTO for every enrolled person, so each has a real
+    # picture of a reasonable size — not just the ones seen recently. Primary
+    # source is the enrolment frame (always on file); a fresher recent sighting
+    # overrides it below. Scanning every entry catches the enrolment frame even
+    # when the latest entry (a claim/merge) carries no image.
+    def _bbox_of(md: dict):
+        fb = (md or {}).get("face_bbox")
+        if isinstance(fb, dict) and all(k in fb for k in ("x", "y", "w", "h")):
+            return [int(fb["x"]), int(fb["y"]), int(fb["w"]), int(fb["h"])]
+        return None
+    face_img: dict = {}          # pid -> {"url", "bbox", "ts"}
+    for entry in ws.load_all():
+        md = entry.metadata or {}
+        url, bbox = md.get("frame_url"), _bbox_of(md)
+        if url and bbox:
+            cur = face_img.get(entry.person_id)
+            ts = md.get("sighting_ts") or entry.added_ts or ""
+            if cur is None or str(ts) >= str(cur["ts"]):
+                face_img[entry.person_id] = {"url": url, "bbox": bbox, "ts": ts}
+
     stats = {pid: {"n": 0, "cams": set(), "hours": [0] * 24, "last": None, "first": None}
              for pid in active}
     cut = cutoff.isoformat() if cutoff else ""
+    # Freshest attributed sighting crop per person (any time), so a seen person
+    # shows how they looked most recently rather than the day they were enrolled.
+    recent_face: dict = {}       # pid -> {"url", "bbox", "ts"}
     for s in get_face_sighting_store().load_all():
-        if not s.embedding or (cut and (s.ts or "") < cut):
+        if not s.embedding:
             continue
         pid = s.matched_person_id
         if not pid:                                  # unattributed: match live
@@ -1437,6 +1460,16 @@ def _known_people(names: dict, cutoff) -> list:
                 if x >= sc:
                     best, sc = p, x
             pid = best
+        if pid is None:
+            continue
+        # Track the freshest face crop for this person regardless of the window.
+        if s.image_path and s.bbox:
+            cur = recent_face.get(pid)
+            if cur is None or str(s.ts or "") >= str(cur["ts"]):
+                recent_face[pid] = {"url": s.image_path, "bbox": list(s.bbox), "ts": s.ts or ""}
+        # Stats are windowed.
+        if cut and (s.ts or "") < cut:
+            continue
         st = stats.get(pid)
         if st is None:
             continue
@@ -1453,6 +1486,7 @@ def _known_people(names: dict, cutoff) -> list:
     for pid, e in active.items():
         st = stats[pid]
         busiest = st["hours"].index(max(st["hours"])) if any(st["hours"]) else None
+        img = recent_face.get(pid) or face_img.get(pid)      # fresh, else enrolment
         out.append({
             "person_id": pid,
             "name": e.label,
@@ -1463,6 +1497,8 @@ def _known_people(names: dict, cutoff) -> list:
             "last_seen": st["last"],
             "first_seen": st["first"],
             "views_on_file": len(galleries.get(pid, [])),
+            "frame_url": img["url"] if img else None,
+            "bbox": img["bbox"] if img else None,
         })
     out.sort(key=lambda k: (k["times_seen"], k["last_seen"] or ""), reverse=True)
     return out

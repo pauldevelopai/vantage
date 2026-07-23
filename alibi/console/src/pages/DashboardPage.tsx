@@ -148,7 +148,6 @@ export function DashboardPage() {
   //  · General — captured, no identity and no suspicion: strangers and the
   //    body-only shots where no face was readable.
   const rp = data?.recent_people || [];
-  const knownFaces = rp.filter(p => p.matched_label);
   const suspectedPeople = rp.filter(p => !p.matched_label && p.suggested_label);
   const generalPeople = rp.filter(p => !p.matched_label && !p.suggested_label);
 
@@ -381,27 +380,21 @@ export function DashboardPage() {
                       <Link to="/people" className="text-[10px] text-indigo-400 hover:text-indigo-300 no-underline">full history →</Link>
                     </div>
 
-                    {/* PEOPLE YOU KNOW — enrolled roster (persistent, with rhythm)
-                        and the recognised faces seen recently. */}
+                    {/* PEOPLE YOU KNOW — one card per enrolled person, each with a
+                        real face photo (kept even when idle). No duplicated names,
+                        no rows-without-pictures — everyone known looks the same. */}
                     <div className="mb-5">
                       <h3 className="text-[10px] font-semibold text-emerald-400/90 uppercase tracking-[0.14em] mb-2">
                         People you know <span className="text-slate-600 normal-case tracking-normal">— named &amp; recognised · kept even when idle</span>
                       </h3>
                       {(data.known_people?.length ?? 0) > 0 ? (
-                        <ul className="space-y-1.5">
-                          {data.known_people!.map(kp => <KnownPersonRow key={kp.person_id} kp={kp} />)}
-                        </ul>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                          {data.known_people!.map(kp => <KnownPersonCard key={kp.person_id} kp={kp} />)}
+                        </div>
                       ) : (
                         <p className="text-[11px] text-slate-600 leading-relaxed">
                           No named people yet. Confirm a face below and it moves here — recognised from then on.
                         </p>
-                      )}
-                      {knownFaces.length > 0 && (
-                        <div className="mt-2 grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-3">
-                          {knownFaces.map((p, i) => (
-                            <PersonCard key={p.sighting_id} p={p} i={i} onEnrolled={() => load(range)} />
-                          ))}
-                        </div>
                       )}
                     </div>
 
@@ -717,7 +710,7 @@ function PanelHeadLinked({ title, right, linkTo, linkLabel }:
   );
 }
 
-function Kpi({ label, value, tint, delay, alert, sub }:
+function Kpi({ label, value, tint, delay, sub }:
              { label: string; value: number; tint: string; delay: number; alert?: boolean; sub?: string }) {
   const shown = useCountUp(value);
   return (
@@ -728,11 +721,11 @@ function Kpi({ label, value, tint, delay, alert, sub }:
       <div className="relative">
         <div className="text-[10px] text-slate-500 uppercase tracking-[0.14em]">{label}</div>
         <div className="flex items-baseline gap-2 mt-1">
+          {/* No "needs review" dot — the amber tint alone signals incidents. */}
           <span className="text-4xl font-semibold tabular-nums tracking-tight"
                 style={{ color: tint, textShadow: `0 0 22px ${tint}55` }}>
             {shown.toLocaleString()}
           </span>
-          {alert && <span className="vg-live w-2 h-2 rounded-full bg-amber-400" />}
         </div>
         {sub && <div className="text-[10px] text-slate-500 mt-0.5">{sub}</div>}
       </div>
@@ -763,22 +756,37 @@ function sinceLabel(iso: string): string {
  * when last seen, how many face views are on file — and the interaction:
  * their details, a link to their history, and how many more angles to confirm.
  */
-function KnownPersonRow({ kp }: { kp: import('../lib/types').KnownPerson }) {
+function KnownPersonCard({ kp }: { kp: import('../lib/types').KnownPerson }) {
   const hh = kp.busiest_hour;
   const seen = kp.times_seen > 0
-    ? `seen ${kp.times_seen}×${kp.cameras.length ? ` · ${kp.cameras.join(', ')}` : ''}${hh !== null ? ` · mostly around ${String(hh).padStart(2, '0')}:00` : ''}`
-    : 'named, not yet seen in this window';
+    ? `seen ${kp.times_seen}×${hh !== null ? ` · mostly ${String(hh).padStart(2, '0')}:00` : ''}`
+    : 'named · not seen in this window';
   return (
-    <li className="flex items-center gap-3 py-1">
-      <span className="flex-none text-[9px] font-bold tracking-wider px-1.5 py-0.5 rounded bg-emerald-600/80 text-white">KNOWN</span>
-      <Link to={`/people?person=${encodeURIComponent(kp.person_id)}`} className="font-medium text-slate-100 no-underline hover:text-indigo-300 flex-none">{kp.name}</Link>
-      <span className="text-[11px] text-slate-500 truncate flex-1">{seen}</span>
-      {kp.details && <span className="text-[11px] text-slate-400 italic truncate hidden lg:block max-w-[14rem]">{kp.details}</span>}
-      <span className="text-[10px] text-slate-600 flex-none" title="face angles confirmed — more means better recognition">
-        {kp.views_on_file} view{kp.views_on_file === 1 ? '' : 's'}
-      </span>
-      <span className="text-[10px] text-slate-600 flex-none">{kp.last_seen ? timeAgo(kp.last_seen) : ''}</span>
-    </li>
+    <Link to={`/people?person=${encodeURIComponent(kp.person_id)}`}
+          className="vg-rise group rounded-lg overflow-hidden bg-black border border-slate-800 hover:border-emerald-500/70 transition-all duration-300 no-underline block">
+      <div className="relative aspect-square bg-slate-900">
+        {kp.frame_url && kp.bbox
+          ? <CropImg src={kp.frame_url} alt={kp.name}
+                     bbox={kp.bbox as [number, number, number, number]} pad={0.45}
+                     className="w-full h-full" />
+          : <div className="w-full h-full flex flex-col items-center justify-center text-slate-600">
+              <span className="text-2xl font-semibold text-slate-500">{kp.name.slice(0, 1).toUpperCase()}</span>
+              <span className="text-[8px] mt-1">no photo yet</span>
+            </div>}
+        <span className="absolute top-1 left-1 text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded bg-emerald-600/90 text-white">KNOWN</span>
+        {kp.last_seen && (
+          <span className="absolute bottom-1 right-1.5 text-[8px] px-1 py-0.5 rounded bg-black/80 text-slate-300 font-mono">{timeAgo(kp.last_seen)}</span>
+        )}
+      </div>
+      <div className="px-2 py-1.5 border-t border-slate-800/70">
+        <div className="text-[12px] font-semibold text-emerald-300 truncate group-hover:text-emerald-200">{kp.name}</div>
+        <div className="text-[9px] text-slate-500 truncate">{seen}</div>
+        {kp.details && <div className="text-[9px] text-slate-400 italic truncate">{kp.details}</div>}
+        <div className="text-[9px] text-slate-600 truncate" title="face angles confirmed — more means better recognition">
+          {kp.views_on_file} view{kp.views_on_file === 1 ? '' : 's'} on file
+        </div>
+      </div>
+    </Link>
   );
 }
 
