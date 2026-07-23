@@ -421,22 +421,44 @@ export function DashboardPage() {
 
                 </div>
 
-                {data.recent_people?.length > 0 && (
+                {/* PEOPLE — structured like the Vehicles section: the people you
+                    know (persistent, with their rhythm) above, then everyone the
+                    cameras saw recently. Gives the box the same insight and
+                    interaction the Vehicles box has, instead of a flat grid. */}
+                {((data.known_people?.length ?? 0) > 0 || (data.recent_people?.length ?? 0) > 0) && (
                   <Panel className="mb-4" delay={300}>
-                    <div className="flex items-center justify-between mb-3">
-                      <h2 className="text-[11px] font-semibold text-slate-300 uppercase tracking-[0.14em]">People seen</h2>
-                      <div className="flex items-center gap-3">
-                        <span className="text-[10px] text-slate-600 font-mono hidden sm:inline">enrolled people are named, strangers never are</span>
-                        <Link to="/people" className="text-[10px] text-indigo-400 hover:text-indigo-300 no-underline">
-                          full history →
-                        </Link>
+                    <div className="flex items-center justify-between mb-4">
+                      <h2 className="text-sm font-semibold text-slate-100 uppercase tracking-[0.16em]">People</h2>
+                      <Link to="/people" className="text-[10px] text-indigo-400 hover:text-indigo-300 no-underline">full history →</Link>
+                    </div>
+
+                    {/* Known people — enrolled, persistent, with how often &
+                        when, exactly like "Your vehicles". */}
+                    {(data.known_people?.length ?? 0) > 0 && (
+                      <div className="mb-5">
+                        <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-2">
+                          People you know <span className="text-slate-600 normal-case tracking-normal">— named &amp; remembered, kept even when idle</span>
+                        </h3>
+                        <ul className="space-y-1.5">
+                          {data.known_people!.map(kp => <KnownPersonRow key={kp.person_id} kp={kp} />)}
+                        </ul>
                       </div>
-                    </div>
-                    <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-3">
-                      {data.recent_people.map((p, i) => (
-                        <PersonCard key={p.sighting_id} p={p} i={i} onEnrolled={() => load(range)} />
-                      ))}
-                    </div>
+                    )}
+
+                    {/* Everyone the cameras saw recently — the face grid, with
+                        naming and history on each. */}
+                    {(data.recent_people?.length ?? 0) > 0 && (
+                      <div className={(data.known_people?.length ?? 0) > 0 ? 'pt-4 border-t border-slate-800/70' : ''}>
+                        <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-2">
+                          Recently seen <span className="text-slate-600 normal-case tracking-normal">— enrolled people are named, strangers never are</span>
+                        </h3>
+                        <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-3">
+                          {data.recent_people.map((p, i) => (
+                            <PersonCard key={p.sighting_id} p={p} i={i} onEnrolled={() => load(range)} />
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </Panel>
                 )}
 
@@ -644,6 +666,31 @@ function sinceLabel(iso: string): string {
  * is labelled "Unknown person" — we never guess who a stranger is. The only way
  * a stranger becomes named is the owner enrolling them ("Add to Faces").
  */
+/**
+ * One enrolled person, with the same class of intelligence a named vehicle
+ * gets: how often seen, at which cameras, the hour they most often appear,
+ * when last seen, how many face views are on file — and the interaction:
+ * their details, a link to their history, and how many more angles to confirm.
+ */
+function KnownPersonRow({ kp }: { kp: import('../lib/types').KnownPerson }) {
+  const hh = kp.busiest_hour;
+  const seen = kp.times_seen > 0
+    ? `seen ${kp.times_seen}×${kp.cameras.length ? ` · ${kp.cameras.join(', ')}` : ''}${hh !== null ? ` · mostly around ${String(hh).padStart(2, '0')}:00` : ''}`
+    : 'named, not yet seen in this window';
+  return (
+    <li className="flex items-center gap-3 py-1">
+      <span className="flex-none text-[9px] font-bold tracking-wider px-1.5 py-0.5 rounded bg-emerald-600/80 text-white">KNOWN</span>
+      <Link to="/people" className="font-medium text-slate-100 no-underline hover:text-indigo-300 flex-none">{kp.name}</Link>
+      <span className="text-[11px] text-slate-500 truncate flex-1">{seen}</span>
+      {kp.details && <span className="text-[11px] text-slate-400 italic truncate hidden lg:block max-w-[14rem]">{kp.details}</span>}
+      <span className="text-[10px] text-slate-600 flex-none" title="face angles confirmed — more means better recognition">
+        {kp.views_on_file} view{kp.views_on_file === 1 ? '' : 's'}
+      </span>
+      <span className="text-[10px] text-slate-600 flex-none">{kp.last_seen ? timeAgo(kp.last_seen) : ''}</span>
+    </li>
+  );
+}
+
 function PersonCard({ p, i, onEnrolled }: { p: DashboardPerson; i: number; onEnrolled: () => void }) {
   const enrolled = !!p.matched_label;
   const isFace = p.source !== 'detection' && !!p.sighting_id;

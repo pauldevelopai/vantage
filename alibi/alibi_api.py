@@ -1243,6 +1243,86 @@ def _frame_face_index() -> dict:
 _WHO_PROXIMITY_SECONDS = 20
 
 
+def _known_people_safe(names: dict, cutoff) -> list:
+    """Never let the people-intelligence panel take the dashboard down."""
+    try:
+        return _known_people(names, cutoff)
+    except Exception as e:
+        print(f"[dashboard] known-people unavailable: {e}", flush=True)
+        return []
+
+
+def _known_people(names: dict, cutoff) -> list:
+    """The people you've enrolled, each with the intelligence the Vehicles
+    panel already shows for cars: how many times seen, at which cameras, the
+    hour they most often appear, when last seen, and how many face views are on
+    file. Persistent — a named person stays listed even when idle, exactly like
+    a named vehicle.
+    """
+    import numpy as _np
+    from datetime import datetime as _dt
+    from alibi.watchlist.watchlist_store import (WatchlistStore, effective_galleries,
+                                                 _archive_signature)
+    from alibi.watchlist.face_sighting_store import get_face_sighting_store
+    from alibi.watchlist.face_match import FaceMatcher
+    from alibi.watchlist import rejections as _r
+
+    ws = WatchlistStore()
+    active = ws._get_active_entries()
+    if not active:
+        return []
+    galleries = effective_galleries()
+    matcher = FaceMatcher()
+    rej = _r.all_rejections()
+
+    stats = {pid: {"n": 0, "cams": set(), "hours": [0] * 24, "last": None, "first": None}
+             for pid in active}
+    cut = cutoff.isoformat() if cutoff else ""
+    for s in get_face_sighting_store().load_all():
+        if not s.embedding or (cut and (s.ts or "") < cut):
+            continue
+        pid = s.matched_person_id
+        if not pid:                                  # unattributed: match live
+            v = _np.asarray(s.embedding, dtype=_np.float32).ravel()
+            best, sc = None, 0.6
+            for p, gal in galleries.items():
+                if s.sighting_id in rej.get(p, set()):
+                    continue
+                x = matcher.cosine_similarity(v, gal)
+                if x >= sc:
+                    best, sc = p, x
+            pid = best
+        st = stats.get(pid)
+        if st is None:
+            continue
+        st["n"] += 1
+        st["cams"].add(s.camera_id)
+        try:
+            st["hours"][_dt.fromisoformat(str(s.ts).replace("Z", "")).hour] += 1
+        except (ValueError, TypeError):
+            pass
+        st["last"] = max(st["last"], s.ts) if st["last"] else s.ts
+        st["first"] = min(st["first"], s.ts) if st["first"] else s.ts
+
+    out = []
+    for pid, e in active.items():
+        st = stats[pid]
+        busiest = st["hours"].index(max(st["hours"])) if any(st["hours"]) else None
+        out.append({
+            "person_id": pid,
+            "name": e.label,
+            "details": (e.metadata or {}).get("notes"),
+            "times_seen": st["n"],
+            "cameras": [names.get(c, c) for c in sorted(st["cams"])],
+            "busiest_hour": busiest,
+            "last_seen": st["last"],
+            "first_seen": st["first"],
+            "views_on_file": len(galleries.get(pid, [])),
+        })
+    out.sort(key=lambda k: (k["times_seen"], k["last_seen"] or ""), reverse=True)
+    return out
+
+
 def _who_in_frame(event) -> Optional[str]:
     """Who is in this event's frame, or None.
 
@@ -2139,6 +2219,7 @@ async def dashboard_overview(range: str = "24h",
         "cameras": cameras,
         "alerts": alerts,
         "recent_people": recent_people,
+        "known_people": _known_people_safe(names, cutoff),
         "recent_vehicles": recent_vehicles,
         "watching_for": watching_for,
         "patterns": patterns,

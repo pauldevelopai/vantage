@@ -340,6 +340,7 @@ export interface DashboardOverview {
   watching_for: WatchingFor | null;
   patterns: DashboardPatterns | null;
   situations: DashboardSituation[];
+  known_people?: KnownPerson[];
   alerts_total?: number;              // how many alert candidates there were (top 10 shown)
   out_of_ordinary_vehicles?: OutOfOrdinaryVehicle[];
   named_vehicles?: NamedVehicle[];
@@ -395,6 +396,18 @@ export interface RecurringVehicle {
  *  vehicle, presence after hours, someone at the parked cars). The machine's
  *  ceiling is tier "review" — "confirmed" (and any crime word in its label)
  *  only ever comes from a person, whose name is attached. */
+export interface KnownPerson {
+  person_id: string;
+  name: string;
+  details?: string | null;
+  times_seen: number;
+  cameras: string[];
+  busiest_hour: number | null;
+  last_seen: string | null;
+  first_seen: string | null;
+  views_on_file: number;
+}
+
 export interface DashboardSituation {
   incident_id: string | null;         // present for incidents; null for criteria rows
   kind?: 'confirmed' | 'review' | 'noted' | 'after_hours' | 'at_vehicles'
