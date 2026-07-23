@@ -688,7 +688,9 @@ export interface VehicleHistory {
   hours: number[];
   colour?: string | null;
   body?: string | null;
-  plate?: string | null;              // most-read plate — the stable identity
+  make?: string | null;               // owner-typed make (e.g. Toyota)
+  model?: string | null;              // owner-typed model (e.g. Fortuner)
+  plate?: string | null;              // owner-typed plate, else most-read — the stable identity
   plate_region?: string | null;
   frame_url?: string | null;                                   // representative photo
   bbox?: number[] | null;

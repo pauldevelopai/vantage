@@ -157,6 +157,9 @@ export function VehicleHistoryModal({ entityId, onClose, onSaved }: {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState('');
   const [details, setDetails] = useState('');
+  const [make, setMake] = useState('');
+  const [model, setModel] = useState('');
+  const [plateEdit, setPlateEdit] = useState('');
   const [busy, setBusy] = useState(false);
   const [saveErr, setSaveErr] = useState<string | null>(null);
 
@@ -173,6 +176,9 @@ export function VehicleHistoryModal({ entityId, onClose, onSaved }: {
         setH(r);
         setName(r.owner_label || '');
         setDetails(r.owner_details || '');
+        setMake(r.make || '');
+        setModel(r.model || '');
+        setPlateEdit(r.plate || '');
       })
       .catch(e => setErr(e?.message || 'Could not load history'));
   }, [entityId, win, framesOffset]);
@@ -185,8 +191,11 @@ export function VehicleHistoryModal({ entityId, onClose, onSaved }: {
     if (!label.trim()) return;
     setBusy(true); setSaveErr(null);
     try {
-      // Key to the plate when we have one, so the name + notes follow the car.
-      await api.setVehicleLabel(entityId, label.trim(), h?.plate, details.trim());
+      // Owner-typed plate (if given) wins over the OCR read and is stored so the
+      // name follows the car; make/model are recorded too.
+      const plate = plateEdit.trim() || h?.plate || null;
+      await api.setVehicleLabel(entityId, label.trim(), plate, details.trim(),
+                                make.trim() || null, model.trim() || null);
       onSaved();
     } catch (e: any) {
       setSaveErr(e?.message || 'Could not save');
@@ -236,14 +245,17 @@ export function VehicleHistoryModal({ entityId, onClose, onSaved }: {
                 </a>
               )}
 
-              {/* The plate — the one stable identity a car has. */}
-              <div className="mb-3 flex items-center gap-2">
+              {/* Plate + make/model — the stable identity, owner-corrected. */}
+              <div className="mb-3 flex items-center gap-2 flex-wrap">
                 <span className="text-[10px] text-slate-500 uppercase tracking-wide">Plate</span>
                 {h.plate
                   ? <span className="font-mono text-sm font-bold text-white bg-slate-800 border border-slate-600 rounded px-2 py-0.5 tracking-wider">
                       {h.plate}{h.plate_region ? <span className="ml-2 text-[10px] font-normal text-slate-400">{h.plate_region}</span> : null}
                     </span>
                   : <span className="text-xs text-slate-500">not captured yet</span>}
+                {(h.make || h.model) && (
+                  <span className="text-sm text-slate-200 ml-1">{[h.make, h.model].filter(Boolean).join(' ')}</span>
+                )}
               </div>
 
               {/* What the owner knows — editable. */}
@@ -272,6 +284,20 @@ export function VehicleHistoryModal({ entityId, onClose, onSaved }: {
                   <input autoFocus value={name} onChange={e => setName(e.target.value)}
                          placeholder="Name (e.g. Arnold's Haval, the gardener's bakkie)"
                          className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 placeholder:text-slate-600 focus:border-indigo-500 outline-none" />
+                  {/* Make / model / plate — the owner's own corrections, trusted
+                      over the OCR/VLM guess. Give two clusters the SAME name to
+                      merge the fragments of one car into a single row. */}
+                  <div className="mt-2 grid grid-cols-3 gap-2">
+                    <input value={make} onChange={e => setMake(e.target.value)}
+                           placeholder="Make"
+                           className="bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 placeholder:text-slate-600 focus:border-indigo-500 outline-none" />
+                    <input value={model} onChange={e => setModel(e.target.value)}
+                           placeholder="Model"
+                           className="bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 placeholder:text-slate-600 focus:border-indigo-500 outline-none" />
+                    <input value={plateEdit} onChange={e => setPlateEdit(e.target.value.toUpperCase())}
+                           placeholder="Plate"
+                           className="bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm font-mono text-slate-200 placeholder:text-slate-600 focus:border-indigo-500 outline-none tracking-wider" />
+                  </div>
                   <textarea value={details} onChange={e => setDetails(e.target.value)} rows={3}
                             placeholder="Anything you know — whose it is, when it usually comes, distinguishing features…"
                             className="mt-2 w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 placeholder:text-slate-600 focus:border-indigo-500 outline-none resize-y" />
@@ -283,6 +309,10 @@ export function VehicleHistoryModal({ entityId, onClose, onSaved }: {
                     <button onClick={() => setEditing(false)} className="text-xs text-slate-400 hover:text-slate-200 px-1">Cancel</button>
                     {saveErr && <span className="text-[11px] text-red-400">{saveErr}</span>}
                   </div>
+                  <p className="mt-1.5 text-[10px] text-slate-400">
+                    Same car showing up as two? Give both the <span className="text-slate-200">same name</span> and they
+                    merge into one row — the reliable way to reunite the fragments the appearance model can't.
+                  </p>
                   {h.plate && (
                     <p className="mt-1.5 text-[10px] text-indigo-300/70">
                       Saved against plate {h.plate}, so it follows this car wherever it's seen.

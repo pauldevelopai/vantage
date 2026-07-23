@@ -2152,7 +2152,11 @@ async def dashboard_overview(range: str = "24h",
 
         if ent:
             vehicles_distinct = len(ent)
-            for r in ent[:5]:
+            # Show every distinct recurring cluster (capped for sanity), not just
+            # the busiest five — the owner asked to see the other cars logged.
+            # Fragments of one car can still appear separately; the edit/merge
+            # ("same name") tool is how they get reunited.
+            for r in ent[:20]:
                 # NB: `range` is the shadowing query param here — no range() calls
                 busiest = r["hours"].index(max(r["hours"])) if any(r["hours"]) else None
                 owner_r = _owner_of(r)
@@ -4977,6 +4981,8 @@ class VehicleLabelUpdate(BaseModel):
     label: str
     plate: Optional[str] = None
     details: Optional[str] = None
+    make: Optional[str] = None
+    model: Optional[str] = None
 
 
 @app.put("/vehicles/entity-label", tags=["Vehicles"])
@@ -4984,20 +4990,24 @@ async def set_vehicle_entity_label(
     payload: VehicleLabelUpdate,
     current_user: User = Depends(require_role([Role.SUPERVISOR, Role.ADMIN])),
 ):
-    """Name a recurring vehicle ("Paul's Fortuner") — the owner saying "that
-    one is mine". A plate, when known, is stored with the name so it follows the
-    plate across appearance-fragments. Identity only ever comes from the owner;
-    empty label removes the name. Audited."""
+    """Name a recurring vehicle ("Paul's Fortuner") and record what the owner
+    knows: make, model, and a corrected plate. Giving two vehicles the SAME name
+    merges them into one row (this is how you reunite the same car's appearance
+    fragments the ReID split apart). A plate, when given, is stored with the name
+    so it follows the plate. Identity only ever comes from the owner; empty label
+    removes the name. Audited."""
     from alibi.patterns.familiarity import set_vehicle_label
     plate = (payload.plate or "").strip() or None
     details = (payload.details or "").strip() or None
+    make = (payload.make or "").strip() or None
+    model = (payload.model or "").strip() or None
     result = set_vehicle_label(payload.entity_id, payload.label,
                                set_by=current_user.username, plate=plate,
-                               details=details)
+                               details=details, make=make, model=model)
     get_store().append_audit("vehicle_labelled", {
         "user": current_user.username, "entity_id": payload.entity_id,
         "label": payload.label.strip() or None, "plate": plate,
-        "has_details": bool(details),
+        "make": make, "model": model, "has_details": bool(details),
     })
     return {"entity_id": payload.entity_id, **(result or {"label": None})}
 

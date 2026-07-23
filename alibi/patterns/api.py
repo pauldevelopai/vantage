@@ -126,17 +126,18 @@ async def vehicle_history(
     except Exception:
         pass
 
-    # The name may be set directly on this cluster OR inherited from its plate, so
-    # naming one appearance-fragment names every fragment that reads the plate.
+    # A name comes ONLY from naming THIS cluster — never inherited from a plate.
+    # Plate reads have no bounding box, so a co-occurring car's plate gets
+    # mis-attributed and inheriting the name off it mislabels the car (a white
+    # Toyota read as Arnold's plate). The owner's own typed plate/make/model win
+    # over the OCR/VLM guess — that is the point of the edit.
     _row = get_vehicle_labels().get(entity_id) or {}
     label = _row.get("label")
     owner_details = _row.get("details")
-    if plate:
-        from alibi.patterns.familiarity import plate_labels, plate_details
-        if not label:
-            label = plate_labels().get(plate)
-        if not owner_details:
-            owner_details = plate_details().get(plate)
+    owner_make = _row.get("make")
+    owner_model = _row.get("model")
+    if _row.get("plate"):
+        plate = _row["plate"]            # owner correction beats the OCR read
     # A vehicle the owner has CLAIMED is theirs is, by definition, part of the
     # scene — resident, regardless of how the raw maths would class this fragment.
     if label:
@@ -166,7 +167,9 @@ async def vehicle_history(
         "hours": summary["hours"],
         "colour": colour,
         "body": body,
-        "plate": plate,               # most-read plate for this cluster (or null)
+        "make": owner_make,           # owner-typed, when set
+        "model": owner_model,
+        "plate": plate,               # owner-typed plate, else most-read (or null)
         "plate_region": plate_region,
         "frame_url": frame_url,
         "bbox": bbox,

@@ -138,7 +138,7 @@ export function DashboardPage() {
     !ooSet.has(v.entity_id)         // the unusual ones live under Suspicious
     && !v.owner_label);             // named ones live under Safe
   const hasSafe = (data?.named_vehicles?.length ?? 0) > 0;
-  const hasSuspicious = (data?.out_of_ordinary_vehicles?.length ?? 0) > 0
+  const hasSuspicious = (data?.out_of_ordinary_vehicles || []).some(v => v.frame_url && v.bbox)
     || (data?.suspicious_vehicles?.length ?? 0) > 0;
 
   // People split the same three honest ways as vehicles:
@@ -1262,10 +1262,13 @@ function NamedVehiclesPanel({ vehicles, onOpen }: { vehicles: import('../lib/typ
  *  saying how often it came down the road and when. New cars lead. Every row
  *  clicks through to that vehicle's full history (every sighting, with times). */
 function OutOfOrdinaryPanel({ vehicles, onOpen }: { vehicles: import('../lib/types').OutOfOrdinaryVehicle[]; onOpen: (entityId: string) => void }) {
-  if (!vehicles.length) return null;
+  // A suspicious card with no photo is a dead link — you can't judge a car you
+  // can't see. Only show the ones we have a real picture of.
+  const withPic = vehicles.filter(v => v.frame_url && v.bbox);
+  if (!withPic.length) return null;
   return (
     <ul className="space-y-1.5">
-      {vehicles.map((v, i) => {
+      {withPic.map((v, i) => {
         const b = FINDING_BADGE[v.familiarity] || FINDING_BADGE.occasional;
         const when = v.busiest_hour_local !== null
           ? `mostly around ${String(v.busiest_hour_local).padStart(2, '0')}:00` : '';
@@ -1276,13 +1279,10 @@ function OutOfOrdinaryPanel({ vehicles, onOpen }: { vehicles: import('../lib/typ
           : 'Seen here';
         return (
           <li key={v.entity_id || i} className="flex items-center gap-2 text-xs flex-wrap">
-            {v.frame_url && v.bbox
-              ? <button onClick={() => onOpen(v.entity_id)} className="w-20 h-16 flex-none rounded-md overflow-hidden bg-slate-900 border border-slate-700 hover:border-indigo-500">
-                  <CropImg src={v.frame_url} alt={v.descriptor || 'vehicle'}
-                           bbox={v.bbox as [number, number, number, number]} pad={0.3}
-                           className="w-full h-full" />
-                </button>
-              : null}
+            <button onClick={() => onOpen(v.entity_id)} className="w-20 h-16 flex-none rounded-md overflow-hidden bg-slate-900 border border-slate-700 hover:border-indigo-500">
+              <CropImg src={v.frame_url!} alt={v.descriptor || 'vehicle'}
+                       bbox={v.bbox as [number, number, number, number]} pad={0.3}
+                       className="w-full h-full" /></button>
             <span className={`text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded flex-none ${b.cls} ${v.familiarity === 'new' ? 'vg-live' : ''}`}>
               {b.label}
             </span>

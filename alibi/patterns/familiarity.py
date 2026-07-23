@@ -91,21 +91,31 @@ def get_vehicle_labels() -> Dict[str, Dict[str, Any]]:
 def set_vehicle_label(entity_id: str, label: str, set_by: str,
                       plate: Optional[str] = None,
                       details: Optional[str] = None,
+                      make: Optional[str] = None,
+                      model: Optional[str] = None,
                       now: Optional[datetime] = None) -> Dict[str, Any]:
-    """Name a recurring vehicle and record what the owner knows about it. Empty
-    label removes the entry. A `plate`, when known, is stored with it so the name
-    AND the details follow the PLATE across the appearance fragments the ReID
-    clustering splits the same car into (see plate_labels / plate_details)."""
+    """Name a recurring vehicle and record what the owner knows about it — now
+    including the make, model, and a corrected plate they type in. Empty label
+    removes the entry. A `plate`, when given, is stored with it so the name AND
+    the details follow the PLATE across the appearance fragments the ReID
+    clustering splits the same car into (see plate_labels / plate_details).
+
+    An owner-typed plate/make/model is trusted over the OCR/VLM guess — it is a
+    human correction, which is the whole point of the edit."""
     labels = get_vehicle_labels()
     label = (label or "").strip()
     if label:
         row = {"label": label, "set_by": set_by,
                "set_at": (now or datetime.utcnow()).isoformat()}
         if plate:
-            row["plate"] = str(plate).strip()
+            row["plate"] = str(plate).strip().upper()
         d = (details or "").strip()[:2000]
         if d:
             row["details"] = d
+        if (make or "").strip():
+            row["make"] = make.strip()[:60]
+        if (model or "").strip():
+            row["model"] = model.strip()[:60]
         labels[entity_id] = row
     else:
         labels.pop(entity_id, None)
