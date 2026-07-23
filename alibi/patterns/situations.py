@@ -248,9 +248,38 @@ def alert_factors(row: Dict[str, Any], normal_hours: Optional[dict] = None) -> D
     }
 
 
+def subject_key(row: Dict[str, Any]) -> str:
+    """What an alert is ABOUT — the key the operator's feedback is learned
+    against. A recognised/named/watchlisted person keys by name; a named vehicle
+    by its label/cluster; otherwise the pattern kind. Shared by the ranker (to
+    apply learned adjustments) and the dashboard (to dedupe and to record
+    feedback), so 'you dismissed Conrad' lines up with 'this row is Conrad'."""
+    who = (row.get("who") or row.get("watchlist_label")
+           or (row.get("confirmed") or {}).get("label"))
+    if who:
+        return f"person:{str(who).strip().lower()}"
+    veh = row.get("owner_label") or row.get("entity_id")
+    if veh:
+        return f"veh:{str(veh).strip().lower()}"
+    k = row.get("kind") or row.get("event_type")
+    return f"kind:{k}" if k else "other"
+
+
 def importance_score(row: Dict[str, Any], now: Optional[datetime] = None,
-                     normal_hours: Optional[dict] = None) -> float:
-    """A continuous, compounding, context-aware importance for one row."""
+                     normal_hours: Optional[dict] = None,
+                     relevance: Optional[Dict[str, float]] = None) -> float:
+    """A continuous, compounding, context-aware importance for one row.
+
+    `relevance` is the learned {subject_key -> multiplier} from the operator's
+    own dismiss/confirm feedback (see alibi.learning.relevance): a subject they
+    keep dismissing sinks, one they confirm rises. It scales the score but never
+    zeroes it — feedback reorders, it does not hide."""
+    def _learned(base: float) -> float:
+        if not relevance:
+            return base
+        m = relevance.get(subject_key(row))
+        return base * m if m else base
+
     if row.get("tier") == "confirmed":
         # Ground truth, plus its factors so two confirmed rows still order.
         f = alert_factors(row, normal_hours)
@@ -279,7 +308,7 @@ def importance_score(row: Dict[str, Any], now: Optional[datetime] = None,
         base += 0.8                                  # the system already flagged it
 
     base *= _recency_weight(row.get("ts", ""), now or datetime.utcnow())
-    return base
+    return _learned(base)
 
 
 def explain_score(row: Dict[str, Any], normal_hours: Optional[dict] = None) -> list:
@@ -294,21 +323,30 @@ def explain_score(row: Dict[str, Any], normal_hours: Optional[dict] = None) -> l
 
 def rank_alerts(rows: List[Dict[str, Any]], limit: int = 10,
                 now: Optional[datetime] = None,
-                normal_hours: Optional[dict] = None) -> List[Dict[str, Any]]:
+                normal_hours: Optional[dict] = None,
+                relevance: Optional[Dict[str, float]] = None) -> List[Dict[str, Any]]:
     """The top `limit` things worth attention, worst first, each numbered.
 
     Scores EVERY row by the multi-factor model and keeps the highest, so the
     ten spots hold the ten most notable things. Each returned row gains a
     1-based `rank`, its `importance`, and a short `why`.
+
+    `relevance` is the operator's learned {subject_key -> multiplier}; a subject
+    they keep dismissing ranks lower, one they confirm ranks higher — so the
+    panel stops re-raising things they've told it aren't worth a look.
     """
     now = now or datetime.utcnow()
     scored = sorted(rows, key=lambda r: str(r.get("ts") or ""), reverse=True)
-    scored.sort(key=lambda r: importance_score(r, now, normal_hours), reverse=True)
+    scored.sort(key=lambda r: importance_score(r, now, normal_hours, relevance), reverse=True)
     top = scored[:limit]
     for i, r in enumerate(top, 1):
         r["rank"] = i
-        r["importance"] = round(importance_score(r, now, normal_hours), 2)
+        r["importance"] = round(importance_score(r, now, normal_hours, relevance), 2)
         r["why"] = explain_score(r, normal_hours)
+        # Carry the subject key so the UI can record feedback against it.
+        r["subject_key"] = subject_key(r)
+        if relevance and relevance.get(subject_key(r)):
+            r["learned"] = relevance[subject_key(r)] < 1.0 and "dismissed" or "confirmed"
     return top
 
 

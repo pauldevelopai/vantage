@@ -73,6 +73,17 @@ export const api = {
     return res.json();
   },
 
+  /** Teach the alert panel: a subject the operator dismisses sinks, one they
+   *  confirm rises. Reorders only — nothing is hidden. */
+  async alertFeedback(subjectKey: string, decision: 'dismiss' | 'confirm', kind?: string): Promise<any> {
+    const res = await fetchWithAuth(`${API_BASE}/alerts/feedback`, {
+      method: 'POST',
+      body: JSON.stringify({ subject_key: subjectKey, decision, kind }),
+    });
+    if (!res.ok) throw new Error(`Failed to send alert feedback: ${res.statusText}`);
+    return res.json();
+  },
+
   // Reports
   async generateShiftReport(start_ts: string, end_ts: string): Promise<ShiftReport> {
     const res = await fetchWithAuth(`${API_BASE}/reports/shift`, {

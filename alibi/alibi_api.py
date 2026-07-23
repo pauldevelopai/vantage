@@ -882,12 +882,67 @@ async def record_decision(
         "new_status": new_status.value,
     })
     
+    # Teach the ranker too: a confirmed incident makes its subject matter more,
+    # a dismissed one less — so the same judgement carries to future alerts, not
+    # just this incident. Best-effort subject from the incident's own metadata.
+    try:
+        from alibi.learning.relevance import get_relevance_store
+        subj = (existing_metadata.get("who")
+                or existing_metadata.get("watchlist_label")
+                or (decision_request.label or "").strip())
+        if subj and decision_request.action_taken in ("confirmed", "dismissed"):
+            get_relevance_store().record(
+                subject=f"person:{subj.strip().lower()}",
+                decision="confirm" if decision_request.action_taken == "confirmed" else "dismiss",
+                by=current_user.username, note=f"incident {incident_id}")
+    except Exception as e:
+        print(f"[relevance] could not learn from decision: {e}", flush=True)
+
     return {
         "incident_id": incident_id,
         "decision_recorded": True,
         "new_status": new_status.value,
         "timestamp": decision.decision_ts.isoformat(),
     }
+
+
+class AlertFeedbackRequest(BaseModel):
+    subject_key: str                      # e.g. "person:conrad" | "veh:..." | "kind:after_hours"
+    decision: str                         # "dismiss" | "confirm"
+    kind: Optional[str] = None
+    note: Optional[str] = None
+
+
+@app.post("/alerts/feedback", tags=["Alerts"])
+async def alert_feedback(payload: AlertFeedbackRequest,
+                         current_user: User = Depends(get_current_user)):
+    """Teach the alert panel from a call the operator makes on it.
+
+    'dismiss' says this subject isn't worth flagging; 'confirm' says it is. The
+    ranker reads these back so the same low-value alert stops resurfacing and
+    genuine ones rise. It changes RANK only — nothing is hidden, and every
+    adjustment is shown on the card and reversible."""
+    from alibi.learning.relevance import get_relevance_store
+    subj = (payload.subject_key or "").strip()
+    if not subj or payload.decision not in ("dismiss", "confirm"):
+        raise HTTPException(status_code=400, detail="subject_key and dismiss|confirm required")
+    store = get_relevance_store()
+    store.record(subject=subj, decision=payload.decision, kind=payload.kind,
+                 by=current_user.username, note=payload.note)
+    get_store().append_audit("alert_feedback", {
+        "user": current_user.username, "subject": subj, "decision": payload.decision,
+    })
+    return {"subject_key": subj, "decision": payload.decision,
+            "multiplier": store.multiplier(subj),
+            "reason": store.reason_for(subj)}
+
+
+@app.get("/alerts/learned", tags=["Alerts"])
+async def alerts_learned(current_user: User = Depends(get_current_user)):
+    """What the panel has learned from the operator's feedback — an honest,
+    reversible record of which subjects were down- or up-ranked and why."""
+    from alibi.learning.relevance import get_relevance_store
+    return {"learned": get_relevance_store().summary()}
 
 
 @app.get("/decisions")
@@ -2262,9 +2317,19 @@ async def dashboard_overview(range: str = "24h",
 
         all_rows = situations + criteria_rows
         alerts_total = len(all_rows)
+        # The operator's LEARNED feedback: subjects they keep dismissing sink,
+        # ones they confirm rise — so the panel stops re-raising what they've
+        # already told it isn't worth a look.
+        _relevance = {}
+        try:
+            from alibi.learning.relevance import get_relevance_store
+            _relevance = get_relevance_store().adjustments()
+        except Exception as e:
+            print(f"[dashboard] relevance adjustments unavailable: {e}")
         # Rank EVERYTHING, then keep one row per subject (the most important
         # instance) — so Conrad is one alert, not five copies of Conrad.
-        ranked_all = rank_alerts(all_rows, limit=len(all_rows) or 1, normal_hours=_nh)
+        ranked_all = rank_alerts(all_rows, limit=len(all_rows) or 1,
+                                 normal_hours=_nh, relevance=_relevance)
         seen_subj: set = set()
         situations = []
         for r in ranked_all:
@@ -2305,9 +2370,21 @@ async def dashboard_overview(range: str = "24h",
                 seen_subj.add(k)
                 situations.append(cand)
                 taken_ev.add(e.event_id)
-        # Number the final, deduped list.
+        # Number the final, deduped list and stamp any learned adjustment so the
+        # card can say honestly why it ranked where it did.
+        try:
+            from alibi.learning.relevance import get_relevance_store as _grs
+            _rstore = _grs()
+        except Exception:
+            _rstore = None
         for idx, s in enumerate(situations, 1):
             s["rank"] = idx
+            if _rstore is not None:
+                from alibi.patterns.situations import subject_key as _sk
+                s["subject_key"] = _sk(s)
+                r = _rstore.reason_for(s["subject_key"])
+                if r:
+                    s["learned_reason"] = r
     except Exception as e:
         print(f"[dashboard] criteria situations unavailable: {e}")
         alerts_total = len(situations)

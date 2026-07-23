@@ -441,6 +441,10 @@ export interface DashboardSituation {
   watchlist_hit?: boolean;
   hotlist_hit?: boolean;
   owner_label?: string | null;   // a named vehicle's owner label
+  /** What this alert is ABOUT — the key operator feedback is learned against. */
+  subject_key?: string | null;
+  /** An honest note when the operator's past feedback moved this row's rank. */
+  learned_reason?: string | null;
 }
 
 /** A vehicle the owner has named — the persistent "known vehicles" database.

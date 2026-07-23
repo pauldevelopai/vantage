@@ -916,6 +916,18 @@ function SituationsPanel({ situations, total, onChanged, onOpenVehicle }: { situ
   const [label, setLabel] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [teaching, setTeaching] = useState<string | null>(null);
+
+  // Teach the panel this subject isn't worth flagging. It sinks in the ranking
+  // (never hidden), and the change carries to every future alert about them.
+  async function notWorth(subjectKey?: string | null, kind?: string | null) {
+    if (!subjectKey) return;
+    setTeaching(subjectKey);
+    try {
+      await api.alertFeedback(subjectKey, 'dismiss', kind || undefined);
+      onChanged();
+    } catch { /* leave the card as-is */ } finally { setTeaching(null); }
+  }
 
   async function confirm(incidentId: string | null) {
     if (!incidentId || !label.trim()) return;
@@ -1010,6 +1022,15 @@ function SituationsPanel({ situations, total, onChanged, onOpenVehicle }: { situ
                   ))}
                 </div>
               )}
+              {/* Learned from the operator's own past calls — shown honestly,
+                  so an adjusted rank is never a mystery. */}
+              {s.learned_reason && (
+                <div className="mt-1">
+                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                    ⟳ {s.learned_reason}
+                  </span>
+                </div>
+              )}
               <div className="mt-1.5 flex items-center gap-3">
                 {s.incident_id
                   ? <Link to={`/incidents/${s.incident_id}`}
@@ -1026,6 +1047,16 @@ function SituationsPanel({ situations, total, onChanged, onOpenVehicle }: { situ
                   <button onClick={() => { setConfirming(s.incident_id); setLabel(''); setErr(null); }}
                           className="text-[10px] text-slate-400 hover:text-white border border-slate-700 hover:border-slate-500 rounded px-1.5 py-0.5">
                     Confirm what happened…
+                  </button>
+                )}
+                {/* Teach the ranker. Available on any alert with a subject —
+                    including the criteria/routine rows that have no incident. */}
+                {canConfirm && s.subject_key && !s.confirmed && (
+                  <button onClick={() => notWorth(s.subject_key, s.kind || s.event_type)}
+                          disabled={teaching === s.subject_key}
+                          title="This isn't worth flagging — the panel will rank it lower from now on"
+                          className="text-[10px] text-slate-500 hover:text-slate-200 border border-slate-800 hover:border-slate-600 rounded px-1.5 py-0.5 disabled:opacity-50">
+                    {teaching === s.subject_key ? '…' : 'Not worth flagging'}
                   </button>
                 )}
               </div>
