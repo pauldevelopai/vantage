@@ -337,6 +337,7 @@ export interface DashboardOverview {
   alerts: DashboardRow[];
   recent_people: DashboardPerson[];
   recent_vehicles: DashboardVehicle[];
+  suspicious_vehicles?: (DashboardVehicle & { reason?: string })[];
   watching_for: WatchingFor | null;
   patterns: DashboardPatterns | null;
   situations: DashboardSituation[];

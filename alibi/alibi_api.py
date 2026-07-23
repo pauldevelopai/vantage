@@ -1243,6 +1243,33 @@ def _frame_face_index() -> dict:
 _WHO_PROXIMITY_SECONDS = 20
 
 
+def _suspicious_vehicles(recent_vehicles: list, events: list) -> list:
+    """Recent vehicle snapshots flagged for a CONCRETE reason — a hotlist plate,
+    or a vehicle in the same frame as a watchlisted person. Deliberately NOT
+    "every car that isn't yours": the familiar cars are the scene, and flagging
+    them would bury the one that matters. Empty is the honest, common state.
+    """
+    try:
+        by_id = {e.event_id: e for e in events}
+        out = []
+        for rv in recent_vehicles:
+            ev = by_id.get(rv.get("event_id"))
+            if not ev:
+                continue
+            i = _dash_intel(ev)
+            reason = ("flagged plate" if i.get("hotlist_hit")
+                      else "watchlisted person nearby" if i.get("watchlist_hit")
+                      else None)
+            if reason:
+                out.append({**rv, "reason": reason})
+            if len(out) >= 6:
+                break
+        return out
+    except Exception as e:
+        print(f"[dashboard] suspicious-vehicles unavailable: {e}", flush=True)
+        return []
+
+
 def _known_people_safe(names: dict, cutoff) -> list:
     """Never let the people-intelligence panel take the dashboard down."""
     try:
@@ -2226,6 +2253,7 @@ async def dashboard_overview(range: str = "24h",
         "situations": situations,
         "alerts_total": alerts_total,
         "out_of_ordinary_vehicles": out_of_ordinary,
+        "suspicious_vehicles": _suspicious_vehicles(recent_vehicles, events),
         "named_vehicles": named_vehicles,
         "recurring_vehicles": recurring_vehicles,
         "pattern_findings": pattern_findings_rows,
