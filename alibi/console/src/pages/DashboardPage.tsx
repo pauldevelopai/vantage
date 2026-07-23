@@ -905,10 +905,13 @@ function PersonCard({ p, i, onEnrolled }: { p: DashboardPerson; i: number; onEnr
   );
 }
 
+// Just the card's outer look per tier — no status LABELS any more (the ranked
+// list is the split). A confirmed row keeps a red edge; everything else glows
+// the same amber, so the panel reads as one ranked block.
 const TIER_META = {
-  confirmed: { label: 'CONFIRMED', badge: 'bg-red-500 text-white', border: 'border-red-500/60', glow: 'shadow-[0_0_24px_-6px_rgba(239,68,68,.8)]' },
-  review:    { label: 'NEEDS REVIEW', badge: 'bg-amber-400 text-black', border: 'border-amber-500/60', glow: 'shadow-[0_0_24px_-6px_rgba(251,191,36,.7)]' },
-  noted:     { label: 'NOTED', badge: 'bg-slate-700 text-slate-300', border: 'border-slate-800', glow: '' },
+  confirmed: { border: 'border-red-500/60', glow: 'shadow-[0_0_24px_-6px_rgba(239,68,68,.8)]' },
+  review:    { border: 'border-amber-500/60', glow: 'shadow-[0_0_24px_-6px_rgba(251,191,36,.7)]' },
+  noted:     { border: 'border-slate-800', glow: '' },
 } as const;
 
 // When NO vision model ran, the basic-CV fallback writes a pixel-statistics
