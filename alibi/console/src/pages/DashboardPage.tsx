@@ -926,17 +926,6 @@ function realDesc(d?: string | null): string | null {
   return GENERIC_DESCRIPTIONS.includes(t.toLowerCase()) ? null : t;
 }
 
-// Criteria-signal badges — things the system surfaces "worth a look" against our
-// own criteria (not raised incidents). All carry the amber "review" styling; the
-// label just names WHICH criterion. Never red — red is a human confirmation only.
-const KIND_META: Record<string, string> = {
-  new_vehicle: 'OUT-OF-ORDINARY VEHICLE',
-  after_hours: 'AFTER HOURS',
-  at_vehicles: 'AT THE VEHICLES',
-  repeated_passes: 'REPEATED PASSES',
-  dwell: 'LINGERING',
-};
-
 /**
  * The heading is always the ALERT — what kind of thing this is and why it's on
  * the list — never a bare subject name. A person's identity (Paul) is a detail
@@ -988,54 +977,29 @@ function alertSubject(s: import('../lib/types').DashboardSituation): string | nu
  * it, which is what makes a red banner defensible.
  */
 function SituationsPanel({ situations, total, onChanged, onOpenVehicle }: { situations: import('../lib/types').DashboardSituation[]; total?: number; onChanged: () => void; onOpenVehicle?: (entityId: string) => void }) {
-  const canConfirm = hasRole('operator') || hasRole('supervisor') || hasRole('admin');
-  const [confirming, setConfirming] = useState<string | null>(null);
-  const [label, setLabel] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const canTeach = hasRole('operator') || hasRole('supervisor') || hasRole('admin');
   const [teaching, setTeaching] = useState<string | null>(null);
 
-  // Teach the panel this subject isn't worth flagging. It sinks in the ranking
-  // (never hidden), and the change carries to every future alert about them. If
-  // the alert is a "Needs review" incident, this also RESOLVES that review —
-  // marks the incident dismissed — so the badge clears instead of nagging.
-  async function notWorth(subjectKey?: string | null, kind?: string | null, incidentId?: string | null) {
+  // "Not useful." No review obligation, no confirming a crime — the panel just
+  // ranks what's worth a look, and this tells it this one wasn't. The subject
+  // ranks lower from now on (never hidden), and if the alert was a raised
+  // incident it's marked handled so it doesn't linger.
+  async function notUseful(subjectKey?: string | null, kind?: string | null, incidentId?: string | null) {
     if (!subjectKey && !incidentId) return;
     setTeaching(subjectKey || incidentId || '');
     try {
       if (subjectKey) await api.alertFeedback(subjectKey, 'dismiss', kind || undefined);
       if (incidentId) await api.recordDecision(incidentId, {
         action_taken: 'dismissed', was_true_positive: false,
-        operator_notes: 'Reviewed on the overview — not worth flagging',
+        operator_notes: 'Marked not useful from the overview',
       });
       onChanged();
     } catch { /* leave the card as-is */ } finally { setTeaching(null); }
   }
 
-  async function confirm(incidentId: string | null) {
-    if (!incidentId || !label.trim()) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      await api.recordDecision(incidentId, {
-        action_taken: 'confirmed',
-        operator_notes: label.trim(),
-        was_true_positive: true,
-        label: label.trim(),
-      });
-      setConfirming(null);
-      setLabel('');
-      onChanged();
-    } catch (e: any) {
-      setErr(e?.message || 'Could not confirm');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  // The backend already ranked these: the top ten by importance, worst first,
-  // each carrying its `rank`. We render them in that order and lead with the
-  // number — no urgent-vs-routine split, because a ranked list IS the split.
+  // The backend already ranked these by importance, worst first, each carrying
+  // its `rank`. We render them in that order and lead with the number — a ranked
+  // list IS the split, so there is no "needs review" status to chase.
 
   if (!situations.length) {
     return (
@@ -1053,7 +1017,6 @@ function SituationsPanel({ situations, total, onChanged, onOpenVehicle }: { situ
     <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
       {situations.map((s, i) => {
         const m = TIER_META[s.tier] || TIER_META.noted;
-        const badgeLabel = (s.kind && KIND_META[s.kind]) || m.label;
         const key = s.incident_id || s.entity_id || `${s.kind || 'sit'}-${s.ts}-${i}`;
         // Media/click target: an incident links to its full evidence page; a
         // criteria vehicle row opens that vehicle's history; otherwise the frame
@@ -1082,12 +1045,9 @@ function SituationsPanel({ situations, total, onChanged, onOpenVehicle }: { situ
                 ? <button onClick={() => onOpenVehicle(s.entity_id!)} className={`${mediaCls} cursor-pointer`}>{media}</button>
                 : <div className={mediaCls}>{media}</div>}
             <div className="flex-1 min-w-0 py-2.5 pr-3">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className={`text-[9px] font-bold tracking-wider px-1.5 py-0.5 rounded ${m.badge} ${s.tier === 'confirmed' ? 'vg-live' : ''}`}>
-                  {badgeLabel}
-                </span>
-                <span className="text-[10px] text-slate-500">{s.camera_name || ''} · {timeAgo(s.ts)}</span>
-              </div>
+              {/* No status badge — a ranked list needs no "needs review" label.
+                  The heading says WHAT it is; the number says how much it matters. */}
+              <div className="text-[10px] text-slate-500">{s.camera_name || ''} · {timeAgo(s.ts)}</div>
               <div className="mt-1 text-sm font-medium text-slate-100 truncate">
                 {alertHeadline(s)}
                 {alertSubject(s) && <span className="text-slate-300 font-normal"> · {alertSubject(s)}</span>}
@@ -1118,7 +1078,7 @@ function SituationsPanel({ situations, total, onChanged, onOpenVehicle }: { situ
                 {s.incident_id
                   ? <Link to={`/incidents/${s.incident_id}`}
                           className="text-[10px] text-indigo-400 hover:text-indigo-300 no-underline">
-                      evidence & why flagged →
+                      see evidence →
                     </Link>
                   : s.entity_id && onOpenVehicle
                     ? <button onClick={() => onOpenVehicle(s.entity_id!)}
@@ -1126,45 +1086,18 @@ function SituationsPanel({ situations, total, onChanged, onOpenVehicle }: { situ
                         see this vehicle's history →
                       </button>
                     : null}
-                {s.incident_id && canConfirm && !s.confirmed && confirming !== s.incident_id && (
-                  <button onClick={() => { setConfirming(s.incident_id); setLabel(''); setErr(null); }}
-                          className="text-[10px] text-slate-400 hover:text-white border border-slate-700 hover:border-slate-500 rounded px-1.5 py-0.5">
-                    Confirm what happened…
-                  </button>
-                )}
-                {/* Resolve / teach. On a "Needs review" incident this clears the
-                    review (marks it dismissed); on any alert it also teaches the
-                    ranker to rank this subject lower. Works on the criteria and
-                    routine rows too, which have no incident. */}
-                {canConfirm && (s.subject_key || s.incident_id) && !s.confirmed && (
-                  <button onClick={() => notWorth(s.subject_key, s.kind || s.event_type, s.incident_id)}
+                {/* One quiet action: this one wasn't useful. Ranks the subject
+                    lower next time, and clears a raised incident so it doesn't
+                    linger. No review to complete, no crime to confirm. */}
+                {canTeach && (s.subject_key || s.incident_id) && !s.confirmed && (
+                  <button onClick={() => notUseful(s.subject_key, s.kind || s.event_type, s.incident_id)}
                           disabled={teaching === (s.subject_key || s.incident_id)}
-                          title={s.tier === 'review'
-                            ? "Reviewed — not worth flagging. Clears the review and ranks it lower from now on."
-                            : "Not worth flagging — the panel will rank this lower from now on"}
+                          title="Not useful — the panel will rank this lower from now on"
                           className="text-[10px] text-slate-500 hover:text-slate-200 border border-slate-800 hover:border-slate-600 rounded px-1.5 py-0.5 disabled:opacity-50">
-                    {teaching === (s.subject_key || s.incident_id) ? '…'
-                      : s.tier === 'review' ? 'Reviewed — all clear' : 'Not worth flagging'}
+                    {teaching === (s.subject_key || s.incident_id) ? '…' : 'not useful'}
                   </button>
                 )}
               </div>
-              {s.incident_id && confirming === s.incident_id && (
-                <div className="mt-2 flex items-center gap-1.5">
-                  <input autoFocus value={label}
-                         onChange={e => setLabel(e.target.value)}
-                         onKeyDown={e => { if (e.key === 'Enter') confirm(s.incident_id); if (e.key === 'Escape') setConfirming(null); }}
-                         placeholder="In your words — e.g. attempted break-in"
-                         className="flex-1 max-w-xs bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-slate-200 placeholder:text-slate-600 focus:border-red-500 outline-none" />
-                  <button onClick={() => confirm(s.incident_id)} disabled={busy || !label.trim()}
-                          className="text-[10px] font-semibold bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white rounded px-2 py-1">
-                    {busy ? '…' : 'Confirm'}
-                  </button>
-                  <button onClick={() => setConfirming(null)} className="text-[10px] text-slate-500 hover:text-slate-300 px-1">
-                    Cancel
-                  </button>
-                  {err && <span className="text-[9px] text-red-400">{err}</span>}
-                </div>
-              )}
             </div>
           </div>
         );
@@ -1177,8 +1110,8 @@ function SituationsPanel({ situations, total, onChanged, onOpenVehicle }: { situ
         </p>
       )}
       <p className="text-[10px] text-slate-600">
-        Ranked by importance — most notable first. The system flags what's worth a look; it never declares a
-        crime. A red “confirmed” is a person's own statement of what happened, with their name attached.
+        Ranked by importance — most notable first. This flags what's worth a look; it never declares a crime.
+        “Not useful” tells it to rank that subject lower next time.
       </p>
     </div>
   );
