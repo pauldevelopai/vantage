@@ -1406,6 +1406,8 @@ async def dashboard_overview(range: str = "24h",
             "watchlist_label": i.get("watchlist_label"),
             "hotlist_hit": bool(i.get("hotlist_hit")),
             "hotlist_reason": i.get("hotlist_reason"),
+            # A recognised person, so the card can say who instead of "Person".
+            "who": _who_in_frame(e) if e.event_type == "person_detected" else None,
         }
 
     # Latest real frame per camera — the live wall, built from evidence stills.

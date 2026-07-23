@@ -242,6 +242,7 @@ export interface DashboardRow {
   watchlist_label?: string | null;
   hotlist_hit: boolean;
   hotlist_reason?: string | null;
+  who?: string | null;           // a recognised person, so the card isn't just "Person"
 }
 
 export interface DashboardCamera {

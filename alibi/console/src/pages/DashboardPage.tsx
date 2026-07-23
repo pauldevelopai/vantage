@@ -218,7 +218,8 @@ export function DashboardPage() {
                 {((data.named_vehicles?.length ?? 0) > 0
                   || (data.out_of_ordinary_vehicles?.length ?? 0) > 0
                   || (data.recurring_vehicles?.length ?? 0) > 0
-                  || (data.recent_vehicles?.length ?? 0) > 0) && (
+                  || (data.recent_vehicles?.length ?? 0) > 0
+                  || (data.security_suggestions || []).some(sg => sg.link === '/hotlist')) && (
                   <Panel className="mb-4" delay={193}>
                     <div className="flex items-center justify-between mb-4">
                       <h2 className="text-sm font-semibold text-slate-100 uppercase tracking-[0.16em]">Vehicles</h2>
@@ -273,6 +274,20 @@ export function DashboardPage() {
                         </div>
                       </div>
                     )}
+
+                    {/* Plates to watch for — a vehicle concern, so it lives in
+                        the Vehicles section rather than the setup nudges. */}
+                    {(data.security_suggestions || []).filter(sg => sg.link === '/hotlist').map(sg => (
+                      <div key={sg.title} className="pt-4 border-t border-slate-800/70">
+                        <div className="rounded-lg border border-slate-800 bg-black/30 p-3">
+                          <div className="text-xs font-medium text-slate-200">{sg.title}</div>
+                          <p className="mt-1 text-[11px] text-slate-500 leading-relaxed">{sg.why}</p>
+                          <Link to={sg.link} className="mt-1.5 inline-block text-[11px] text-indigo-400 hover:text-indigo-300 no-underline">
+                            {sg.action} →
+                          </Link>
+                        </div>
+                      </div>
+                    ))}
                   </Panel>
                 )}
 
@@ -333,12 +348,12 @@ export function DashboardPage() {
                   </div>
                   <FieldReportsList reports={data.field_reports || []} />
                 </Panel>
-                {data.security_suggestions?.length > 0 && (
+                {(data.security_suggestions || []).some(sg => sg.link !== '/hotlist') && (
                   <Panel className="mb-4" delay={318}>
                     <PanelHead title="Improve your security"
                                right="from this system's own gaps · disappears when fixed" />
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {data.security_suggestions.map(sg => (
+                      {data.security_suggestions.filter(sg => sg.link !== '/hotlist').map(sg => (
                         <div key={sg.title} className="rounded-lg border border-slate-800 bg-black/30 p-3">
                           <div className="text-xs font-medium text-slate-200">{sg.title}</div>
                           <p className="mt-1 text-[11px] text-slate-500 leading-relaxed">{sg.why}</p>
@@ -354,8 +369,8 @@ export function DashboardPage() {
 
 
 
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
-                  <Panel className="lg:col-span-2" delay={220}>
+                <div className="mb-4">
+                  <Panel delay={220}>
                     <div className="flex items-center justify-between mb-3">
                       <h2 className="text-[11px] font-semibold text-slate-300 uppercase tracking-[0.14em]">Camera wall</h2>
                       <div className="flex items-center gap-3">
@@ -404,31 +419,6 @@ export function DashboardPage() {
                     )}
                   </Panel>
 
-                  <Panel delay={280}>
-                    <PanelHead title="Watchlist & hotlist" />
-                    {data.alerts.length === 0 ? (
-                      <p className="text-xs text-slate-600 py-8 text-center leading-relaxed">
-                        No watchlist or hotlist matches in this window.
-                      </p>
-                    ) : (
-                      <ul className="space-y-2">
-                        {data.alerts.slice(0, 8).map((a, i) => (
-                          <li key={a.event_id} className="vg-rise flex items-start gap-2"
-                              style={{ animationDelay: `${320 + i * 50}ms` }}>
-                            <span className="vg-live mt-1 w-1.5 h-1.5 rounded-full bg-amber-400 flex-none shadow-[0_0_6px_1px_rgba(251,191,36,.8)]" />
-                            <div className="min-w-0 flex-1">
-                              <div className="text-xs text-slate-200 truncate">
-                                {a.watchlist_hit ? `Watchlist match${a.watchlist_label ? `: ${a.watchlist_label}` : ''}`
-                                  : a.hotlist_hit ? `Hotlist plate${a.plates[0] ? `: ${a.plates[0]}` : ''}`
-                                  : typeMeta(a.event_type).label}
-                              </div>
-                              <div className="text-[10px] text-slate-500 truncate">{a.camera_name} · {timeAgo(a.ts)}</div>
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </Panel>
                 </div>
 
                 {data.recent_people?.length > 0 && (
@@ -858,7 +848,9 @@ function SituationsPanel({ situations, total, onChanged, onOpenVehicle }: { situ
   }
 
   return (
-    <div className="space-y-3">
+    // Two columns on wide screens and a capped image height, so a full ten
+    // alerts stay a scannable block instead of ten screen-filling rows.
+    <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
       {situations.map((s, i) => {
         const m = TIER_META[s.tier] || TIER_META.noted;
         const badgeLabel = (s.kind && KIND_META[s.kind]) || m.label;
@@ -869,20 +861,20 @@ function SituationsPanel({ situations, total, onChanged, onOpenVehicle }: { situ
         const media = (s.frame_url && s.bbox)
           ? <CropImg src={s.frame_url} alt={s.title || 'vehicle'}
                      bbox={s.bbox as [number, number, number, number]} pad={0.25}
-                     className="w-full h-full min-h-[96px]" />
+                     className="w-full h-full" />
           : s.snapshot_url
-            ? <AuthImg src={s.snapshot_url} alt={s.event_type || 'evidence'} className="w-full h-full object-cover min-h-[96px]" />
-            : <div className="w-full h-full min-h-[96px] flex items-center justify-center text-[10px] text-slate-700">no frame</div>;
-        const mediaCls = "relative w-40 sm:w-52 flex-none bg-slate-900 no-underline";
+            ? <AuthImg src={s.snapshot_url} alt={s.event_type || 'evidence'} className="w-full h-full object-cover" />
+            : <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-700">no frame</div>;
+        const mediaCls = "relative w-28 sm:w-36 flex-none h-28 sm:h-32 bg-slate-900 no-underline";
         const rank = s.rank ?? (i + 1);
         return (
           <div key={key}
-               className={`vg-rise flex gap-3 rounded-lg overflow-hidden bg-black/40 border ${m.border} ${m.glow} transition-all duration-300`}
-               style={{ animationDelay: `${210 + i * 60}ms` }}>
+               className={`vg-rise flex gap-2.5 rounded-lg overflow-hidden bg-black/40 border ${m.border} ${m.glow} transition-all duration-300`}
+               style={{ animationDelay: `${210 + i * 45}ms` }}>
             {/* The rank leads — this is a ranked list, so the number is the
                 first thing the eye lands on. 1 is the most important. */}
-            <div className="flex-none w-9 flex items-start justify-center pt-3 bg-black/30">
-              <span className={`text-lg font-bold tabular-nums ${rank <= 3 ? 'text-indigo-300' : 'text-slate-600'}`}>{rank}</span>
+            <div className="flex-none w-7 flex items-start justify-center pt-2.5 bg-black/30">
+              <span className={`text-base font-bold tabular-nums ${rank <= 3 ? 'text-indigo-300' : 'text-slate-600'}`}>{rank}</span>
             </div>
             {s.incident_id
               ? <Link to={`/incidents/${s.incident_id}`} className={mediaCls}>{media}</Link>
@@ -1316,10 +1308,24 @@ function DetectionCard({ row, i }: { row: DashboardRow; i: number }) {
         </span>
       </div>
       <div className="px-2 py-1.5 border-t border-slate-800/70">
-        <div className="text-[10px] font-medium text-slate-200 truncate">{typeMeta(row.event_type).label}</div>
-        <div className="text-[9px] text-slate-500 truncate">{row.camera_name}</div>
+        {/* Say who/what, not a bare "Person": a watchlist match names itself, a
+            recognised face names itself, otherwise the label. */}
+        <div className="text-[10px] font-medium text-slate-200 truncate">
+          {row.watchlist_label
+            ? `Watchlist · ${row.watchlist_label}`
+            : row.who || typeMeta(row.event_type).label}
+        </div>
+        <div className="text-[9px] text-slate-500 truncate">
+          {row.camera_name}
+          {row.event_type === 'person_detected' && !row.who && !row.watchlist_label
+            ? ' · unidentified' : ''}
+        </div>
         {row.plates.length > 0 && (
           <div className="mt-0.5 text-[9px] font-mono text-cyan-400 truncate">{row.plates.join(', ')}</div>
+        )}
+        {/* A one-line hint of what the vision model actually saw. */}
+        {realDesc(row.description) && (
+          <p className="mt-0.5 text-[9px] text-slate-600 line-clamp-1">{realDesc(row.description)}</p>
         )}
       </div>
     </Link>
