@@ -760,6 +760,27 @@ const KIND_META: Record<string, string> = {
 };
 
 /**
+ * What an alert card should be TITLED — the reason it's on the list, not a bare
+ * "Person". A confirmed human label wins; then a recognised name; then the
+ * behaviour that flagged it; then a reason-led description of the subject.
+ */
+function alertHeadline(s: import('../lib/types').DashboardSituation): string {
+  if (s.confirmed?.label) return `“${s.confirmed.label}”`;
+  if (s.who) return s.who;                                   // a person we know
+  const kindLabel: Record<string, string> = {
+    at_vehicles: 'Someone at the vehicles', dwell: 'Someone lingering',
+    repeated_passes: 'Repeated passes of the property', after_hours: 'Activity after hours',
+    new_vehicle: 'An unfamiliar vehicle',
+  };
+  if (s.kind && kindLabel[s.kind]) return kindLabel[s.kind];
+  if (s.event_type === 'person_detected') return 'Unidentified person';
+  if (s.event_type === 'vehicle_detected') {
+    return (s.why || []).includes('unfamiliar') ? 'Unfamiliar vehicle' : 'Vehicle';
+  }
+  return s.title || typeMeta(s.event_type || '').label;
+}
+
+/**
  * Situations: every incident in the window, big and visual. Tier ceiling for
  * the MACHINE is "needs review". "CONFIRMED · <their words>" appears only when
  * an operator confirms — the label is a quoted human judgment with a name on
@@ -850,9 +871,8 @@ function SituationsPanel({ situations, total, onChanged, onOpenVehicle }: { situ
                 <span className="text-[10px] text-slate-500">{s.camera_name || ''} · {timeAgo(s.ts)}</span>
               </div>
               <div className="mt-1 text-sm font-medium text-slate-100 truncate">
-                {s.confirmed?.label
-                  ? <>“{s.confirmed.label}” <span className="text-[10px] font-normal text-slate-500">— confirmed by {s.confirmed.by}</span></>
-                  : (s.who || s.title || typeMeta(s.event_type || '').label)}
+                {alertHeadline(s)}
+                {s.confirmed?.by && <span className="text-[10px] font-normal text-slate-500"> — confirmed by {s.confirmed.by}</span>}
               </div>
               {realDesc(s.description) && (
                 <p className="mt-0.5 text-xs text-slate-500 line-clamp-2">{realDesc(s.description)}</p>

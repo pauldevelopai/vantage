@@ -1168,56 +1168,73 @@ def _attribute_sightings(sighting_ids, person_id: str) -> int:
     return marked
 
 
+_FRAME_FACE_CACHE: dict = {"sig": None, "value": None}
+
+
+def _frame_face_index() -> dict:
+    """{frame_id: person label} for every frame that holds a recognised face.
+
+    Built in ONE pass over the face archive and memoised on the same file-mtime
+    signature as the galleries. This used to be recomputed per incident — up to
+    300 full reads of the archive per dashboard load, which is where the page's
+    seconds went. Now it is one read, cached until a face is named or added.
+    """
+    import numpy as _np
+    from alibi.watchlist.watchlist_store import (WatchlistStore, effective_galleries,
+                                                 _archive_signature)
+    from alibi.watchlist.face_sighting_store import get_face_sighting_store
+    from alibi.watchlist.face_match import FaceMatcher
+    from alibi.watchlist import rejections as _r
+
+    sig = _archive_signature()
+    if _FRAME_FACE_CACHE["sig"] == sig and _FRAME_FACE_CACHE["value"] is not None:
+        return _FRAME_FACE_CACHE["value"]
+
+    out: dict = {}
+    try:
+        galleries = effective_galleries()
+        if galleries:
+            labels = {pid: e.label for pid, e in WatchlistStore()._get_active_entries().items()}
+            matcher = FaceMatcher()
+            rej = _r.all_rejections()
+            for sight in get_face_sighting_store().load_all():
+                path = sight.image_path or ""
+                if "/frames/" not in path or not sight.embedding:
+                    continue
+                fid = path.rsplit("/", 1)[-1].replace(".jpg", "")
+                if fid in out:
+                    continue                          # first named face wins
+                if sight.matched_person_id:
+                    lbl = labels.get(sight.matched_person_id)
+                    if lbl:
+                        out[fid] = lbl
+                    continue
+                v = _np.asarray(sight.embedding, dtype=_np.float32).ravel()
+                best, score = None, 0.6               # never guess below this
+                for pid, gal in galleries.items():
+                    if sight.sighting_id in rej.get(pid, set()):
+                        continue                      # told this isn't them
+                    sc = matcher.cosine_similarity(v, gal)
+                    if sc >= score:
+                        best, score = pid, sc
+                if best and labels.get(best):
+                    out[fid] = labels[best]
+    except Exception as e:
+        print(f"[dashboard] frame-face index unavailable: {e}", flush=True)
+
+    _FRAME_FACE_CACHE["sig"] = sig
+    _FRAME_FACE_CACHE["value"] = out
+    return out
+
+
 def _who_in_frame(event) -> Optional[str]:
     """The name of an enrolled person visible in this event's frame, or None.
-
-    Events are raised by the detector, which knows there is a person but not
-    which one. Face sightings hold that, so match the two up by camera and
-    second — the same join the evidence photos use.
-    """
-    try:
-        import numpy as _np
-        from alibi.watchlist.watchlist_store import WatchlistStore
-        from alibi.watchlist.face_sighting_store import get_face_sighting_store
-        from alibi.watchlist.face_match import FaceMatcher
-
-        frame_ids = set()
-        url = getattr(event, "snapshot_url", None) or ""
-        if "/frames/" in url:
-            frame_ids.add(url.rsplit("/", 1)[-1].replace(".jpg", ""))
-        if not frame_ids:
-            return None
-
-        ws = WatchlistStore()
-        from alibi.watchlist.watchlist_store import effective_galleries
-        galleries = effective_galleries()      # enrolled + every attributed face
-        if not galleries:
-            return None
-        labels = {pid: e.label for pid, e in ws._get_active_entries().items()}
-        matcher = FaceMatcher()
-
-        for sight in get_face_sighting_store().load_all():
-            path = sight.image_path or ""
-            if not any(f in path for f in frame_ids) or not sight.embedding:
-                continue
-            if sight.matched_person_id:
-                return labels.get(sight.matched_person_id)
-            v = _np.asarray(sight.embedding, dtype=_np.float32).ravel()
-            from alibi.watchlist import rejections as _r
-            blocked = {pid for pid, ids in _r.all_rejections().items()
-                       if sight.sighting_id in ids}
-            best, score = None, 0.6          # never guess below this
-            for pid, gal in galleries.items():
-                if pid in blocked:
-                    continue                 # told this isn't them
-                sc = matcher.cosine_similarity(v, gal)
-                if sc >= score:
-                    best, score = pid, sc
-            if best:
-                return labels.get(best)
-    except Exception as e:
-        print(f"[dashboard] who-in-frame unavailable: {e}", flush=True)
-    return None
+    A dict lookup into the one-pass frame→name index."""
+    url = getattr(event, "snapshot_url", None) or ""
+    if "/frames/" not in url:
+        return None
+    fid = url.rsplit("/", 1)[-1].replace(".jpg", "")
+    return _frame_face_index().get(fid)
 
 
 def _field_reports_payload(recent_vehicles: list, cutoff, names: dict) -> list:
