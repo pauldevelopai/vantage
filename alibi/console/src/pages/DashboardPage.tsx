@@ -324,7 +324,8 @@ export function DashboardPage() {
                         <ul className="space-y-1.5">
                           {generalRecurring.map(v => (
                             <RecurringVehicleRow key={v.entity_id} v={v} onSaved={() => load(range)}
-                                                 onOpen={() => setVehicleHistory(v.entity_id)} />
+                                                 onOpen={() => setVehicleHistory(v.entity_id)}
+                                                 knownNames={Array.from(new Set((data.named_vehicles || []).map(n => n.label).filter(Boolean)))} />
                           ))}
                         </ul>
                       ) : (
@@ -1245,21 +1246,28 @@ function OutOfOrdinaryPanel({ vehicles, onOpen }: { vehicles: import('../lib/typ
 }
 
 /** One recurring-vehicle row with the owner's "name it" control — the vehicle
- *  analog of enrolling a face: identity only ever comes from the owner. */
-function RecurringVehicleRow({ v, onSaved, onOpen }: { v: RecurringVehicle; onSaved: () => void; onOpen: () => void }) {
+ *  analog of enrolling a face: identity only ever comes from the owner.
+ *  `knownNames` are the cars already named: picking one MERGES this cluster into
+ *  that car (they fold into a single Safe row), which is how the same car split
+ *  across appearance fragments gets put back together — reliably, by you, since
+ *  the appearance model can't tell these apart on its own. */
+function RecurringVehicleRow({ v, onSaved, onOpen, knownNames = [] }:
+    { v: RecurringVehicle; onSaved: () => void; onOpen: () => void; knownNames?: string[] }) {
   const canName = hasRole('supervisor') || hasRole('admin');
   const [naming, setNaming] = useState(false);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
 
-  async function save() {
+  async function saveAs(label: string) {
+    if (!label.trim()) return;
     setBusy(true);
     try {
-      await api.setVehicleLabel(v.entity_id, name.trim());
+      await api.setVehicleLabel(v.entity_id, label.trim());
       setNaming(false);
       onSaved();
     } catch { /* row keeps old state */ } finally { setBusy(false); }
   }
+  const save = () => saveAs(name);
 
   const fam = FINDING_BADGE[v.familiarity] || FINDING_BADGE.occasional;
   return (
@@ -1286,12 +1294,26 @@ function RecurringVehicleRow({ v, onSaved, onOpen }: { v: RecurringVehicle; onSa
         </button>
       )}
       {naming && (
-        <span className="flex items-center gap-1">
+        <span className="flex items-center gap-1 flex-wrap">
+          {/* Merge into an existing car — the reliable way to reunite the same
+              car's appearance fragments. One click and it folds into that row. */}
+          {knownNames.length > 0 && (
+            <span className="flex items-center gap-1 flex-wrap">
+              <span className="text-[10px] text-slate-500">same as</span>
+              {knownNames.map(kn => (
+                <button key={kn} onClick={() => saveAs(kn)} disabled={busy}
+                        className="text-[10px] bg-emerald-700/70 hover:bg-emerald-600 disabled:opacity-50 text-white rounded px-1.5 py-0.5">
+                  {kn}
+                </button>
+              ))}
+              <span className="text-[10px] text-slate-600">or</span>
+            </span>
+          )}
           <input autoFocus value={name} onChange={e => setName(e.target.value)}
                  onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setNaming(false); }}
-                 placeholder="e.g. Paul's Fortuner"
-                 className="w-36 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-[11px] text-slate-200 placeholder:text-slate-600 focus:border-indigo-500 outline-none" />
-          <button onClick={save} disabled={busy}
+                 placeholder="new name — e.g. Paul's Fortuner"
+                 className="w-40 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-[11px] text-slate-200 placeholder:text-slate-600 focus:border-indigo-500 outline-none" />
+          <button onClick={save} disabled={busy || !name.trim()}
                   className="text-[10px] bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded px-1.5 py-0.5">
             {busy ? '…' : 'Save'}
           </button>
