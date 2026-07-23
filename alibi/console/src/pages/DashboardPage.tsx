@@ -874,18 +874,33 @@ function alertHeadline(s: import('../lib/types').DashboardSituation): string {
     new_vehicle: 'Unfamiliar vehicle',
   };
   if (s.kind && kindLabel[s.kind]) return kindLabel[s.kind];
-  if (s.event_type === 'person_detected') return s.who ? 'Known person' : 'Unidentified person';
-  if (s.event_type === 'vehicle_detected') {
+  // A concrete flag names the flag, not the subject: the name is the detail.
+  if (s.hotlist_hit) return 'Flagged plate';
+  if (s.watchlist_hit) return 'Watchlist match';
+  const et = s.event_type || s.kind;
+  if (et === 'person_detected') return s.who ? 'Known person' : 'Unidentified person';
+  if (et === 'vehicle_detected') {
     if (s.owner_label) return 'Known vehicle';
     return (s.why || []).includes('unfamiliar') ? 'Unfamiliar vehicle' : 'Vehicle seen';
   }
-  return s.title || typeMeta(s.event_type || '').label;
+  // Last resort: a real type label — NEVER the bare subject name (that produced
+  // headings like "Conrad · Conrad").
+  const subj = (s.who || s.owner_label || '').trim().toLowerCase();
+  const t = (s.title || '').trim();
+  if (t && t.toLowerCase() !== subj && !(subj && t.toLowerCase().includes(subj))) return t;
+  return typeMeta(et || '').label;
 }
 
-/** The identity, if we have one — shown as a detail under the alert heading. */
+/** The identity, if we have one — shown as a detail under the alert heading,
+ *  but only when it adds something the heading doesn't already say. */
 function alertSubject(s: import('../lib/types').DashboardSituation): string | null {
   if (s.confirmed?.label) return null;               // already in the heading
-  return s.who || s.owner_label || null;
+  const subj = s.who || s.owner_label || null;
+  if (!subj) return null;
+  // Never echo the heading: "Known person · Conrad" is right, "Conrad · Conrad"
+  // is not.
+  if (subj.trim().toLowerCase() === alertHeadline(s).trim().toLowerCase()) return null;
+  return subj;
 }
 
 /**

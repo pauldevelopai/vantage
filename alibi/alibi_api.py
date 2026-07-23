@@ -2247,42 +2247,67 @@ async def dashboard_overview(range: str = "24h",
                        "end": int(str(_sh.get("close", 21))[:2] or 21)}
         except Exception:
             _nh = None
+        def _subject_key(row: dict) -> str:
+            """What this alert is ABOUT, so the same subject isn't listed five
+            times. A named/recognised person collapses by name; a vehicle by its
+            cluster; anything else is its own event."""
+            who = (row.get("who") or row.get("watchlist_label")
+                   or (row.get("confirmed") or {}).get("label"))
+            if who:
+                return f"person:{str(who).strip().lower()}"
+            veh = row.get("owner_label") or row.get("entity_id")
+            if veh:
+                return f"veh:{veh}"
+            return f"ev:{row.get('event_id') or row.get('incident_id') or id(row)}"
+
         all_rows = situations + criteria_rows
         alerts_total = len(all_rows)
-        situations = rank_alerts(all_rows, limit=5, normal_hours=_nh)
-        # ALWAYS five spots. When fewer than five things scored as alerts, fill
-        # the rest with the most recent real detections as routine ('noted')
-        # rows — so the panel is never a lonely single card. These are genuine
-        # events, just nothing the scorer flagged; they still click through and
-        # they never masquerade as something needing review.
+        # Rank EVERYTHING, then keep one row per subject (the most important
+        # instance) — so Conrad is one alert, not five copies of Conrad.
+        ranked_all = rank_alerts(all_rows, limit=len(all_rows) or 1, normal_hours=_nh)
+        seen_subj: set = set()
+        situations = []
+        for r in ranked_all:
+            k = _subject_key(r)
+            if k in seen_subj:
+                continue
+            seen_subj.add(k)
+            situations.append(r)
+            if len(situations) >= 5:
+                break
+        # Fill any remaining spots with DISTINCT recent detections (never a
+        # subject already shown) as routine 'noted' rows — a full panel without
+        # repeating the same person. Fewer than five only when there genuinely
+        # aren't five distinct things, which is the honest state.
         if len(situations) < 5:
-            taken = {s.get("incident_id") for s in situations if s.get("incident_id")}
-            taken |= {s.get("event_id") for s in situations if s.get("event_id")}
+            taken_ev = {s.get("event_id") for s in situations if s.get("event_id")}
             for e in events:
                 if len(situations) >= 5:
                     break
-                if e.event_id in taken:
+                if e.event_id in taken_ev:
                     continue
                 r = _row(e)
-                inc = ev_to_incident.get(e.event_id)
-                who = r.get("who")
-                subject = (r.get("watchlist_label") and f"Watchlist · {r['watchlist_label']}") \
-                    or who or ("Vehicle" if r.get("vehicles") else "Person" if r.get("people") else "Activity")
-                situations.append({
-                    "tier": "noted", "kind": e.event_type,
-                    "title": subject, "who": who,
+                cand = {
+                    "tier": "noted", "event_type": e.event_type, "kind": e.event_type,
+                    "who": r.get("who"),
+                    "watchlist_label": r.get("watchlist_label"),
                     "description": r.get("description") or "",
                     "camera_name": r.get("camera_name"), "ts": r.get("ts"),
                     "snapshot_url": r.get("snapshot_url"),
-                    "incident_id": inc, "event_id": e.event_id,
+                    "incident_id": ev_to_incident.get(e.event_id), "event_id": e.event_id,
                     "watchlist_hit": r.get("watchlist_hit"),
                     "hotlist_hit": r.get("hotlist_hit"),
                     "confirmed": None,
-                })
-                taken.add(e.event_id)
-            # Re-number so the padded rows carry ranks too.
-            for idx, s in enumerate(situations, 1):
-                s["rank"] = idx
+                }
+                k = _subject_key(cand)
+                if k in seen_subj:            # don't repeat a subject already shown
+                    continue
+                seen_subj.add(k)
+                situations.append(cand)
+                taken_ev.add(e.event_id)
+        # Number the final, deduped list.
+        for idx, s in enumerate(situations, 1):
+            s["rank"] = idx
     except Exception as e:
         print(f"[dashboard] criteria situations unavailable: {e}")
         alerts_total = len(situations)
