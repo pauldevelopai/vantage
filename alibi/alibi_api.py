@@ -1190,7 +1190,8 @@ def _frame_face_index() -> dict:
     if _FRAME_FACE_CACHE["sig"] == sig and _FRAME_FACE_CACHE["value"] is not None:
         return _FRAME_FACE_CACHE["value"]
 
-    out: dict = {}
+    by_frame: dict = {}
+    by_camera: dict = {}          # camera_id -> [(datetime, name)] sorted
     try:
         galleries = effective_galleries()
         if galleries:
@@ -1202,39 +1203,77 @@ def _frame_face_index() -> dict:
                 if "/frames/" not in path or not sight.embedding:
                     continue
                 fid = path.rsplit("/", 1)[-1].replace(".jpg", "")
-                if fid in out:
-                    continue                          # first named face wins
+
+                name = None
                 if sight.matched_person_id:
-                    lbl = labels.get(sight.matched_person_id)
-                    if lbl:
-                        out[fid] = lbl
+                    name = labels.get(sight.matched_person_id)
+                else:
+                    v = _np.asarray(sight.embedding, dtype=_np.float32).ravel()
+                    best, score = None, 0.6           # never guess below this
+                    for pid, gal in galleries.items():
+                        if sight.sighting_id in rej.get(pid, set()):
+                            continue                  # told this isn't them
+                        sc = matcher.cosine_similarity(v, gal)
+                        if sc >= score:
+                            best, score = pid, sc
+                    name = labels.get(best) if best else None
+                if not name:
                     continue
-                v = _np.asarray(sight.embedding, dtype=_np.float32).ravel()
-                best, score = None, 0.6               # never guess below this
-                for pid, gal in galleries.items():
-                    if sight.sighting_id in rej.get(pid, set()):
-                        continue                      # told this isn't them
-                    sc = matcher.cosine_similarity(v, gal)
-                    if sc >= score:
-                        best, score = pid, sc
-                if best and labels.get(best):
-                    out[fid] = labels[best]
+                by_frame.setdefault(fid, name)
+                try:
+                    dt = datetime.fromisoformat(str(sight.ts).replace("Z", ""))
+                    by_camera.setdefault(sight.camera_id, []).append((dt, name))
+                except (ValueError, TypeError):
+                    pass
+        for cam in by_camera:
+            by_camera[cam].sort(key=lambda r: r[0])
     except Exception as e:
         print(f"[dashboard] frame-face index unavailable: {e}", flush=True)
 
+    value = {"by_frame": by_frame, "by_camera": by_camera}
     _FRAME_FACE_CACHE["sig"] = sig
-    _FRAME_FACE_CACHE["value"] = out
-    return out
+    _FRAME_FACE_CACHE["value"] = value
+    return value
+
+
+# A person detected on a camera within this many seconds of a RECOGNISED face
+# on the same camera is almost certainly that person — a body seen from behind
+# in one frame, the face caught a moment later. Tight enough that two different
+# people passing don't get merged.
+_WHO_PROXIMITY_SECONDS = 20
 
 
 def _who_in_frame(event) -> Optional[str]:
-    """The name of an enrolled person visible in this event's frame, or None.
-    A dict lookup into the one-pass frame→name index."""
+    """Who is in this event's frame, or None.
+
+    First the exact frame, if a face was recognised on it. Failing that — the
+    common case, a person detected with no readable face on that shot — the
+    nearest recognised face on the SAME camera within a few seconds, because
+    that is almost always the same person a moment earlier or later.
+    """
+    idx = _frame_face_index()
     url = getattr(event, "snapshot_url", None) or ""
-    if "/frames/" not in url:
+    if "/frames/" in url:
+        fid = url.rsplit("/", 1)[-1].replace(".jpg", "")
+        exact = idx["by_frame"].get(fid)
+        if exact:
+            return exact
+
+    cam = getattr(event, "camera_id", None)
+    ts = getattr(event, "ts", None)
+    faces = idx["by_camera"].get(cam)
+    if not faces or ts is None:
         return None
-    fid = url.rsplit("/", 1)[-1].replace(".jpg", "")
-    return _frame_face_index().get(fid)
+    try:
+        et = ts if isinstance(ts, datetime) else datetime.fromisoformat(str(ts).replace("Z", ""))
+    except (ValueError, TypeError):
+        return None
+    best_name, best_gap = None, _WHO_PROXIMITY_SECONDS + 1
+    for dt, name in faces:
+        gap = abs((et - dt).total_seconds())
+        if gap <= _WHO_PROXIMITY_SECONDS and gap < best_gap:
+            best_name, best_gap = name, gap
+    return best_name
 
 
 def _field_reports_payload(recent_vehicles: list, cutoff, names: dict) -> list:
