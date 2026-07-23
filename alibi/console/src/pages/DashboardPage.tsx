@@ -6,7 +6,7 @@ import { AuthImg } from '../components/AuthImg';
 import { CropImg } from '../components/CropImg';
 import { WINDOWS, windowPhrase, type Win } from '../components/TimeWindow';
 import { VehicleHistoryModal } from '../components/VehicleHistoryModal';
-import type { DashboardOverview, DashboardPatterns, DashboardPerson, DashboardRow, DashboardVehicle, FieldReport, PatternFinding, RecurringVehicle, WatchingFor } from '../lib/types';
+import type { DashboardOverview, DashboardPatterns, DashboardPerson, DashboardRow, DashboardVehicle, FieldReport, PatternFinding, RecurringVehicle } from '../lib/types';
 
 /**
  * The Overview dashboard — the tab shown to clients.
@@ -301,13 +301,6 @@ export function DashboardPage() {
                 <div className="mb-4">
                   <h2 className="text-sm font-semibold text-slate-100 uppercase tracking-[0.16em] mb-3">Intelligence</h2>
 
-                {data.watching_for && data.watching_for.triggers.length > 0 && (
-                  <Panel className="mb-4" delay={200}>
-                    <PanelHead title="Watching for"
-                               right={`${data.watching_for.posture_label.toLowerCase()} · ${data.watching_for.site_name}`} />
-                    <WatchingForPanel wf={data.watching_for} />
-                  </Panel>
-                )}
                 {data.patterns && (
                   <Panel className="mb-4" delay={315}>
                     <PanelHeadLinked title="Activity patterns" linkTo="/patterns" linkLabel="full patterns →"
@@ -887,9 +880,6 @@ function SituationsPanel({ situations, total, onChanged, onOpenVehicle }: { situ
         <p className="text-xs text-slate-600 leading-relaxed">
           Nothing to rank in this window — no activity has been recorded yet.
         </p>
-        <p className="text-xs text-slate-700 mt-1">
-          The system is watching — see <span className="text-slate-500">Watching for</span> below for exactly what.
-        </p>
       </div>
     );
   }
@@ -1015,40 +1005,6 @@ function SituationsPanel({ situations, total, onChanged, onOpenVehicle }: { situ
  *                      and found nothing when we didn't check.
  * Language stays situational (the trigger texts come from the posture).
  */
-function WatchingForPanel({ wf }: { wf: WatchingFor }) {
-  return (
-    <ul className="space-y-2">
-      {wf.triggers.map((t, i) => (
-        <li key={t.trigger} className="vg-rise flex items-center gap-2.5"
-            style={{ animationDelay: `${340 + i * 50}ms` }}>
-          <span className={`w-1.5 h-1.5 rounded-full flex-none ${
-            t.fired ? 'vg-live bg-amber-400 shadow-[0_0_6px_1px_rgba(251,191,36,.8)]'
-              : t.evaluated ? 'bg-emerald-500/80'
-              : 'bg-slate-600'
-          }`} />
-          <span className="text-xs text-slate-300 flex-1 min-w-0 truncate first-letter:uppercase">{t.trigger}</span>
-          {t.fired ? (
-            <Link to="/incidents" className="text-[11px] font-mono text-amber-300 hover:text-amber-200 flex-none no-underline">
-              ✓ {t.ts ? timeAgo(t.ts) : ''}{t.camera_name ? ` · ${t.camera_name}` : ''} →
-            </Link>
-          ) : t.evaluated ? (
-            <span className="text-[11px] text-slate-600 flex-none">not seen</span>
-          ) : t.note && t.note.includes('normal hours') ? (
-            <Link to="/sites" className="text-[11px] text-indigo-400 hover:text-indigo-300 flex-none italic no-underline">
-              armed · set normal hours →
-            </Link>
-          ) : (
-            <span className="text-[11px] text-slate-600 flex-none italic"
-                  title={t.note || 'not yet evaluated'}>
-              armed · {t.note || 'not yet evaluated'}
-            </span>
-          )}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 /**
  * Hour-of-day activity heatmap (site-local time): one row per camera, plus
  * people/vehicles rows. Cell intensity = events in that hour of day. All real
