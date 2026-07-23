@@ -126,12 +126,28 @@ export function DashboardPage() {
   // Vehicles fall into three honest buckets on the Overview: cars that BELONG
   // here (named, plus the familiar regulars), cars with a concrete reason to
   // look (out-of-the-ordinary or flagged), and everything else just passing
-  // through. A car is only ever in one bucket — the unusual ones are pulled out
-  // of "Safe", and the flagged ones out of "General traffic".
+  // through. A car appears in EXACTLY ONE bucket.
   const ooSet = new Set((data?.out_of_ordinary_vehicles || []).map(v => v.entity_id));
   const susEventIds = new Set((data?.suspicious_vehicles || []).map(v => v.event_id));
-  const safeRecurring = (data?.recurring_vehicles || []).filter(v => !ooSet.has(v.entity_id));
-  const generalTraffic = (data?.recent_vehicles || []).filter(v => !susEventIds.has(v.event_id));
+  // A named car is already shown in the "Yours" strip above — so drop it from the
+  // familiar list, or "My Toyota" appears twice (once named, once recurring).
+  const namedIds = new Set((data?.named_vehicles || []).map(v => v.entity_id));
+  const normPlate = (p?: string | null) => (p || '').replace(/\s+/g, '').toUpperCase();
+  const namedPlates = new Set((data?.named_vehicles || []).map(v => normPlate(v.plate)).filter(Boolean));
+  const safeRecurring = (data?.recurring_vehicles || []).filter(v =>
+    !ooSet.has(v.entity_id)               // the unusual ones live under Suspicious
+    && !v.owner_label                     // already named → in the "Yours" strip
+    && !namedIds.has(v.entity_id)
+    && !(normPlate(v.plate) && namedPlates.has(normPlate(v.plate))));
+  // Every plate we consider "known" — named or a familiar regular. General
+  // traffic is what's left: captured, but none of the above.
+  const knownPlates = new Set<string>([
+    ...namedPlates,
+    ...(data?.recurring_vehicles || []).map(v => normPlate(v.plate)).filter(Boolean),
+  ]);
+  const generalTraffic = (data?.recent_vehicles || []).filter(v =>
+    !susEventIds.has(v.event_id)
+    && !(normPlate(v.plate) && knownPlates.has(normPlate(v.plate))));
   const hasSafe = (data?.named_vehicles?.length ?? 0) > 0 || safeRecurring.length > 0;
   const hasSuspicious = (data?.out_of_ordinary_vehicles?.length ?? 0) > 0
     || (data?.suspicious_vehicles?.length ?? 0) > 0;
@@ -318,17 +334,23 @@ export function DashboardPage() {
                     </div>
 
                     {/* GENERAL TRAFFIC — everything else captured passing through:
-                        not named, nothing flagged. The raw stream. */}
-                    {generalTraffic.length > 0 && (
-                      <div className="pt-4 border-t border-slate-800/70">
-                        <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-2">
-                          General traffic <span className="text-slate-600 normal-case tracking-normal">— captured passing through · not named, nothing flagged</span>
-                        </h3>
+                        not named, not a known regular, nothing flagged. Always
+                        shown so the third bucket is never just missing. */}
+                    <div className="pt-4 border-t border-slate-800/70">
+                      <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-2">
+                        General traffic <span className="text-slate-600 normal-case tracking-normal">— captured passing through · not named, nothing flagged</span>
+                      </h3>
+                      {generalTraffic.length > 0 ? (
                         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
                           {generalTraffic.map((v, i) => <VehicleCard key={`${v.event_id}-${i}`} v={v} i={i} />)}
                         </div>
-                      </div>
-                    )}
+                      ) : (
+                        <p className="text-[11px] text-slate-600 leading-relaxed">
+                          No other cars in this window — everything captured was one of your own, a familiar
+                          regular, or already flagged above. An unrecognised car passing through would land here.
+                        </p>
+                      )}
+                    </div>
 
                     {/* Plates to watch for — a vehicle concern, so it lives in
                         the Vehicles section rather than the setup nudges. */}
