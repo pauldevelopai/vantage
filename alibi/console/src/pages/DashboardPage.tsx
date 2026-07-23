@@ -279,6 +279,13 @@ export function DashboardPage() {
                 {/* What we're watching for — up top, because "what is this
                     system looking for" is the first client question. Never
                     framed as crimes: situations worth review, honestly stated. */}
+                {/* INTELLIGENCE — the analytical layer, gathered in one place.
+                    These were scattered top-to-bottom (Watching-for up high,
+                    the charts, heatmap and security nudges far below); a person
+                    asking "what does the system make of this" now looks once. */}
+                <div className="mb-4">
+                  <h2 className="text-sm font-semibold text-slate-100 uppercase tracking-[0.16em] mb-3">Intelligence</h2>
+
                 {data.watching_for && data.watching_for.triggers.length > 0 && (
                   <Panel className="mb-4" delay={200}>
                     <PanelHead title="Watching for"
@@ -286,7 +293,33 @@ export function DashboardPage() {
                     <WatchingForPanel wf={data.watching_for} />
                   </Panel>
                 )}
-
+                {data.patterns && (
+                  <Panel className="mb-4" delay={315}>
+                    <PanelHeadLinked title="Activity patterns" linkTo="/patterns" linkLabel="full patterns →"
+                               right={data.patterns.busiest_hour !== null
+                                 ? `busiest ${String(data.patterns.busiest_hour).padStart(2, '0')}:00–${String((data.patterns.busiest_hour + 1) % 24).padStart(2, '0')}:00 · ${data.patterns.busiest_camera || ''}`
+                                 : 'no activity in this window'} />
+                    <PatternsHeatmap p={data.patterns} />
+                    {(data.pattern_findings || []).some(f => f.kind === 'people') && (
+                      <div className="mt-4 pt-3 border-t border-slate-800/70">
+                        <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-2">
+                          When people come and go <span className="text-slate-600 normal-case tracking-normal">— from your own cameras</span>
+                        </h3>
+                        <FindingsList findings={(data.pattern_findings || []).filter(f => f.kind === 'people')} />
+                      </div>
+                    )}
+                  </Panel>
+                )}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+                  <Panel className="lg:col-span-2" delay={320}>
+                    <PanelHead title="Events over time" />
+                    <AreaChart key={`${range}-${beat}`} series={data.over_time} />
+                  </Panel>
+                  <Panel delay={360}>
+                    <PanelHead title="Events by type" />
+                    <Donut items={data.by_type} total={data.kpis.events} />
+                  </Panel>
+                </div>
                 <Panel className="mb-4" delay={210}>
                   <div className="flex items-center justify-between mb-3">
                     <h2 className="text-[11px] font-semibold text-slate-300 uppercase tracking-[0.14em]">Reports from the ground</h2>
@@ -300,6 +333,26 @@ export function DashboardPage() {
                   </div>
                   <FieldReportsList reports={data.field_reports || []} />
                 </Panel>
+                {data.security_suggestions?.length > 0 && (
+                  <Panel className="mb-4" delay={318}>
+                    <PanelHead title="Improve your security"
+                               right="from this system's own gaps · disappears when fixed" />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {data.security_suggestions.map(sg => (
+                        <div key={sg.title} className="rounded-lg border border-slate-800 bg-black/30 p-3">
+                          <div className="text-xs font-medium text-slate-200">{sg.title}</div>
+                          <p className="mt-1 text-[11px] text-slate-500 leading-relaxed">{sg.why}</p>
+                          <Link to={sg.link} className="mt-1.5 inline-block text-[11px] text-indigo-400 hover:text-indigo-300 no-underline">
+                            {sg.action} →
+                          </Link>
+                        </div>
+                      ))}
+                    </div>
+                  </Panel>
+                )}
+                </div>
+
+
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
                   <Panel className="lg:col-span-2" delay={220}>
@@ -397,52 +450,8 @@ export function DashboardPage() {
                   </Panel>
                 )}
 
-                {data.patterns && (
-                  <Panel className="mb-4" delay={315}>
-                    <PanelHeadLinked title="Activity patterns" linkTo="/patterns" linkLabel="full patterns →"
-                               right={data.patterns.busiest_hour !== null
-                                 ? `busiest ${String(data.patterns.busiest_hour).padStart(2, '0')}:00–${String((data.patterns.busiest_hour + 1) % 24).padStart(2, '0')}:00 · ${data.patterns.busiest_camera || ''}`
-                                 : 'no activity in this window'} />
-                    <PatternsHeatmap p={data.patterns} />
-                    {(data.pattern_findings || []).some(f => f.kind === 'people') && (
-                      <div className="mt-4 pt-3 border-t border-slate-800/70">
-                        <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-2">
-                          When people come and go <span className="text-slate-600 normal-case tracking-normal">— from your own cameras</span>
-                        </h3>
-                        <FindingsList findings={(data.pattern_findings || []).filter(f => f.kind === 'people')} />
-                      </div>
-                    )}
-                  </Panel>
-                )}
 
-                {data.security_suggestions?.length > 0 && (
-                  <Panel className="mb-4" delay={318}>
-                    <PanelHead title="Improve your security"
-                               right="from this system's own gaps · disappears when fixed" />
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {data.security_suggestions.map(sg => (
-                        <div key={sg.title} className="rounded-lg border border-slate-800 bg-black/30 p-3">
-                          <div className="text-xs font-medium text-slate-200">{sg.title}</div>
-                          <p className="mt-1 text-[11px] text-slate-500 leading-relaxed">{sg.why}</p>
-                          <Link to={sg.link} className="mt-1.5 inline-block text-[11px] text-indigo-400 hover:text-indigo-300 no-underline">
-                            {sg.action} →
-                          </Link>
-                        </div>
-                      ))}
-                    </div>
-                  </Panel>
-                )}
 
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
-                  <Panel className="lg:col-span-2" delay={320}>
-                    <PanelHead title="Events over time" />
-                    <AreaChart key={`${range}-${beat}`} series={data.over_time} />
-                  </Panel>
-                  <Panel delay={360}>
-                    <PanelHead title="Events by type" />
-                    <Donut items={data.by_type} total={data.kpis.events} />
-                  </Panel>
-                </div>
 
                 <Panel delay={400}>
                   <PanelHead title="Recent detections" right={`${data.recent.length} shown`} />
