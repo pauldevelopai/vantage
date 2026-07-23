@@ -1997,16 +1997,17 @@ async def dashboard_overview(range: str = "24h",
         ent = get_cross_camera_tracker().entity_summary("vehicle", hours=_VEH_BASELINE_HOURS)
         vlabels = get_vehicle_labels()
 
-        from alibi.vehicles.plate_match import resolve_label as _resolve_label
-
         def _owner_of(r):
-            """The name for this cluster — set directly on it, OR inherited from
-            its plate (so naming one fragment names every fragment of that plate).
-            Plate inheritance tolerates OCR slips, so 'GFM4 0008' still resolves
-            to the car named on 'CSM4 0008'."""
-            ev = _vehicle_evidence(r["entity_id"])
-            return ((vlabels.get(r["entity_id"]) or {}).get("label")
-                    or _resolve_label(ev.get("plate"), _plate_to_label))
+            """The name for this cluster — ONLY the one set directly on it.
+
+            We do NOT inherit a name from a plate. Plate reads carry no bounding
+            box, so when two cars are at the gate together the OCR read of one
+            gets attributed to the other's cluster — which had a white Toyota
+            reading Arnold's 'CSM4 0008' and inheriting his name. Mislabelling a
+            car as someone else's is worse than leaving a fragment unnamed, so a
+            name only ever comes from the owner naming THIS cluster. Its unnamed
+            fragments show honestly in general traffic, one 'name it' away."""
+            return (vlabels.get(r["entity_id"]) or {}).get("label")
 
         def _label_for(r):
             ev = _vehicle_evidence(r["entity_id"])
@@ -5367,11 +5368,15 @@ async def list_distinct_vehicles(window: str = "7d",
             trail = []
         ev = entity_evidence(trail, idx) if idx else {}
         bp = best_plate(trail, pidx) if pidx else None
-        plate = bp["plate"] if bp else None
-        owner = ((vlabels.get(e["entity_id"]) or {}).get("label")
-                 or (plabels.get(plate) if plate else None))
-        owner_details = ((vlabels.get(e["entity_id"]) or {}).get("details")
-                         or (pdetails.get(plate) if plate else None))
+        from alibi.vehicles.plate_match import is_plausible_plate as _pl
+        raw_plate = bp["plate"] if bp else None
+        plate = raw_plate if (raw_plate and _pl(raw_plate)) else None
+        # A name comes ONLY from naming THIS cluster — never inherited from a
+        # plate. Plate reads have no bounding box, so a co-occurring car's plate
+        # gets mis-attributed here (a white Toyota read as Arnold's 'CSM4 0008'),
+        # and inheriting the name off it mislabels the car. Unnamed stays unnamed.
+        owner = (vlabels.get(e["entity_id"]) or {}).get("label")
+        owner_details = (vlabels.get(e["entity_id"]) or {}).get("details")
         # A car the owner has claimed IS the scene, whatever the raw maths says.
         cls = "resident" if owner else classify_entity(
             e["count"], e["first_seen"], e["last_seen"],

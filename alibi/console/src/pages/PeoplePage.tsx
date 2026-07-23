@@ -59,21 +59,31 @@ export function PeoplePage() {
     return () => clearInterval(t);
   }, [win]);
 
-  // Deep link from the Overview ("Conrad →") opens straight onto that person's
-  // own history + pictures, not the generic list. If they've no sighting in the
-  // current window, widen to all-time so the link never dead-ends; once opened,
-  // the param is cleared so a manual close doesn't just reopen it.
+  // Deep link from the Overview ("Conrad →") lands on a focused, pics-only view
+  // of just that person (see FocusedPerson below) — not the generic grid. If
+  // they've no sighting in the current window, widen to all-time so the link
+  // never dead-ends.
+  const focusSeed = focusPerson ? rows.find(r => r.matched_person_id === focusPerson) : undefined;
   useEffect(() => {
-    if (!focusPerson || selected) return;
-    const match = rows.find(r => r.matched_person_id === focusPerson);
-    if (match) {
-      setSelected(match);
-      params.delete('person');
-      setParams(params, { replace: true });
-    } else if (!loading && win !== 'all') {
-      setWin('all');
-    }
-  }, [focusPerson, rows, loading]);
+    if (focusPerson && !focusSeed && !loading && win !== 'all') setWin('all');
+  }, [focusPerson, focusSeed, loading, win]);
+
+  if (focusPerson) {
+    return (
+      <div className="max-w-6xl mx-auto px-4 py-6">
+        <button onClick={() => { params.delete('person'); setParams(params, { replace: true }); }}
+                className="text-sm text-indigo-600 hover:text-indigo-800 mb-4">← All people</button>
+        {focusSeed
+          ? <FocusedPerson seed={focusSeed} onChanged={() => load('all')} />
+          : loading
+            ? <p className="text-gray-500 py-8">Loading…</p>
+            : <div className="bg-white shadow rounded-lg p-8 text-center">
+                <p className="text-gray-900 font-medium">No pictures on record for this person yet</p>
+                <p className="text-sm text-gray-500 mt-2">Their sightings will appear here once the cameras see them again.</p>
+              </div>}
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6">
@@ -172,6 +182,93 @@ export function PeoplePage() {
 
       {selected && <HistoryPanel person={selected} onClose={() => setSelected(null)}
                                  onEnrolled={() => { setSelected(null); load(); }} />}
+    </div>
+  );
+}
+
+/** Pics of one person, and nothing else. This is where "click Conrad" lands:
+ *  every picture the cameras hold of that one person, their name and details on
+ *  top. All from our own cameras — continuity, never a claim beyond the name the
+ *  owner enrolled. "Manage" opens the full history/rename panel for edits. */
+function FocusedPerson({ seed, onChanged }: { seed: PersonRow; onChanged: () => void }) {
+  const [h, setH] = useState<PersonHistoryResult | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [managing, setManaging] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    setLoading(true);
+    if (seed.sighting_id) {
+      api.getPersonHistory(seed.sighting_id)
+        .then(r => { if (live) setH(r); })
+        .catch(() => {})
+        .finally(() => { if (live) setLoading(false); });
+    } else {
+      setLoading(false);
+    }
+    return () => { live = false; };
+  }, [seed.sighting_id]);
+
+  // The seed sighting plus every prior sighting the history engine linked to it
+  // — deduped by frame, newest first. These ARE the person's pictures.
+  const pics: Array<{ frame_url: string; bbox?: number[] | null; ts: string; camera_id?: string }> = [];
+  const seenFrames = new Set<string>();
+  const push = (frame_url?: string | null, bbox?: number[] | null, ts?: string, camera_id?: string) => {
+    if (!frame_url || seenFrames.has(frame_url)) return;
+    seenFrames.add(frame_url);
+    pics.push({ frame_url, bbox, ts: ts || '', camera_id });
+  };
+  push(seed.image_url, seed.bbox, seed.ts, seed.camera_id);
+  for (const p of h?.prior_sightings || []) push(p.frame_url, p.bbox, p.ts, p.camera_id);
+  pics.sort((a, b) => (a.ts < b.ts ? 1 : -1));
+
+  const name = seed.matched_label || 'Unknown person';
+
+  return (
+    <div>
+      <div className="flex items-start justify-between gap-4 mb-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-gray-900">{name}</h1>
+          {seed.matched_details && <p className="text-sm text-gray-600 mt-1 max-w-2xl">{seed.matched_details}</p>}
+          <p className="text-sm text-gray-500 mt-1">
+            {loading ? 'Gathering their pictures…'
+              : `${pics.length} picture${pics.length === 1 ? '' : 's'} on record${
+                  h?.distinct_cameras?.length ? ` · ${h.distinct_cameras.length} camera${h.distinct_cameras.length === 1 ? '' : 's'}` : ''}`}
+          </p>
+        </div>
+        <button onClick={() => setManaging(true)}
+                className="flex-none text-sm bg-white border border-gray-200 rounded px-3 py-1.5 text-gray-700 hover:border-indigo-400">
+          Manage / rename
+        </button>
+      </div>
+
+      {loading && <p className="text-gray-500 py-8">Loading…</p>}
+
+      {!loading && pics.length === 0 && (
+        <div className="bg-white shadow rounded-lg p-8 text-center">
+          <p className="text-gray-900 font-medium">No pictures on record yet</p>
+          <p className="text-sm text-gray-500 mt-2">Their sightings will appear here once the cameras see them again.</p>
+        </div>
+      )}
+
+      {pics.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
+          {pics.map((p, i) => (
+            <div key={`${p.frame_url}-${i}`} className="rounded-lg overflow-hidden bg-white border border-gray-200">
+              <div className="relative aspect-square bg-gray-100">
+                {p.bbox
+                  ? <CropImg src={p.frame_url} alt={name} bbox={p.bbox as [number, number, number, number]}
+                             pad={0.45} className="w-full h-full" />
+                  : <AuthImg src={p.frame_url} alt={name} className="w-full h-full object-cover" />}
+              </div>
+              <div className="px-2 py-1 text-[10px] text-gray-500 truncate">{when(p.ts)}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {managing && <HistoryPanel person={seed} onClose={() => setManaging(false)}
+                                 onEnrolled={() => { setManaging(false); onChanged(); }} />}
     </div>
   );
 }
