@@ -762,6 +762,23 @@ function PersonCard({ p, i, onEnrolled }: { p: DashboardPerson; i: number; onEnr
     }
   }
 
+  // "Yes, that's them." Confirms the system's best guess: adds this view to that
+  // person's gallery, so the next angle of them is recognised on its own — and
+  // the claim path re-sweeps the backlog, so other near-matches get named too.
+  async function confirmSuggested() {
+    if (!p.suggested_person_id || !p.sighting_id) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.claimFaces(p.suggested_person_id, [p.sighting_id]);
+      onEnrolled();
+    } catch (e: any) {
+      setErr(e?.message || 'Could not confirm');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="vg-rise group rounded-lg overflow-hidden bg-black border border-slate-800 hover:border-indigo-500/70 transition-all duration-300"
          style={{ animationDelay: `${340 + i * 40}ms` }}>
@@ -777,13 +794,19 @@ function PersonCard({ p, i, onEnrolled }: { p: DashboardPerson; i: number; onEnr
         )}
       </CropLink>
       <div className="px-2 py-1.5 border-t border-slate-800/70">
-        <div className={`text-[11px] font-medium truncate ${enrolled ? 'text-emerald-300' : 'text-slate-200'}`}>
-          {enrolled ? p.matched_label : isFace ? 'Unknown person' : 'Person'}
+        <div className={`text-[11px] font-medium truncate ${enrolled ? 'text-emerald-300' : (!enrolled && isFace && p.suggested_label) ? 'text-amber-300' : 'text-slate-200'}`}>
+          {enrolled
+            ? p.matched_label
+            : (isFace && p.suggested_label)
+              ? `Looks like ${p.suggested_label}?`
+              : isFace ? 'Unknown person' : 'Person'}
         </div>
         <div className="text-[9px] text-slate-500 truncate">
-          {isFace
-            ? (p.times_seen > 1 ? `seen ${p.times_seen}× ${sinceLabel(p.first_seen!)}` : 'first sighting')
-            : 'no face captured'}
+          {(!enrolled && isFace && p.suggested_label && p.suggested_score)
+            ? `${Math.round(p.suggested_score * 100)}% match — confirm to teach me`
+            : isFace
+              ? (p.times_seen > 1 ? `seen ${p.times_seen}× ${sinceLabel(p.first_seen!)}` : 'first sighting')
+              : 'no face captured'}
         </div>
         <div className="text-[9px] text-slate-600 truncate">{p.camera_name}</div>
         {isFace && (
@@ -792,10 +815,18 @@ function PersonCard({ p, i, onEnrolled }: { p: DashboardPerson; i: number; onEnr
             {enrolled ? 'their history →' : 'history →'}
           </Link>
         )}
+        {/* One-click confirm of the system's best guess — the fast path that
+            grows the gallery and cascades to the other near-matches. */}
+        {!enrolled && canEnroll && !naming && p.suggested_person_id && p.suggested_label && (
+          <button onClick={confirmSuggested} disabled={busy}
+                  className="mt-1 w-full text-[9px] font-semibold text-black bg-amber-400 hover:bg-amber-300 disabled:opacity-50 rounded px-1 py-0.5 transition-colors">
+            {busy ? '…' : `✓ Yes, ${p.suggested_label}`}
+          </button>
+        )}
         {!enrolled && canEnroll && !naming && (
           <button onClick={() => setNaming(true)}
                   className="mt-1 w-full text-[9px] font-medium text-indigo-400 hover:text-indigo-300 border border-indigo-500/30 hover:border-indigo-400/60 rounded px-1 py-0.5 transition-colors">
-            Add to Faces
+            {p.suggested_label ? 'No — someone else' : 'Add to Faces'}
           </button>
         )}
         {naming && (

@@ -267,6 +267,11 @@ export interface DashboardPerson {
   times_seen: number;                // 0 for detection-only rows (no embedding to link)
   first_seen: string | null;
   incident_id?: string | null;       // the incident this sighting belongs to (click-through)
+  /** Below the assert bar but a clear front-runner — "looks like X, confirm?".
+   *  Confirming adds this view to X's gallery so the next one is recognised. */
+  suggested_person_id?: string | null;
+  suggested_label?: string | null;
+  suggested_score?: number | null;
 }
 
 /** One tile on the Overview vehicles strip. Attributes are the VLM's opinion of

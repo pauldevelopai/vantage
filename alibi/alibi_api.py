@@ -1670,6 +1670,52 @@ async def dashboard_overview(range: str = "24h",
         for p in recent_people:
             p["source"] = "face"
             p["camera_name"] = names.get(p["camera_id"], p["camera_id"])
+
+        # For faces we couldn't CONFIDENTLY name (below the 0.6 assert bar),
+        # offer the best enrolled candidate as a SUGGESTION — "looks like Conrad,
+        # confirm?" — instead of a bare "Unknown person". One click confirms it,
+        # which adds that view to the person's gallery, so the NEXT profile of
+        # them is recognised on its own (the claim path re-sweeps at 0.6). This
+        # is how a thin gallery (Conrad had 4 views) fills out from real
+        # confirmations — a suggestion, never an assertion.
+        try:
+            unnamed_ids = {p.get("sighting_id") for p in recent_people
+                           if not p.get("matched_label") and p.get("sighting_id")}
+            if unnamed_ids:
+                from alibi.watchlist.watchlist_store import effective_galleries as _eg
+                from alibi.watchlist.face_match import FaceMatcher as _FM
+                from alibi.watchlist.face_sighting_store import get_face_sighting_store as _fss
+                from alibi.watchlist import rejections as _rej
+                import numpy as _np
+                gals = _eg()
+                if gals:
+                    matcher = _FM()
+                    rejected = _rej.all_rejections()
+                    emb_by_id = {s.sighting_id: s.embedding for s in _fss().load_all()
+                                 if s.sighting_id in unnamed_ids and s.embedding}
+                    for p in recent_people:
+                        sid = p.get("sighting_id")
+                        if p.get("matched_label") or sid not in emb_by_id:
+                            continue
+                        v = _np.asarray(emb_by_id[sid], dtype=_np.float32).ravel()
+                        scored = sorted(
+                            ((matcher.cosine_similarity(v, g), pid)
+                             for pid, g in gals.items()
+                             if sid not in rejected.get(pid, set())),
+                            reverse=True)
+                        if not scored:
+                            continue
+                        best_sc, best_pid = scored[0]
+                        second = scored[1][0] if len(scored) > 1 else 0.0
+                        # A clear front-runner, well above chance — the "probably
+                        # them, confirm?" zone. Margin guards against suggesting a
+                        # name when two enrolled people score alike.
+                        if best_sc >= 0.45 and (best_sc - second) >= 0.06:
+                            p["suggested_person_id"] = best_pid
+                            p["suggested_label"] = wl_labels.get(best_pid)
+                            p["suggested_score"] = round(float(best_sc), 2)
+        except Exception as e:
+            print(f"[dashboard] face suggestions unavailable: {e}")
     except Exception as e:
         print(f"[dashboard] recent_people unavailable: {e}")
 
