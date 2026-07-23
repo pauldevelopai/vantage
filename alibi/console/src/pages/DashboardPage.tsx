@@ -199,13 +199,11 @@ export function DashboardPage() {
 
         {data && (
           <>
-            {/* KPIs */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+            {/* KPIs — the Incidents count was dropped: with alerts now just a
+                ranked list, a separate "incidents" number said nothing distinct. */}
+            <div className="grid grid-cols-3 gap-3 mb-4">
               <Link to="/patterns" className="no-underline">
                 <Kpi label="Total Events" value={k!.events} tint="#818cf8" delay={0} sub="patterns →" />
-              </Link>
-              <Link to="/incidents" className="no-underline">
-                <Kpi label="Incidents" value={k!.alerts} tint={k!.alerts > 0 ? '#fbbf24' : '#64748b'} delay={60} alert={k!.alerts > 0} sub="incidents →" />
               </Link>
               <Link to="/people" className="no-underline">
                 <Kpi label="People Detected" value={k!.people} tint="#6366f1" delay={120} sub="people →" />
