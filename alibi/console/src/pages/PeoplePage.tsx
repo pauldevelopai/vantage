@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api';
 import { hasRole } from '../lib/auth';
 import { AuthImg } from '../components/AuthImg';
@@ -33,6 +34,8 @@ export function PeoplePage() {
   const [err, setErr] = useState<string | null>(null);
   const [selected, setSelected] = useState<PersonRow | null>(null);
   const [win, setWin] = useState<Win>('7d');
+  const [params, setParams] = useSearchParams();
+  const focusPerson = params.get('person');
   // The enrolled roster lives here too, but People is already the busiest page
   // in the app — so it opens on request rather than pushing the sightings down.
   const [showRoster, setShowRoster] = useState(false);
@@ -55,6 +58,22 @@ export function PeoplePage() {
     const t = setInterval(() => load(win), 20000);
     return () => clearInterval(t);
   }, [win]);
+
+  // Deep link from the Overview ("Conrad →") opens straight onto that person's
+  // own history + pictures, not the generic list. If they've no sighting in the
+  // current window, widen to all-time so the link never dead-ends; once opened,
+  // the param is cleared so a manual close doesn't just reopen it.
+  useEffect(() => {
+    if (!focusPerson || selected) return;
+    const match = rows.find(r => r.matched_person_id === focusPerson);
+    if (match) {
+      setSelected(match);
+      params.delete('person');
+      setParams(params, { replace: true });
+    } else if (!loading && win !== 'all') {
+      setWin('all');
+    }
+  }, [focusPerson, rows, loading]);
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6">

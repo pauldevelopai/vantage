@@ -263,6 +263,7 @@ export interface DashboardPerson {
   camera_name: string;
   ts: string;
   matched_label: string | null;
+  matched_person_id?: string | null; // the enrolled person, when recognised — deep-links to their page
   times_seen: number;                // 0 for detection-only rows (no embedding to link)
   first_seen: string | null;
   incident_id?: string | null;       // the incident this sighting belongs to (click-through)

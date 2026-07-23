@@ -221,6 +221,11 @@ def recent_people(
                     best_pid, best = pid, score
             if best_pid is not None:
                 matched_label = labels.get(best_pid)
+                matched_pid = best_pid
+            else:
+                matched_pid = None
+        else:
+            matched_pid = s.matched_person_id if matched_label else None
         rows.append({
             "sighting_id": s.sighting_id,
             "frame_url": s.image_path,
@@ -228,6 +233,9 @@ def recent_people(
             "camera_id": s.camera_id,
             "ts": s.ts,
             "matched_label": matched_label,
+            # The enrolled person this face belongs to, when known — lets the UI
+            # deep-link a recognised face straight to that person's own page.
+            "matched_person_id": matched_pid,
             "times_seen": times_seen,
             "first_seen": first_seen,
         })

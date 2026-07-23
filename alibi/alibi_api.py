@@ -1168,6 +1168,69 @@ def _attribute_sightings(sighting_ids, person_id: str) -> int:
     return marked
 
 
+def _auto_attribute_unnamed(threshold: float = 0.6, limit: int = 20000) -> int:
+    """Retroactively put a name on unnamed faces that clearly match someone.
+
+    A face captured BEFORE its person was enrolled never gets a second look — it
+    sits in the archive unnamed even though the very same face, seen live today,
+    would be recognised on sight. That is why "lots of pictures that are clearly
+    the same person" stay unnamed: nothing re-scores the backlog after you name
+    one.
+
+    This walks every unnamed face and, wherever one clears the SAME strict bar
+    the live pipeline uses to assert an identity (0.6 cosine), writes the name
+    onto it. It does not lower any threshold and it does not touch anything below
+    that bar — those stay *suggestions* on the person's page for a human to
+    confirm. It only automates, over the backlog, exactly what the live matcher
+    would already have asserted. A rejection ("that isn't them") always wins, so
+    a face someone ruled out is never re-claimed.
+
+    Returns how many faces got a name.
+    """
+    import numpy as _np
+    from alibi.watchlist.watchlist_store import effective_galleries
+    from alibi.watchlist.face_sighting_store import get_face_sighting_store
+    from alibi.watchlist.face_match import FaceMatcher
+    from alibi.watchlist import rejections as _r
+
+    try:
+        galleries = effective_galleries()
+        if not galleries:
+            return 0
+        matcher = FaceMatcher()
+        rej = _r.all_rejections()
+        store = get_face_sighting_store()
+        attributed = 0
+        for sight in store.load_all():
+            if attributed >= limit:
+                break
+            if sight.matched_person_id or not sight.embedding:
+                continue
+            v = _np.asarray(sight.embedding, dtype=_np.float32).ravel()
+            best, score = None, float(threshold)
+            for pid, gal in galleries.items():
+                if sight.sighting_id in rej.get(pid, set()):
+                    continue                    # ruled out for this person
+                try:
+                    s = matcher.cosine_similarity(v, gal)
+                except Exception:
+                    continue
+                if s >= score:
+                    best, score = pid, s
+            if best:
+                sight.matched_person_id = best
+                sight.match_score = float(score)
+                store.add_sighting(sight)        # append-only; last write wins
+                attributed += 1
+        if attributed:
+            print(f"[watchlist] auto-attributed {attributed} unnamed face(s) at "
+                  f">= {threshold} to enrolled people", flush=True)
+        return attributed
+    except Exception as e:
+        print(f"[watchlist] auto-attribution unavailable: {e}", flush=True)
+        return 0
+
+
 _FRAME_FACE_CACHE: dict = {"sig": None, "value": None}
 
 
@@ -2154,12 +2217,12 @@ async def dashboard_overview(range: str = "24h",
             if r.get("incident_id") is None and r.get("event_id"):
                 r["incident_id"] = ev_to_incident.get(r["event_id"])
 
-        # The ALERTS panel: the ten most notable things, worst first, each
+        # The ALERTS panel: the FIVE most notable things, worst first, each
         # numbered. EVERYTHING is scored by importance — a flagged plate or a
         # stranger after hours rises, a resident car you named sinks — so the
-        # ten spots hold the ten things most worth a look, not the ten most
+        # five spots hold the five things most worth a look, not the five most
         # recent. `alerts_total` is how many candidates there were, so the UI
-        # can say how many fell below the top ten.
+        # can say how many fell below the top five.
         from alibi.patterns.situations import rank_alerts
         # Feed the site's real hours in so "unusual hour" is judged against THIS
         # property's rhythm, not a generic day/night curve. Sites store
@@ -2176,11 +2239,44 @@ async def dashboard_overview(range: str = "24h",
             _nh = None
         all_rows = situations + criteria_rows
         alerts_total = len(all_rows)
-        situations = rank_alerts(all_rows, limit=10, normal_hours=_nh)
+        situations = rank_alerts(all_rows, limit=5, normal_hours=_nh)
+        # ALWAYS five spots. When fewer than five things scored as alerts, fill
+        # the rest with the most recent real detections as routine ('noted')
+        # rows — so the panel is never a lonely single card. These are genuine
+        # events, just nothing the scorer flagged; they still click through and
+        # they never masquerade as something needing review.
+        if len(situations) < 5:
+            taken = {s.get("incident_id") for s in situations if s.get("incident_id")}
+            taken |= {s.get("event_id") for s in situations if s.get("event_id")}
+            for e in events:
+                if len(situations) >= 5:
+                    break
+                if e.event_id in taken:
+                    continue
+                r = _row(e)
+                inc = ev_to_incident.get(e.event_id)
+                who = r.get("who")
+                subject = (r.get("watchlist_label") and f"Watchlist · {r['watchlist_label']}") \
+                    or who or ("Vehicle" if r.get("vehicles") else "Person" if r.get("people") else "Activity")
+                situations.append({
+                    "tier": "noted", "kind": e.event_type,
+                    "title": subject, "who": who,
+                    "description": r.get("description") or "",
+                    "camera_name": r.get("camera_name"), "ts": r.get("ts"),
+                    "snapshot_url": r.get("snapshot_url"),
+                    "incident_id": inc, "event_id": e.event_id,
+                    "watchlist_hit": r.get("watchlist_hit"),
+                    "hotlist_hit": r.get("hotlist_hit"),
+                    "confirmed": None,
+                })
+                taken.add(e.event_id)
+            # Re-number so the padded rows carry ranks too.
+            for idx, s in enumerate(situations, 1):
+                s["rank"] = idx
     except Exception as e:
         print(f"[dashboard] criteria situations unavailable: {e}")
         alerts_total = len(situations)
-        situations = situations[:10]
+        situations = situations[:5]
 
     # Your named vehicles — the PERSISTENT known-vehicles list. Once you name a
     # car it belongs here for good (keyed by its cluster AND its plate), and it
@@ -2672,14 +2768,21 @@ async def enroll_face_from_sighting(
     ))
 
     _attribute_sightings([sighting_id], person_id)
+    # Now that this person exists, sweep the backlog: any face already on record
+    # that clearly matches them (at the live 0.6 bar) gets their name too — so
+    # naming one picture names the others of the same face, which is what a
+    # learning system should do.
+    auto = _auto_attribute_unnamed()
     get_store().append_audit("watchlist_enrolled", {
         "user": current_user.username,
         "person_id": person_id,
         "label": label,
         "source": f"sighting:{sighting_id}",
         "has_details": bool(details),
+        "auto_attributed": auto,
     })
-    return {"status": "enrolled", "person_id": person_id, "label": label, "details": details}
+    return {"status": "enrolled", "person_id": person_id, "label": label,
+            "details": details, "auto_attributed": auto}
 
 
 @app.post("/watchlist/enroll")
@@ -5025,12 +5128,32 @@ async def claim_faces(person_id: str, payload: ClaimFacesRequest,
         added += 1
 
     _attribute_sightings(wanted, person_id)
+    # These new confirmed views widen the gallery, so a face that just missed the
+    # bar before may clear it now — re-sweep the backlog for this and everyone.
+    auto = _auto_attribute_unnamed()
     views = len(ws.get_galleries().get(person_id, []))
     get_store().append_audit("faces_claimed", {
         "user": current_user.username, "person_id": person_id,
         "label": entry.label, "added": added, "views": views,
+        "auto_attributed": auto,
     })
-    return {"person_id": person_id, "label": entry.label, "added": added, "views": views}
+    return {"person_id": person_id, "label": entry.label, "added": added,
+            "views": views, "auto_attributed": auto}
+
+
+@app.post("/watchlist/auto-attribute", tags=["Watchlist"])
+async def auto_attribute(threshold: float = 0.6,
+                         current_user: User = Depends(require_role([Role.SUPERVISOR, Role.ADMIN]))):
+    """Sweep the whole face archive and name every unnamed face that clearly
+    matches an enrolled person, at the same 0.6 bar the live matcher uses.
+
+    Runs automatically after each enrolment and confirmation; this is the manual
+    handle to sweep the existing backlog in one go."""
+    n = _auto_attribute_unnamed(threshold=max(0.5, min(0.95, float(threshold))))
+    get_store().append_audit("faces_auto_attributed", {
+        "user": current_user.username, "attributed": n, "threshold": threshold,
+    })
+    return {"attributed": n, "threshold": threshold}
 
 
 @app.put("/watchlist/{person_id}", tags=["Watchlist"])

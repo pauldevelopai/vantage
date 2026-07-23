@@ -123,6 +123,19 @@ export function DashboardPage() {
   const k = data?.kpis;
   const isEmpty = !!data && data.kpis.events === 0 && data.cameras.length === 0;
 
+  // Vehicles fall into three honest buckets on the Overview: cars that BELONG
+  // here (named, plus the familiar regulars), cars with a concrete reason to
+  // look (out-of-the-ordinary or flagged), and everything else just passing
+  // through. A car is only ever in one bucket — the unusual ones are pulled out
+  // of "Safe", and the flagged ones out of "General traffic".
+  const ooSet = new Set((data?.out_of_ordinary_vehicles || []).map(v => v.entity_id));
+  const susEventIds = new Set((data?.suspicious_vehicles || []).map(v => v.event_id));
+  const safeRecurring = (data?.recurring_vehicles || []).filter(v => !ooSet.has(v.entity_id));
+  const generalTraffic = (data?.recent_vehicles || []).filter(v => !susEventIds.has(v.event_id));
+  const hasSafe = (data?.named_vehicles?.length ?? 0) > 0 || safeRecurring.length > 0;
+  const hasSuspicious = (data?.out_of_ordinary_vehicles?.length ?? 0) > 0
+    || (data?.suspicious_vehicles?.length ?? 0) > 0;
+
   return (
     <div className="min-h-screen bg-[#070912] vg-grid -mx-4 -my-6 px-4 py-6 sm:px-6">
       <style>{CSS}</style>
@@ -200,7 +213,7 @@ export function DashboardPage() {
                     on it. */}
                 <Panel className="mb-4" delay={190}>
                   <div className="flex items-center justify-between mb-3">
-                    <h2 className="text-[11px] font-semibold text-slate-300 uppercase tracking-[0.14em]">Alerts · top 10</h2>
+                    <h2 className="text-[11px] font-semibold text-slate-300 uppercase tracking-[0.14em]">Alerts · top 5</h2>
                     <div className="flex items-center gap-3">
                       <span className="text-[10px] text-slate-600 font-mono hidden sm:inline">ranked by importance · most notable first</span>
                       <Link to="/incidents" className="text-[10px] text-indigo-400 hover:text-indigo-300 no-underline">all incidents →</Link>
@@ -212,12 +225,14 @@ export function DashboardPage() {
                 </Panel>
 
                 <Panel delay={400}>
-                  <PanelHead title="Recent detections" right={`${data.recent.length} shown`} />
+                  {/* The five most recent, no more — a quick "what just happened",
+                      not a scroll. The full history lives on Incidents. */}
+                  <PanelHead title="Recent detections" right={`latest ${Math.min(5, data.recent.length)}`} />
                   {data.recent.length === 0 ? (
                     <p className="text-xs text-slate-600 py-8 text-center">Nothing detected in this window.</p>
                   ) : (
-                    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
-                      {data.recent.map((r, i) => <DetectionCard key={r.event_id} row={r} i={i} />)}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                      {data.recent.slice(0, 5).map((r, i) => <DetectionCard key={r.event_id} row={r} i={i} />)}
                     </div>
                   )}
                 </Panel>
@@ -237,80 +252,80 @@ export function DashboardPage() {
                       <Link to="/vehicle-search" className="text-[10px] text-indigo-400 hover:text-indigo-300 no-underline">all vehicles →</Link>
                     </div>
 
-                    {/* Your named cars — the persistent saved list. */}
-                    {(data.named_vehicles?.length ?? 0) > 0 && (
-                      <div className="mb-5">
-                        <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-2">
-                          Yours <span className="text-slate-600 normal-case tracking-normal">— named &amp; remembered, kept even when idle</span>
-                        </h3>
-                        <NamedVehiclesPanel vehicles={data.named_vehicles || []}
-                                            onOpen={(eid) => setVehicleHistory(eid)} />
-                      </div>
-                    )}
-
-                    {/* Out of the ordinary — not the usual cars. */}
-                    {(data.out_of_ordinary_vehicles?.length ?? 0) > 0 && (
-                      <div className="mb-5 pt-4 border-t border-slate-800/70">
-                        <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-2">
-                          Out of the ordinary <span className="text-slate-600 normal-case tracking-normal">— not one of the usual cars · how often &amp; when</span>
-                        </h3>
-                        <OutOfOrdinaryPanel vehicles={data.out_of_ordinary_vehicles || []}
-                                            onOpen={(eid) => setVehicleHistory(eid)} />
-                      </div>
-                    )}
-
-                    {/* Recent suspicious vehicles — recent snapshots flagged for
-                        a concrete reason. Honest empty state: the familiar cars
-                        are the scene, so an empty list means nothing to worry
-                        about, not nothing watched. */}
-                    <div className="mb-5 pt-4 border-t border-slate-800/70">
-                      <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-2">
-                        Recent suspicious vehicles <span className="text-slate-600 normal-case tracking-normal">— a flagged plate or a vehicle by a watchlisted person</span>
+                    {/* SAFE — the cars that belong here: the ones you've named,
+                        and the familiar regulars the system keeps seeing. Click
+                        any to open that car's own pictures & history. */}
+                    <div className="mb-5">
+                      <h3 className="text-[10px] font-semibold text-emerald-400/90 uppercase tracking-[0.14em] mb-2">
+                        Safe <span className="text-slate-600 normal-case tracking-normal">— named &amp; familiar · regulars, kept even when idle</span>
                       </h3>
-                      {(data.suspicious_vehicles?.length ?? 0) > 0 ? (
-                        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
-                          {data.suspicious_vehicles!.map((v, i) => (
-                            <div key={`${v.event_id}-${i}`} className="relative">
-                              <VehicleCard v={v} i={i} />
-                              {v.reason && (
-                                <span className="absolute top-1.5 left-1.5 text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded bg-amber-400 text-black z-10">
-                                  {v.reason.toUpperCase()}
-                                </span>
-                              )}
-                            </div>
-                          ))}
-                        </div>
+                      {hasSafe ? (
+                        <>
+                          {(data.named_vehicles?.length ?? 0) > 0 && (
+                            <NamedVehiclesPanel vehicles={data.named_vehicles || []}
+                                                onOpen={(eid) => setVehicleHistory(eid)} />
+                          )}
+                          {safeRecurring.length > 0 && (
+                            <ul className="space-y-1.5 mt-2">
+                              {safeRecurring.map(v => (
+                                <RecurringVehicleRow key={v.entity_id} v={v} onSaved={() => load(range)}
+                                                     onOpen={() => setVehicleHistory(v.entity_id)} />
+                              ))}
+                            </ul>
+                          )}
+                        </>
                       ) : (
                         <p className="text-[11px] text-slate-600 leading-relaxed">
-                          Nothing suspicious in this window. A hotlist plate, or a vehicle beside a watchlisted
-                          person, would appear here — add plates to your hotlist below to catch known problem cars.
+                          No known cars yet. Name a car in general traffic below and it moves here — read as
+                          familiar from then on, even when it hasn't been seen in a while.
                         </p>
                       )}
                     </div>
 
-                    {/* Every recurring vehicle, linked by appearance. */}
-                    {(data.recurring_vehicles?.length ?? 0) > 0 && (
-                      <div className="mb-5 pt-4 border-t border-slate-800/70">
-                        <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-2">
-                          All recurring vehicles <span className="text-slate-600 normal-case tracking-normal">— linked by appearance · name yours and it reads as familiar</span>
-                        </h3>
-                        <ul className="space-y-1.5">
-                          {data.recurring_vehicles.map(v => (
-                            <RecurringVehicleRow key={v.entity_id} v={v} onSaved={() => load(range)}
-                                                 onOpen={() => setVehicleHistory(v.entity_id)} />
-                          ))}
-                        </ul>
-                      </div>
-                    )}
+                    {/* SUSPICIOUS — a concrete reason to look: out-of-the-ordinary
+                        cars, or a flagged plate / a car by a watchlisted person. */}
+                    <div className="mb-5 pt-4 border-t border-slate-800/70">
+                      <h3 className="text-[10px] font-semibold text-amber-400/90 uppercase tracking-[0.14em] mb-2">
+                        Suspicious <span className="text-slate-600 normal-case tracking-normal">— out of the ordinary, a flagged plate, or a car by a watchlisted person</span>
+                      </h3>
+                      {hasSuspicious ? (
+                        <>
+                          {(data.out_of_ordinary_vehicles?.length ?? 0) > 0 && (
+                            <OutOfOrdinaryPanel vehicles={data.out_of_ordinary_vehicles || []}
+                                                onOpen={(eid) => setVehicleHistory(eid)} />
+                          )}
+                          {(data.suspicious_vehicles?.length ?? 0) > 0 && (
+                            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3 mt-2">
+                              {data.suspicious_vehicles!.map((v, i) => (
+                                <div key={`${v.event_id}-${i}`} className="relative">
+                                  <VehicleCard v={v} i={i} />
+                                  {v.reason && (
+                                    <span className="absolute top-1.5 left-1.5 text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded bg-amber-400 text-black z-10">
+                                      {v.reason.toUpperCase()}
+                                    </span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <p className="text-[11px] text-slate-600 leading-relaxed">
+                          Nothing suspicious in this window. An unfamiliar car behaving oddly, a hotlist plate,
+                          or a car beside a watchlisted person would appear here.
+                        </p>
+                      )}
+                    </div>
 
-                    {/* Raw recent frames. */}
-                    {(data.recent_vehicles?.length ?? 0) > 0 && (
+                    {/* GENERAL TRAFFIC — everything else captured passing through:
+                        not named, nothing flagged. The raw stream. */}
+                    {generalTraffic.length > 0 && (
                       <div className="pt-4 border-t border-slate-800/70">
                         <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-2">
-                          Recently seen <span className="text-slate-600 normal-case tracking-normal">— details only when read from the image</span>
+                          General traffic <span className="text-slate-600 normal-case tracking-normal">— captured passing through · not named, nothing flagged</span>
                         </h3>
                         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
-                          {data.recent_vehicles.map((v, i) => <VehicleCard key={`${v.event_id}-${i}`} v={v} i={i} />)}
+                          {generalTraffic.map((v, i) => <VehicleCard key={`${v.event_id}-${i}`} v={v} i={i} />)}
                         </div>
                       </div>
                     )}
@@ -704,7 +719,7 @@ function KnownPersonRow({ kp }: { kp: import('../lib/types').KnownPerson }) {
   return (
     <li className="flex items-center gap-3 py-1">
       <span className="flex-none text-[9px] font-bold tracking-wider px-1.5 py-0.5 rounded bg-emerald-600/80 text-white">KNOWN</span>
-      <Link to="/people" className="font-medium text-slate-100 no-underline hover:text-indigo-300 flex-none">{kp.name}</Link>
+      <Link to={`/people?person=${encodeURIComponent(kp.person_id)}`} className="font-medium text-slate-100 no-underline hover:text-indigo-300 flex-none">{kp.name}</Link>
       <span className="text-[11px] text-slate-500 truncate flex-1">{seen}</span>
       {kp.details && <span className="text-[11px] text-slate-400 italic truncate hidden lg:block max-w-[14rem]">{kp.details}</span>}
       <span className="text-[10px] text-slate-600 flex-none" title="face angles confirmed — more means better recognition">
@@ -766,8 +781,9 @@ function PersonCard({ p, i, onEnrolled }: { p: DashboardPerson; i: number; onEnr
         </div>
         <div className="text-[9px] text-slate-600 truncate">{p.camera_name}</div>
         {isFace && (
-          <Link to="/people" className="text-[9px] text-indigo-400 hover:text-indigo-300 no-underline">
-            history →
+          <Link to={p.matched_person_id ? `/people?person=${encodeURIComponent(p.matched_person_id)}` : '/people'}
+                className="text-[9px] text-indigo-400 hover:text-indigo-300 no-underline">
+            {enrolled ? 'their history →' : 'history →'}
           </Link>
         )}
         {!enrolled && canEnroll && !naming && (
@@ -916,8 +932,8 @@ function SituationsPanel({ situations, total, onChanged, onOpenVehicle }: { situ
   }
 
   return (
-    // Two columns on wide screens and a capped image height, so a full ten
-    // alerts stay a scannable block instead of ten screen-filling rows.
+    // Two columns on wide screens and a capped image height, so a full five
+    // alerts stay a scannable block instead of five screen-filling rows.
     <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
       {situations.map((s, i) => {
         const m = TIER_META[s.tier] || TIER_META.noted;
@@ -937,7 +953,7 @@ function SituationsPanel({ situations, total, onChanged, onOpenVehicle }: { situ
         const rank = s.rank ?? (i + 1);
         return (
           <div key={key}
-               className={`vg-rise flex gap-2.5 rounded-lg overflow-hidden bg-black/40 border ${m.border} ${m.glow} transition-all duration-300`}
+               className={`vg-rise flex gap-2.5 rounded-lg overflow-hidden bg-black/40 border ${m.border || 'border-amber-500/30'} ${m.glow || 'shadow-[0_0_18px_-8px_rgba(251,191,36,.45)]'} transition-all duration-300`}
                style={{ animationDelay: `${210 + i * 45}ms` }}>
             {/* The rank leads — this is a ranked list, so the number is the
                 first thing the eye lands on. 1 is the most important. */}
@@ -1016,7 +1032,7 @@ function SituationsPanel({ situations, total, onChanged, onOpenVehicle }: { situ
       {typeof total === 'number' && total > situations.length && (
         <p className="text-[11px]">
           <Link to="/incidents" className="text-slate-400 hover:text-slate-200 no-underline">
-            + {total - situations.length} more below the top ten →
+            + {total - situations.length} more below the top five →
           </Link>
         </p>
       )}
