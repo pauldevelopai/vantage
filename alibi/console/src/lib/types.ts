@@ -339,6 +339,7 @@ export interface DashboardOverview {
   watching_for: WatchingFor | null;
   patterns: DashboardPatterns | null;
   situations: DashboardSituation[];
+  alerts_total?: number;              // how many alert candidates there were (top 10 shown)
   out_of_ordinary_vehicles?: OutOfOrdinaryVehicle[];
   named_vehicles?: NamedVehicle[];
   recurring_vehicles: RecurringVehicle[];
@@ -417,6 +418,11 @@ export interface DashboardSituation {
   /** An enrolled person recognised in this frame. Never a guess — an
    *  unrecognised face leaves this null and the card stays generic. */
   who?: string | null;
+  /** 1-based position in the ranked top ten (1 = most important). */
+  rank?: number;
+  importance?: number;
+  watchlist_hit?: boolean;
+  hotlist_hit?: boolean;
 }
 
 /** A vehicle the owner has named — the persistent "known vehicles" database.

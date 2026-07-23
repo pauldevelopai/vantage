@@ -1611,6 +1611,7 @@ async def dashboard_overview(range: str = "24h",
     # The machine's ceiling is "review" — "confirmed" (and any crime word in
     # its label) only ever comes from a person.
     situations = []
+    alerts_total = 0
     try:
         event_by_id = {e.event_id: e for e in events}
         incidents_data = store.list_incidents_with_metadata(limit=300)
@@ -1637,9 +1638,16 @@ async def dashboard_overview(range: str = "24h",
             else:
                 tier = "noted"
             desc = ""
+            wl_hit = hl_hit = False
             if newest is not None:
-                desc = str((getattr(newest, "metadata", None) or {}).get("description") or "")
+                nm = getattr(newest, "metadata", None) or {}
+                desc = str(nm.get("description") or "")
+                intel_ = nm.get("intel") or {}
+                wl_hit = bool(nm.get("watchlist_hit") or intel_.get("watchlist_hit"))
+                hl_hit = bool(nm.get("hotlist_hit") or intel_.get("hotlist_hit"))
             situations.append({
+                "watchlist_hit": wl_hit,
+                "hotlist_hit": hl_hit,
                 "incident_id": inc["incident_id"],
                 "kind": tier,                    # confirmed | review | noted (for ranking)
                 "tier": tier,
@@ -1981,15 +1989,20 @@ async def dashboard_overview(range: str = "24h",
             if r.get("incident_id") is None and r.get("event_id"):
                 r["incident_id"] = ev_to_incident.get(r["event_id"])
 
-        # Top-5 things worth attention = confirmed/review incidents + criteria,
-        # ranked by how much they warrant a look; routine "noted" incidents keep
-        # their place below (the UI collapses them to a single line).
-        noted_rows = [s for s in situations if s.get("kind") == "noted"]
-        attention = [s for s in situations if s.get("kind") != "noted"] + criteria_rows
-        situations = rank_situations(attention, limit=5) + noted_rows
+        # The ALERTS panel: the ten most notable things, worst first, each
+        # numbered. EVERYTHING is scored by importance — a flagged plate or a
+        # stranger after hours rises, a resident car you named sinks — so the
+        # ten spots hold the ten things most worth a look, not the ten most
+        # recent. `alerts_total` is how many candidates there were, so the UI
+        # can say how many fell below the top ten.
+        from alibi.patterns.situations import rank_alerts
+        all_rows = situations + criteria_rows
+        alerts_total = len(all_rows)
+        situations = rank_alerts(all_rows, limit=10)
     except Exception as e:
         print(f"[dashboard] criteria situations unavailable: {e}")
-        situations = situations[:8]
+        alerts_total = len(situations)
+        situations = situations[:10]
 
     # Your named vehicles — the PERSISTENT known-vehicles list. Once you name a
     # car it belongs here for good (keyed by its cluster AND its plate), and it
@@ -2059,6 +2072,7 @@ async def dashboard_overview(range: str = "24h",
         "watching_for": watching_for,
         "patterns": patterns,
         "situations": situations,
+        "alerts_total": alerts_total,
         "out_of_ordinary_vehicles": out_of_ordinary,
         "named_vehicles": named_vehicles,
         "recurring_vehicles": recurring_vehicles,

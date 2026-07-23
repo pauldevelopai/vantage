@@ -139,6 +139,67 @@ def vehicle_descriptor(colour: Optional[str], body: Optional[str],
     return " ".join(parts) if parts else None
 
 
+# What makes something worth a person's attention, as a score rather than a
+# bucket. The point of the panel is to surface what MIGHT be a crime, or is
+# unusual, or is important — so unfamiliarity and behaviour score high, and a
+# resident car you named scores low. Everything is scored, so the top ten can
+# always be filled with the ten most notable things, worst first.
+def importance_score(row: Dict[str, Any]) -> float:
+    s = 0.0
+    kind = row.get("kind", "")
+    tier = row.get("tier", "")
+
+    # A human already looked and confirmed — nothing outranks that.
+    if tier == "confirmed":
+        s += 200
+    elif tier == "review":
+        s += 70
+
+    # A flagged plate or a watchlisted face is the strongest AUTOMATIC signal —
+    # above any behaviour, below only a human's confirmation.
+    if row.get("hotlist_hit") or row.get("watchlist_hit"):
+        s += 150
+
+    # Behaviour worth a look — observed actions, not appearance.
+    s += {"at_vehicles": 65, "dwell": 55, "repeated_passes": 50,
+          "after_hours": 45, "out_of_ordinary": 42, "new_vehicle": 35}.get(kind, 0)
+
+    s += float(row.get("severity") or 0) * 4
+
+    # Unfamiliarity. A car that is barely ever here is more notable than the one
+    # that is always here; a resident you named is the scene, not an alert.
+    fam = row.get("familiarity")
+    s += {"new": 26, "occasional": 16, "regular": 6, "resident": -18}.get(fam, 0)
+    passes = row.get("passes")
+    if isinstance(passes, (int, float)) and passes <= 2:
+        s += 14                                  # seen once or twice = unusual
+
+    # A stranger is more notable than someone you named; a named car is routine.
+    if row.get("event_type") == "person_detected":
+        s += 22 if not row.get("who") else -12
+    if row.get("owner_label"):
+        s -= 12
+
+    return s
+
+
+def rank_alerts(rows: List[Dict[str, Any]], limit: int = 10) -> List[Dict[str, Any]]:
+    """The top `limit` things worth attention, worst first, each numbered.
+
+    Scores EVERY row by importance and keeps the highest, so the ten spots are
+    filled with the ten most notable things rather than padded with whatever is
+    most recent. Ties break by recency. Each returned row gains a 1-based
+    `rank`.
+    """
+    scored = sorted(rows, key=lambda r: str(r.get("ts") or ""), reverse=True)
+    scored.sort(key=lambda r: importance_score(r), reverse=True)   # stable: recency holds within a score
+    top = scored[:limit]
+    for i, r in enumerate(top, 1):
+        r["rank"] = i
+        r["importance"] = round(importance_score(r), 1)
+    return top
+
+
 def rank_situations(rows: List[Dict[str, Any]], limit: int = 5) -> List[Dict[str, Any]]:
     """Merge incident + criteria situation rows into the top-N worth attention.
 

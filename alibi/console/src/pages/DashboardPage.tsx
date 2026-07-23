@@ -177,7 +177,7 @@ export function DashboardPage() {
                 <Kpi label="Total Events" value={k!.events} tint="#818cf8" delay={0} sub="patterns →" />
               </Link>
               <Link to="/incidents" className="no-underline">
-                <Kpi label="Alerts" value={k!.alerts} tint={k!.alerts > 0 ? '#fbbf24' : '#64748b'} delay={60} alert={k!.alerts > 0} sub="incidents →" />
+                <Kpi label="Incidents" value={k!.alerts} tint={k!.alerts > 0 ? '#fbbf24' : '#64748b'} delay={60} alert={k!.alerts > 0} sub="incidents →" />
               </Link>
               <Link to="/people" className="no-underline">
                 <Kpi label="People Detected" value={k!.people} tint="#6366f1" delay={120} sub="people →" />
@@ -200,13 +200,14 @@ export function DashboardPage() {
                     on it. */}
                 <Panel className="mb-4" delay={190}>
                   <div className="flex items-center justify-between mb-3">
-                    <h2 className="text-[11px] font-semibold text-slate-300 uppercase tracking-[0.14em]">Situations</h2>
+                    <h2 className="text-[11px] font-semibold text-slate-300 uppercase tracking-[0.14em]">Alerts · top 10</h2>
                     <div className="flex items-center gap-3">
-                      <span className="text-[10px] text-slate-600 font-mono hidden sm:inline">flagged by the system · confirmed only by a person</span>
+                      <span className="text-[10px] text-slate-600 font-mono hidden sm:inline">ranked by importance · most notable first</span>
                       <Link to="/incidents" className="text-[10px] text-indigo-400 hover:text-indigo-300 no-underline">all incidents →</Link>
                     </div>
                   </div>
-                  <SituationsPanel situations={data.situations || []} onChanged={() => load(range)}
+                  <SituationsPanel situations={data.situations || []} total={data.alerts_total}
+                                   onChanged={() => load(range)}
                                    onOpenVehicle={(eid) => setVehicleHistory(eid)} />
                 </Panel>
 
@@ -314,10 +315,10 @@ export function DashboardPage() {
                   </Panel>
 
                   <Panel delay={280}>
-                    <PanelHead title="Recent alerts" />
+                    <PanelHead title="Watchlist & hotlist" />
                     {data.alerts.length === 0 ? (
                       <p className="text-xs text-slate-600 py-8 text-center leading-relaxed">
-                        No alerts in this window.<br />Watchlist and hotlist hits appear here.
+                        No watchlist or hotlist matches in this window.
                       </p>
                     ) : (
                       <ul className="space-y-2">
@@ -764,7 +765,7 @@ const KIND_META: Record<string, string> = {
  * an operator confirms — the label is a quoted human judgment with a name on
  * it, which is what makes a red banner defensible.
  */
-function SituationsPanel({ situations, onChanged, onOpenVehicle }: { situations: import('../lib/types').DashboardSituation[]; onChanged: () => void; onOpenVehicle?: (entityId: string) => void }) {
+function SituationsPanel({ situations, total, onChanged, onOpenVehicle }: { situations: import('../lib/types').DashboardSituation[]; total?: number; onChanged: () => void; onOpenVehicle?: (entityId: string) => void }) {
   const canConfirm = hasRole('operator') || hasRole('supervisor') || hasRole('admin');
   const [confirming, setConfirming] = useState<string | null>(null);
   const [label, setLabel] = useState('');
@@ -792,70 +793,15 @@ function SituationsPanel({ situations, onChanged, onOpenVehicle }: { situations:
     }
   }
 
-  // Routine ("noted") incidents are real but not worth a card each — the
-  // parked-car era proved they clog the page. Cards are for confirmed/review;
-  // noted collapses to one line with a link.
-  const urgent = situations.filter(s => s.tier !== 'noted');
-  const noted = situations.filter(s => s.tier === 'noted');
+  // The backend already ranked these: the top ten by importance, worst first,
+  // each carrying its `rank`. We render them in that order and lead with the
+  // number — no urgent-vs-routine split, because a ranked list IS the split.
 
-  if (!urgent.length) {
-    // Nothing urgent — but if there IS routine activity (common on a 7/30-day
-    // view), SHOW it compactly rather than leaving the panel looking empty.
-    if (noted.length > 0) {
-      const recent = [...noted]
-        .sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')))
-        .slice(0, 8);
-      return (
-        <div>
-          <p className="text-xs text-slate-500 mb-3">
-            Nothing needed your attention in this window — here's the routine activity that was noted.
-          </p>
-          {/* A grid of evidence cards, not a list of near-identical rows — the
-              picture is what you actually scan, so lead with it. */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-            {recent.map((s, i) => {
-              const d = realDesc(s.description);
-              return (
-                <Link key={s.incident_id || i} to={`/incidents/${s.incident_id}`}
-                      className="vg-rise group rounded-lg overflow-hidden bg-black border border-slate-800 hover:border-indigo-500 hover:shadow-[0_0_22px_-4px_rgba(99,102,241,.85)] transition-all duration-300 no-underline"
-                      style={{ animationDelay: `${210 + i * 40}ms` }}>
-                  <div className="relative aspect-video bg-slate-900">
-                    {s.snapshot_url
-                      ? <AuthImg src={s.snapshot_url} alt={s.event_type || 'evidence'}
-                                 className="w-full h-full object-cover opacity-90 group-hover:opacity-100 group-hover:scale-[1.05] transition-all duration-500" />
-                      : <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-700">no frame</div>}
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent" />
-                    <span className="absolute top-1.5 left-1.5 text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded bg-slate-700/90 text-slate-300">NOTED</span>
-                    <span className="absolute bottom-1 right-1.5 text-[8px] px-1 py-0.5 rounded bg-black/80 text-slate-400 font-mono">
-                      {timeAgo(s.ts)}
-                    </span>
-                  </div>
-                  <div className="px-2 py-1.5 border-t border-slate-800/70">
-                    <div className="text-[10px] font-medium text-slate-200 truncate">
-                      {s.who || s.title || typeMeta(s.event_type || '').label}
-                    </div>
-                    <div className="text-[9px] text-slate-500 truncate">{s.camera_name}</div>
-                    {/* What was actually seen — only when a vision model really ran. */}
-                    {d && <p className="mt-0.5 text-[9px] text-slate-500 line-clamp-2">{d}</p>}
-                  </div>
-                </Link>
-              );
-            })}
-          </div>
-          {noted.length > recent.length && (
-            <p className="mt-2 text-[11px]">
-              <Link to="/incidents" className="text-slate-400 hover:text-slate-200 no-underline">
-                + {noted.length - recent.length} more routine event{noted.length - recent.length === 1 ? '' : 's'} →
-              </Link>
-            </p>
-          )}
-        </div>
-      );
-    }
+  if (!situations.length) {
     return (
       <div className="py-5 text-center">
         <p className="text-xs text-slate-600 leading-relaxed">
-          Nothing needing your attention in this window.
+          Nothing to rank in this window — no activity has been recorded yet.
         </p>
         <p className="text-xs text-slate-700 mt-1">
           The system is watching — see <span className="text-slate-500">Watching for</span> below for exactly what.
@@ -866,7 +812,7 @@ function SituationsPanel({ situations, onChanged, onOpenVehicle }: { situations:
 
   return (
     <div className="space-y-3">
-      {urgent.map((s, i) => {
+      {situations.map((s, i) => {
         const m = TIER_META[s.tier] || TIER_META.noted;
         const badgeLabel = (s.kind && KIND_META[s.kind]) || m.label;
         const key = s.incident_id || s.entity_id || `${s.kind || 'sit'}-${s.ts}-${i}`;
@@ -881,10 +827,16 @@ function SituationsPanel({ situations, onChanged, onOpenVehicle }: { situations:
             ? <AuthImg src={s.snapshot_url} alt={s.event_type || 'evidence'} className="w-full h-full object-cover min-h-[96px]" />
             : <div className="w-full h-full min-h-[96px] flex items-center justify-center text-[10px] text-slate-700">no frame</div>;
         const mediaCls = "relative w-40 sm:w-52 flex-none bg-slate-900 no-underline";
+        const rank = s.rank ?? (i + 1);
         return (
           <div key={key}
                className={`vg-rise flex gap-3 rounded-lg overflow-hidden bg-black/40 border ${m.border} ${m.glow} transition-all duration-300`}
                style={{ animationDelay: `${210 + i * 60}ms` }}>
+            {/* The rank leads — this is a ranked list, so the number is the
+                first thing the eye lands on. 1 is the most important. */}
+            <div className="flex-none w-9 flex items-start justify-center pt-3 bg-black/30">
+              <span className={`text-lg font-bold tabular-nums ${rank <= 3 ? 'text-indigo-300' : 'text-slate-600'}`}>{rank}</span>
+            </div>
             {s.incident_id
               ? <Link to={`/incidents/${s.incident_id}`} className={mediaCls}>{media}</Link>
               : s.entity_id && onOpenVehicle
@@ -945,16 +897,16 @@ function SituationsPanel({ situations, onChanged, onOpenVehicle }: { situations:
           </div>
         );
       })}
-      {noted.length > 0 && (
-        <p className="text-[11px] text-slate-500">
+      {typeof total === 'number' && total > situations.length && (
+        <p className="text-[11px]">
           <Link to="/incidents" className="text-slate-400 hover:text-slate-200 no-underline">
-            + {noted.length} routine event{noted.length === 1 ? '' : 's'} noted →
+            + {total - situations.length} more below the top ten →
           </Link>
         </p>
       )}
       <p className="text-[10px] text-slate-600">
-        The system flags situations worth a look — it never declares a crime. A red “confirmed” is a person's
-        own statement of what happened, with their name attached.
+        Ranked by importance — most notable first. The system flags what's worth a look; it never declares a
+        crime. A red “confirmed” is a person's own statement of what happened, with their name attached.
       </p>
     </div>
   );

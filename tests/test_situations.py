@@ -136,3 +136,47 @@ def test_ranking_caps_to_limit():
 def test_priority_order_is_sane():
     assert priority_of("confirmed") < priority_of("review") < priority_of("noted")
     assert priority_of("after_hours") < priority_of("new_vehicle") < priority_of("noted")
+
+
+# ── ranked, numbered alerts (top ten by importance) ──────────────────────
+
+def test_rank_alerts_numbers_and_orders_by_importance():
+    from alibi.patterns.situations import rank_alerts
+    rows = [
+        {"kind": "noted", "tier": "noted", "event_type": "vehicle_detected",
+         "owner_label": "My Toyota", "familiarity": "resident", "ts": "2026-07-20T10:00"},
+        {"kind": "at_vehicles", "tier": "review", "ts": "2026-07-22T03:00"},
+        {"kind": "noted", "tier": "noted", "event_type": "person_detected",
+         "ts": "2026-07-22T14:00"},                      # unknown person
+    ]
+    ranked = rank_alerts(rows, limit=10)
+    assert [r["rank"] for r in ranked] == [1, 2, 3]
+    assert ranked[0]["kind"] == "at_vehicles"           # behaviour first
+    assert ranked[-1]["owner_label"] == "My Toyota"     # named resident last
+
+
+def test_a_hotlist_hit_outranks_ordinary_behaviour():
+    from alibi.patterns.situations import rank_alerts
+    ranked = rank_alerts([
+        {"kind": "dwell", "tier": "review", "ts": "2026-07-22T05:00"},
+        {"kind": "noted", "tier": "noted", "hotlist_hit": True, "ts": "2026-07-22T04:00"},
+    ], limit=10)
+    assert ranked[0]["hotlist_hit"] is True
+
+
+def test_a_confirmed_incident_tops_everything():
+    from alibi.patterns.situations import rank_alerts
+    ranked = rank_alerts([
+        {"kind": "at_vehicles", "tier": "review", "ts": "2026-07-22T05:00"},
+        {"kind": "noted", "tier": "confirmed", "ts": "2026-07-22T01:00"},
+    ], limit=10)
+    assert ranked[0]["tier"] == "confirmed"
+
+
+def test_rank_alerts_fills_up_to_ten_and_caps_there():
+    from alibi.patterns.situations import rank_alerts
+    rows = [{"kind": "noted", "tier": "noted", "ts": f"2026-07-22T{h:02d}:00"}
+            for h in range(15)]
+    ranked = rank_alerts(rows, limit=10)
+    assert len(ranked) == 10
+    assert [r["rank"] for r in ranked] == list(range(1, 11))
