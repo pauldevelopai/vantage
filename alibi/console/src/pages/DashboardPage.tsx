@@ -6,7 +6,7 @@ import { AuthImg } from '../components/AuthImg';
 import { CropImg } from '../components/CropImg';
 import { WINDOWS, windowPhrase, type Win } from '../components/TimeWindow';
 import { VehicleHistoryModal } from '../components/VehicleHistoryModal';
-import type { DashboardOverview, DashboardPatterns, DashboardPerson, DashboardRow, DashboardVehicle, FieldReport, PatternFinding, RecurringVehicle } from '../lib/types';
+import type { DashboardOverview, DashboardPatterns, DashboardPerson, DashboardRow, DashboardVehicle, FieldReport, PatternFinding } from '../lib/types';
 
 /**
  * The Overview dashboard — the tab shown to clients.
@@ -329,13 +329,19 @@ export function DashboardPage() {
                         General traffic <span className="text-slate-600 normal-case tracking-normal">— captured passing through · not named, nothing flagged · “name it” to move a car to Safe</span>
                       </h3>
                       {generalRecurring.length > 0 ? (
-                        <ul className="space-y-1.5">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
                           {generalRecurring.map(v => (
-                            <RecurringVehicleRow key={v.entity_id} v={v} onSaved={() => load(range)}
-                                                 onOpen={() => setVehicleHistory(v.entity_id)}
-                                                 knownNames={Array.from(new Set((data.named_vehicles || []).map(n => n.label).filter(Boolean)))} />
+                            <VehicleTile key={v.entity_id} entityId={v.entity_id}
+                                         onOpen={() => setVehicleHistory(v.entity_id)}
+                                         frameUrl={v.frame_url} bbox={v.bbox}
+                                         label={v.owner_label || v.label} plate={v.plate}
+                                         badge="FAMILIAR" badgeCls="bg-slate-700 text-slate-200"
+                                         labelCls="text-slate-200 group-hover:text-white"
+                                         lastSeen={v.last_seen}
+                                         sub={`seen ${v.passes ?? v.count}× · ${v.days}d`}
+                                         nameHint />
                           ))}
-                        </ul>
+                        </div>
                       ) : (
                         <p className="text-[11px] text-slate-600 leading-relaxed">
                           No other cars in this window — everything captured was one you've named or already
@@ -1225,36 +1231,52 @@ function FindingsList({ findings }: { findings: PatternFinding[] }) {
 function NamedVehiclesPanel({ vehicles, onOpen }: { vehicles: import('../lib/types').NamedVehicle[]; onOpen: (entityId: string) => void }) {
   if (!vehicles.length) return null;
   return (
-    <ul className="space-y-1.5">
-      {vehicles.map((v, i) => (
-        <li key={v.entity_id || i} className="flex items-center gap-2 text-xs flex-wrap">
-          {v.frame_url && v.bbox
-            ? <button onClick={() => onOpen(v.entity_id)} className="w-20 h-16 flex-none rounded-md overflow-hidden bg-slate-900 border border-slate-700 hover:border-emerald-500">
-                <CropImg src={v.frame_url} alt={v.label}
-                         bbox={v.bbox as [number, number, number, number]} pad={0.3}
-                         className="w-full h-full" />
-              </button>
-            : <span className="w-20 h-16 flex-none rounded-md bg-slate-800 border border-slate-700 flex items-center justify-center text-[8px] text-slate-600">no pic</span>}
-          <span className="text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded flex-none bg-emerald-600/80 text-white">YOURS</span>
-          <button onClick={() => onOpen(v.entity_id)}
-                  className="text-emerald-200 hover:text-white font-medium text-left underline decoration-dotted underline-offset-2">
-            {v.label}
-          </button>
-          {v.plate && (
-            <span className="font-mono text-[10px] font-bold text-slate-200 bg-slate-800 border border-slate-600 rounded px-1.5 py-0.5 tracking-wider flex-none">{v.plate}</span>
-          )}
-          <span className="text-slate-500">
-            {v.seen_recently
-              ? <>seen {v.passes ?? v.count} time{(v.passes ?? v.count) === 1 ? '' : 's'} · {v.cameras.join(', ')}</>
-              : <>not seen recently</>}
-          </span>
-          <span className="text-slate-600 ml-auto font-mono text-[10px]">{v.last_seen ? timeAgo(v.last_seen) : ''}</span>
-        </li>
-      ))}
-      <li className="text-[10px] text-slate-600 pt-1">
+    <>
+      {/* Card grid — same photo size and shape as the People cards. */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        {vehicles.map((v, i) => (
+          <VehicleTile key={v.entity_id || i} entityId={v.entity_id} onOpen={onOpen}
+                       frameUrl={v.frame_url} bbox={v.bbox} label={v.label} plate={v.plate}
+                       badge="YOURS" badgeCls="bg-emerald-600/90 text-white"
+                       labelCls="text-emerald-300 group-hover:text-emerald-200"
+                       lastSeen={v.last_seen}
+                       sub={v.seen_recently
+                         ? `seen ${v.passes ?? v.count}× · ${v.cameras.join(', ')}`
+                         : 'not seen recently'} />
+        ))}
+      </div>
+      <p className="text-[10px] text-slate-600 pt-2">
         These stay listed even when idle or when nothing is recording — it's your saved list, not a live feed.
-      </li>
-    </ul>
+      </p>
+    </>
+  );
+}
+
+/** One vehicle as a card — same photo size/shape as the People cards. Opens the
+ *  vehicle's history + edit modal (name, make, model, plate, merge). */
+function VehicleTile({ entityId, onOpen, frameUrl, bbox, label, plate, badge, badgeCls, labelCls, sub, lastSeen, nameHint }:
+    { entityId: string; onOpen: (id: string) => void; frameUrl?: string | null; bbox?: number[] | null;
+      label: string; plate?: string | null; badge: string; badgeCls: string; labelCls: string;
+      sub?: string; lastSeen?: string | null; nameHint?: boolean }) {
+  return (
+    <button onClick={() => onOpen(entityId)}
+            className="vg-rise group rounded-lg overflow-hidden bg-black border border-slate-800 hover:border-emerald-500/70 transition-all duration-300 text-left w-full">
+      <div className="relative aspect-square bg-slate-900">
+        {frameUrl && bbox
+          ? <CropImg src={frameUrl} alt={label} bbox={bbox as [number, number, number, number]} pad={0.35} className="w-full h-full" />
+          : <div className="w-full h-full flex flex-col items-center justify-center text-slate-600">
+              <span className="text-lg">🚗</span><span className="text-[8px] mt-1">no photo yet</span>
+            </div>}
+        <span className={`absolute top-1 left-1 text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded ${badgeCls}`}>{badge}</span>
+        {lastSeen && <span className="absolute bottom-1 right-1.5 text-[8px] px-1 py-0.5 rounded bg-black/80 text-slate-300 font-mono">{timeAgo(lastSeen)}</span>}
+      </div>
+      <div className="px-2 py-1.5 border-t border-slate-800/70">
+        <div className={`text-[12px] font-semibold truncate ${labelCls}`}>{label}</div>
+        {plate && <div className="font-mono text-[10px] text-slate-300 tracking-wider truncate">{plate}</div>}
+        {sub && <div className="text-[9px] text-slate-500 truncate">{sub}</div>}
+        {nameHint && <div className="text-[9px] text-indigo-400 group-hover:text-indigo-300 mt-0.5">name it / merge →</div>}
+      </div>
+    </button>
   );
 }
 
@@ -1306,85 +1328,6 @@ function OutOfOrdinaryPanel({ vehicles, onOpen }: { vehicles: import('../lib/typ
   );
 }
 
-/** One recurring-vehicle row with the owner's "name it" control — the vehicle
- *  analog of enrolling a face: identity only ever comes from the owner.
- *  `knownNames` are the cars already named: picking one MERGES this cluster into
- *  that car (they fold into a single Safe row), which is how the same car split
- *  across appearance fragments gets put back together — reliably, by you, since
- *  the appearance model can't tell these apart on its own. */
-function RecurringVehicleRow({ v, onSaved, onOpen, knownNames = [] }:
-    { v: RecurringVehicle; onSaved: () => void; onOpen: () => void; knownNames?: string[] }) {
-  const canName = hasRole('supervisor') || hasRole('admin');
-  const [naming, setNaming] = useState(false);
-  const [name, setName] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  async function saveAs(label: string) {
-    if (!label.trim()) return;
-    setBusy(true);
-    try {
-      await api.setVehicleLabel(v.entity_id, label.trim());
-      setNaming(false);
-      onSaved();
-    } catch { /* row keeps old state */ } finally { setBusy(false); }
-  }
-  const save = () => saveAs(name);
-
-  const fam = FINDING_BADGE[v.familiarity] || FINDING_BADGE.occasional;
-  return (
-    <li className="flex items-center gap-2 text-xs flex-wrap">
-      {v.frame_url && v.bbox
-        ? <button onClick={onOpen} className="w-20 h-16 flex-none rounded-md overflow-hidden bg-slate-900 border border-slate-700 hover:border-indigo-500">
-            <CropImg src={v.frame_url} alt={v.label}
-                     bbox={v.bbox as [number, number, number, number]} pad={0.3}
-                     className="w-full h-full" />
-          </button>
-        : null}
-      <span className={`text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded flex-none ${fam.cls}`}>{fam.label}</span>
-      <button onClick={onOpen} className="text-slate-300 font-medium hover:text-white underline decoration-dotted underline-offset-2">
-        {v.owner_label ? `“${v.owner_label}”` : v.label}
-      </button>
-      <button onClick={onOpen} className="text-slate-500 hover:text-slate-300 text-left">
-        seen {v.passes ?? v.count} time{(v.passes ?? v.count) === 1 ? '' : 's'} over {v.days} day{v.days === 1 ? '' : 's'} · {v.cameras.join(', ')}
-        {v.busiest_hour_utc !== null && ` · mostly around ${String((v.busiest_hour_utc + 2) % 24).padStart(2, '0')}:00`}
-      </button>
-      {canName && !naming && (
-        <button onClick={() => { setNaming(true); setName(v.owner_label || ''); }}
-                className="text-[10px] text-indigo-400 hover:text-indigo-300">
-          {v.owner_label ? 'rename' : 'name it'}
-        </button>
-      )}
-      {naming && (
-        <span className="flex items-center gap-1 flex-wrap">
-          {/* Merge into an existing car — the reliable way to reunite the same
-              car's appearance fragments. One click and it folds into that row. */}
-          {knownNames.length > 0 && (
-            <span className="flex items-center gap-1 flex-wrap">
-              <span className="text-[10px] text-slate-500">same as</span>
-              {knownNames.map(kn => (
-                <button key={kn} onClick={() => saveAs(kn)} disabled={busy}
-                        className="text-[10px] bg-emerald-700/70 hover:bg-emerald-600 disabled:opacity-50 text-white rounded px-1.5 py-0.5">
-                  {kn}
-                </button>
-              ))}
-              <span className="text-[10px] text-slate-600">or</span>
-            </span>
-          )}
-          <input autoFocus value={name} onChange={e => setName(e.target.value)}
-                 onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setNaming(false); }}
-                 placeholder="new name — e.g. Paul's Fortuner"
-                 className="w-40 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-[11px] text-slate-200 placeholder:text-slate-600 focus:border-indigo-500 outline-none" />
-          <button onClick={save} disabled={busy || !name.trim()}
-                  className="text-[10px] bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded px-1.5 py-0.5">
-            {busy ? '…' : 'Save'}
-          </button>
-          <button onClick={() => setNaming(false)} className="text-[10px] text-slate-500">✕</button>
-        </span>
-      )}
-      <span className="text-slate-600 ml-auto font-mono text-[10px]">{timeAgo(v.last_seen)}</span>
-    </li>
-  );
-}
 
 /** Honest vehicle description: the badge (make/model) is shown ONLY at high VLM
  *  confidence — otherwise colour + body ("White SUV"). Type falls back to the
