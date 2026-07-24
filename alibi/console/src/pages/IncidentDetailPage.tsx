@@ -136,11 +136,20 @@ export function IncidentDetailPage() {
     }
   }
 
+  // The API takes the PAST-TENSE status ("confirmed"), but the permission map is
+  // keyed by the VERB ("confirm"). Without this mapping the check looked up
+  // "confirmed" (which no role has) and blocked EVERYONE — admin included — from
+  // confirming, dismissing, escalating or closing. Map to the verb before checking.
+  const ACTION_PERMISSION: Record<string, string> = {
+    confirmed: 'confirm', dismissed: 'dismiss', escalated: 'escalate', closed: 'close',
+    confirm_watchlist_match: 'confirm',
+  };
+
   async function handleAction(action: string) {
     if (!incident) return;
 
-    // Check permission
-    if (!canPerformAction(action)) {
+    // Check permission (against the verb, not the past-tense status).
+    if (!canPerformAction(ACTION_PERMISSION[action] || action)) {
       alert('You do not have permission to perform this action');
       return;
     }
