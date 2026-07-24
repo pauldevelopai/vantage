@@ -1310,6 +1310,13 @@ def _frame_face_index() -> dict:
 
     by_frame: dict = {}
     by_camera: dict = {}          # camera_id -> [(datetime, name)] sorted
+    # A weaker tier: frames whose OWN best face is a near-match (below the 0.60
+    # assert bar but clearly above chance) to a known person. Used ONLY when that
+    # person is also CONFIDENTLY present in the same session (see _who_in_frame),
+    # so a face that's plainly the person at a harder angle stays that person
+    # instead of flipping to "unidentified" between adjacent frames.
+    near_by_frame: dict = {}      # fid -> (name, score)
+    _NEAR = 0.45
     try:
         galleries = effective_galleries()
         if galleries:
@@ -1327,14 +1334,22 @@ def _frame_face_index() -> dict:
                     name = labels.get(sight.matched_person_id)
                 else:
                     v = _np.asarray(sight.embedding, dtype=_np.float32).ravel()
-                    best, score = None, 0.6           # never guess below this
+                    best, score = None, 0.6           # never ASSERT below this
+                    nbest, nscore = None, _NEAR       # near-match tier
                     for pid, gal in galleries.items():
                         if sight.sighting_id in rej.get(pid, set()):
                             continue                  # told this isn't them
                         sc = matcher.cosine_similarity(v, gal)
                         if sc >= score:
                             best, score = pid, sc
+                        if sc >= nscore:
+                            nbest, nscore = pid, sc
                     name = labels.get(best) if best else None
+                    if not name and nbest:            # record the near-match
+                        nn = labels.get(nbest)
+                        prev = near_by_frame.get(fid)
+                        if nn and (prev is None or nscore > prev[1]):
+                            near_by_frame[fid] = (nn, nscore)
                 if not name:
                     continue
                 by_frame.setdefault(fid, name)
@@ -1348,7 +1363,7 @@ def _frame_face_index() -> dict:
     except Exception as e:
         print(f"[dashboard] frame-face index unavailable: {e}", flush=True)
 
-    value = {"by_frame": by_frame, "by_camera": by_camera}
+    value = {"by_frame": by_frame, "by_camera": by_camera, "near_by_frame": near_by_frame}
     _FRAME_FACE_CACHE["sig"] = sig
     _FRAME_FACE_CACHE["value"] = value
     return value
@@ -1359,6 +1374,13 @@ def _frame_face_index() -> dict:
 # in one frame, the face caught a moment later. Tight enough that two different
 # people passing don't get merged.
 _WHO_PROXIMITY_SECONDS = 20
+
+# For a NEAR-match (the frame's own face is clearly-but-not-certainly a known
+# person), we allow a wider window, because here we have TWO signals agreeing:
+# the face itself resembles them AND they are confidently present in the session.
+# A meeting or a lingering visit spans minutes, and it stops one person reading
+# as themselves in one frame and "unidentified" in the next.
+_NEAR_CONTINUITY_SECONDS = 180
 
 
 def _suspicious_vehicles(recent_vehicles: list, events: list) -> list:
@@ -1514,8 +1536,8 @@ def _who_in_frame(event) -> Optional[str]:
     """
     idx = _frame_face_index()
     url = getattr(event, "snapshot_url", None) or ""
-    if "/frames/" in url:
-        fid = url.rsplit("/", 1)[-1].replace(".jpg", "")
+    fid = url.rsplit("/", 1)[-1].replace(".jpg", "") if "/frames/" in url else None
+    if fid:
         exact = idx["by_frame"].get(fid)
         if exact:
             return exact
@@ -1529,6 +1551,19 @@ def _who_in_frame(event) -> Optional[str]:
         et = ts if isinstance(ts, datetime) else datetime.fromisoformat(str(ts).replace("Z", ""))
     except (ValueError, TypeError):
         return None
+
+    # Near-match + continuity: this frame's own face is clearly-but-not-certainly
+    # a known person, and that SAME person is confidently recognised in the
+    # session at this camera. Two agreeing signals → attribute, so they don't
+    # flip to "unidentified" for one frame. A stranger's face won't near-match a
+    # known person, so they are never swept up by this.
+    near = idx.get("near_by_frame", {}).get(fid) if fid else None
+    if near:
+        nname = near[0]
+        for dt, name in faces:
+            if name == nname and abs((et - dt).total_seconds()) <= _NEAR_CONTINUITY_SECONDS:
+                return nname
+
     best_name, best_gap = None, _WHO_PROXIMITY_SECONDS + 1
     for dt, name in faces:
         gap = abs((et - dt).total_seconds())
