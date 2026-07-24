@@ -104,6 +104,11 @@ export function IncidentDetailPage() {
   const [exportPath, setExportPath] = useState<string | null>(null);
   const [explanation, setExplanation] = useState<IncidentExplanation | null>(null);
   const [explanationLoading, setExplanationLoading] = useState(false);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [confirmLabel, setConfirmLabel] = useState('');
+  const [confirmNotes, setConfirmNotes] = useState('');
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (id) {
@@ -189,6 +194,35 @@ export function IncidentDetailPage() {
     } catch (error) {
       console.error('Failed to record decision:', error);
       alert('Failed to record decision');
+    }
+  }
+
+  // Confirm with a note in the operator's own words, then SHOW it saved and
+  // reflect the new status in place — no silent bounce to the incidents list.
+  async function submitConfirm() {
+    if (!incident) return;
+    setConfirmBusy(true);
+    try {
+      await api.recordDecision(incident.incident_id, {
+        action_taken: 'confirmed',
+        was_true_positive: true,
+        label: confirmLabel.trim() || undefined,
+        operator_notes: confirmNotes.trim() || confirmLabel.trim() || 'Confirmed by operator',
+      });
+      setShowConfirmModal(false);
+      setSavedMsg(
+        confirmLabel.trim()
+          ? `Saved — recorded as “${confirmLabel.trim()}”. Thanks, the system learns from this.`
+          : 'Saved — your confirmation is recorded. Thanks, the system learns from this.'
+      );
+      setConfirmLabel('');
+      setConfirmNotes('');
+      await loadIncident(incident.incident_id);   // reflect CONFIRMED status in place
+    } catch (error) {
+      console.error('Failed to record decision:', error);
+      alert('Failed to save your confirmation. Please try again.');
+    } finally {
+      setConfirmBusy(false);
     }
   }
 
@@ -802,6 +836,17 @@ export function IncidentDetailPage() {
         </div>
       </div>
 
+      {/* Saved confirmation — visible feedback so a confirm isn't a silent bounce. */}
+      {savedMsg && (
+        <div className="mt-6 flex items-center justify-between gap-3 rounded-md bg-green-50 border border-green-200 px-4 py-3">
+          <p className="text-sm text-green-800">✓ {savedMsg}</p>
+          <button onClick={() => navigate('/incidents')}
+                  className="flex-none text-sm text-green-700 hover:text-green-900 underline">
+            back to incidents →
+          </button>
+        </div>
+      )}
+
       {/* Action Buttons */}
       <div className="mt-8 flex justify-between items-center">
         <div className="flex gap-3">
@@ -840,10 +885,10 @@ export function IncidentDetailPage() {
             </button>
           )}
 
-          {/* Confirm (operator+) */}
-          {canPerformAction('confirm') && (
+          {/* Confirm (operator+) — opens a note prompt, then confirms saved. */}
+          {canPerformAction('confirm') && incident.status !== 'confirmed' && (
             <button
-              onClick={() => handleAction('confirmed')}
+              onClick={() => { setSavedMsg(null); setShowConfirmModal(true); }}
               className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
             >
               Confirm
@@ -881,6 +926,57 @@ export function IncidentDetailPage() {
           )}
         </div>
       </div>
+
+      {/* Confirm Modal — asks what happened, in the operator's own words. */}
+      {showConfirmModal && (
+        <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <h3 className="text-lg font-medium text-gray-900 mb-1">Confirm this incident</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              In your own words, what did you see? This is recorded with your name and helps the system learn
+              what's worth flagging. Optional — you can just confirm.
+            </p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">What happened?</label>
+                <input
+                  autoFocus
+                  value={confirmLabel}
+                  onChange={(e) => setConfirmLabel(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') submitConfirm(); }}
+                  placeholder="e.g. Unknown person on the property"
+                  className="w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">More detail (optional)</label>
+                <textarea
+                  value={confirmNotes}
+                  onChange={(e) => setConfirmNotes(e.target.value)}
+                  rows={3}
+                  className="w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500"
+                  placeholder="Anything else worth recording…"
+                />
+              </div>
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => setShowConfirmModal(false)}
+                  className="px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={submitConfirm}
+                  disabled={confirmBusy}
+                  className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                >
+                  {confirmBusy ? 'Saving…' : 'Confirm & save'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Dismiss Modal */}
       {showDismissModal && (
