@@ -10,7 +10,13 @@ export function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const from = (location.state as any)?.from?.pathname || '/incidents';
+  // Signing in lands on the Overview — the page that answers "what's happening".
+  // The one exception is a deep link: if you were sent here from a specific page
+  // (clicking an incident link while signed out), you go back to that page.
+  const requested = (location.state as any)?.from?.pathname as string | undefined;
+  const from = (requested && requested !== '/' && requested !== '/login')
+    ? requested
+    : '/overview';
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
