@@ -160,6 +160,7 @@ export function VehicleHistoryModal({ entityId, onClose, onSaved }: {
   const [make, setMake] = useState('');
   const [model, setModel] = useState('');
   const [plateEdit, setPlateEdit] = useState('');
+  const [mine, setMine] = useState(false);
   const [busy, setBusy] = useState(false);
   const [saveErr, setSaveErr] = useState<string | null>(null);
 
@@ -179,6 +180,7 @@ export function VehicleHistoryModal({ entityId, onClose, onSaved }: {
         setMake(r.make || '');
         setModel(r.model || '');
         setPlateEdit(r.plate || '');
+        setMine(!!r.mine);
       })
       .catch(e => setErr(e?.message || 'Could not load history'));
   }, [entityId, win, framesOffset]);
@@ -195,7 +197,7 @@ export function VehicleHistoryModal({ entityId, onClose, onSaved }: {
       // name follows the car; make/model are recorded too.
       const plate = plateEdit.trim() || h?.plate || null;
       await api.setVehicleLabel(entityId, label.trim(), plate, details.trim(),
-                                make.trim() || null, model.trim() || null);
+                                make.trim() || null, model.trim() || null, mine);
       onSaved();
     } catch (e: any) {
       setSaveErr(e?.message || 'Could not save');
@@ -298,6 +300,13 @@ export function VehicleHistoryModal({ entityId, onClose, onSaved }: {
                            placeholder="Plate"
                            className="bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm font-mono text-slate-200 placeholder:text-slate-600 focus:border-indigo-500 outline-none tracking-wider" />
                   </div>
+                  {/* YOURS vs FAMILIAR — a car you own vs a known regular that
+                      isn't yours (a neighbour's, a visitor's). */}
+                  <label className="mt-2 flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
+                    <input type="checkbox" checked={mine} onChange={e => setMine(e.target.checked)}
+                           className="accent-emerald-500" />
+                    This is my car <span className="text-slate-500">(otherwise it's a known “familiar” car, not yours)</span>
+                  </label>
                   <textarea value={details} onChange={e => setDetails(e.target.value)} rows={3}
                             placeholder="Anything you know — whose it is, when it usually comes, distinguishing features…"
                             className="mt-2 w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 placeholder:text-slate-600 focus:border-indigo-500 outline-none resize-y" />

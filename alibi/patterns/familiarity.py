@@ -93,6 +93,7 @@ def set_vehicle_label(entity_id: str, label: str, set_by: str,
                       details: Optional[str] = None,
                       make: Optional[str] = None,
                       model: Optional[str] = None,
+                      mine: Optional[bool] = None,
                       now: Optional[datetime] = None) -> Dict[str, Any]:
     """Name a recurring vehicle and record what the owner knows about it — now
     including the make, model, and a corrected plate they type in. Empty label
@@ -116,6 +117,14 @@ def set_vehicle_label(entity_id: str, label: str, set_by: str,
             row["make"] = make.strip()[:60]
         if (model or "").strip():
             row["model"] = model.strip()[:60]
+        # "Mine" (YOURS) vs a known-but-not-owned regular (FAMILIAR) — e.g. your
+        # own car vs a neighbour's that visits often. Preserve the prior value on
+        # an edit that doesn't touch it, so saving other fields never silently
+        # flips ownership.
+        if mine is not None:
+            row["mine"] = bool(mine)
+        elif isinstance(labels.get(entity_id), dict) and "mine" in labels[entity_id]:
+            row["mine"] = labels[entity_id]["mine"]
         labels[entity_id] = row
     else:
         labels.pop(entity_id, None)

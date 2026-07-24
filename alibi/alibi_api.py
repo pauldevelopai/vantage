@@ -2538,6 +2538,7 @@ async def dashboard_overview(range: str = "24h",
                 "visits": (e.get("visits") if e else 0),
                 "cameras": [names.get(c, c) for c in (e["cameras"] if e else [])],
                 "seen_recently": bool(e),
+                "mine": bool((meta or {}).get("mine")),   # YOURS vs FAMILIAR
             })
         # ...then collapse to ONE ROW PER CAR. On this scale the owner's name IS
         # the identity: every ReID fragment and every plate spelling that carries
@@ -2564,6 +2565,7 @@ async def dashboard_overview(range: str = "24h",
                 g["plate"] = g["plate"] or r["plate"]
                 g["plate_region"] = g.get("plate_region") or r.get("plate_region")
                 g["seen_recently"] = g["seen_recently"] or r["seen_recently"]
+                g["mine"] = bool(g.get("mine")) or bool(r.get("mine"))
                 if not g.get("frame_url") and r.get("frame_url"):
                     g["frame_url"], g["bbox"] = r["frame_url"], r["bbox"]
         for g in groups:
@@ -2576,6 +2578,7 @@ async def dashboard_overview(range: str = "24h",
                 "passes": g.get("passes"),
                 "cameras": g.get("cameras", []),
                 "seen_recently": g.get("seen_recently"),
+                "mine": bool(g.get("mine")),      # YOURS (true) vs FAMILIAR (false)
             })
         named_vehicles.sort(key=lambda v: str(v.get("last_seen") or ""), reverse=True)
     except Exception as e:
@@ -5018,6 +5021,7 @@ class VehicleLabelUpdate(BaseModel):
     details: Optional[str] = None
     make: Optional[str] = None
     model: Optional[str] = None
+    mine: Optional[bool] = None            # True = YOURS, False = a known FAMILIAR car
 
 
 @app.put("/vehicles/entity-label", tags=["Vehicles"])
@@ -5038,11 +5042,13 @@ async def set_vehicle_entity_label(
     model = (payload.model or "").strip() or None
     result = set_vehicle_label(payload.entity_id, payload.label,
                                set_by=current_user.username, plate=plate,
-                               details=details, make=make, model=model)
+                               details=details, make=make, model=model,
+                               mine=payload.mine)
     get_store().append_audit("vehicle_labelled", {
         "user": current_user.username, "entity_id": payload.entity_id,
         "label": payload.label.strip() or None, "plate": plate,
-        "make": make, "model": model, "has_details": bool(details),
+        "make": make, "model": model, "mine": payload.mine,
+        "has_details": bool(details),
     })
     return {"entity_id": payload.entity_id, **(result or {"label": None})}
 

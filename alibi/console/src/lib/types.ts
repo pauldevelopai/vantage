@@ -472,6 +472,8 @@ export interface NamedVehicle {
   /** Distinct visits, not frames. A parked car is detected in every
    *  frame it sits in — that is how this read "seen 4368x". */
   passes?: number | null;
+  /** True = YOURS (owned); false = a known FAMILIAR car that isn't yours. */
+  mine?: boolean;
 }
 
 /** A car that is NOT the usual scene — new or occasional, unnamed — with how
@@ -690,6 +692,7 @@ export interface VehicleHistory {
   body?: string | null;
   make?: string | null;               // owner-typed make (e.g. Toyota)
   model?: string | null;              // owner-typed model (e.g. Fortuner)
+  mine?: boolean;                     // true = YOURS, false = a known FAMILIAR car
   plate?: string | null;              // owner-typed plate, else most-read — the stable identity
   plate_region?: string | null;
   frame_url?: string | null;                                   // representative photo

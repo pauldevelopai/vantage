@@ -136,6 +136,7 @@ async def vehicle_history(
     owner_details = _row.get("details")
     owner_make = _row.get("make")
     owner_model = _row.get("model")
+    owner_mine = bool(_row.get("mine"))
     if _row.get("plate"):
         plate = _row["plate"]            # owner correction beats the OCR read
     # A vehicle the owner has CLAIMED is theirs is, by definition, part of the
@@ -169,6 +170,7 @@ async def vehicle_history(
         "body": body,
         "make": owner_make,           # owner-typed, when set
         "model": owner_model,
+        "mine": owner_mine,           # True = YOURS, False = a known FAMILIAR car
         "plate": plate,               # owner-typed plate, else most-read (or null)
         "plate_region": plate_region,
         "frame_url": frame_url,

@@ -74,26 +74,47 @@ def plate_index(events) -> Dict[tuple, list]:
             text = p.get("display") or p.get("text")
             if text:
                 idx.setdefault((e.camera_id, _second(e.ts)), []).append(
-                    {"plate": text, "region": p.get("region")})
+                    {"plate": text, "region": p.get("region"),
+                     "confidence": p.get("confidence")})
     return idx
 
 
+# A plate is only worth showing when the OCR actually READ it — not when it saw
+# something once and guessed. On these camera angles a single low-confidence pass
+# is almost always wrong (SKK4 0288 at 0.65 read once, the plate reader's other
+# read that second was a different string entirely). Better to show no plate and
+# let the owner type it than to print a wrong one they then have to notice and
+# fix. So require the winner to be read more than once, to be a clear majority of
+# what was read, and to carry real confidence.
+_MIN_PLATE_READS = 2
+_MIN_PLATE_AGREEMENT = 0.6
+_MIN_PLATE_CONFIDENCE = 0.80
+
+
 def best_plate(trail: List[Dict[str, Any]], index: Dict[tuple, list]) -> Optional[Dict[str, Any]]:
-    """The most-read plate across a cluster's sightings — a majority vote beats a
-    single noisy OCR pass (CSM40008 vs QFM40008 vs GFM40008 → the winner). Returns
-    None when no sighting of this cluster ever yielded a plate (the common case at
-    these camera angles), never a guess."""
-    votes: Counter = Counter()
+    """The plate for a cluster — ONLY when it was genuinely read: seen more than
+    once, agreed on, and confident. Otherwise None (never a one-off guess). The
+    owner can always type the real plate in the edit modal, which is trusted over
+    anything here."""
+    reads: List[tuple] = []          # (plate, confidence)
     region_by: Dict[str, Any] = {}
     for r in trail:
         for p in index.get((r.get("camera_id"), _second(r.get("timestamp"))), []):
-            votes[p["plate"]] += 1
+            reads.append((p["plate"], p.get("confidence")))
             if p.get("region"):
                 region_by[p["plate"]] = p["region"]
-    if not votes:
+    if not reads:
         return None
-    plate = votes.most_common(1)[0][0]
-    return {"plate": plate, "region": region_by.get(plate), "reads": votes[plate]}
+    votes: Counter = Counter(pl for pl, _ in reads)
+    plate, n = votes.most_common(1)[0]
+    total = len(reads)
+    confs = [c for pl, c in reads if pl == plate and c is not None]
+    best_conf = max(confs) if confs else 0.0
+    if (n < _MIN_PLATE_READS or (n / total) < _MIN_PLATE_AGREEMENT
+            or best_conf < _MIN_PLATE_CONFIDENCE):
+        return None                  # read too flimsy to trust — show no plate
+    return {"plate": plate, "region": region_by.get(plate),
+            "reads": n, "confidence": best_conf}
 
 
 def trail_frames(trail: List[Dict[str, Any]], index: Dict[tuple, list],

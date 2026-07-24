@@ -1232,13 +1232,15 @@ function NamedVehiclesPanel({ vehicles, onOpen }: { vehicles: import('../lib/typ
   if (!vehicles.length) return null;
   return (
     <>
-      {/* Card grid — same photo size and shape as the People cards. */}
+      {/* Card grid — same photo size and shape as the People cards. YOURS =
+          a car you own; FAMILIAR = a known regular that isn't yours. */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         {vehicles.map((v, i) => (
           <VehicleTile key={v.entity_id || i} entityId={v.entity_id} onOpen={onOpen}
                        frameUrl={v.frame_url} bbox={v.bbox} label={v.label} plate={v.plate}
-                       badge="YOURS" badgeCls="bg-emerald-600/90 text-white"
-                       labelCls="text-emerald-300 group-hover:text-emerald-200"
+                       badge={v.mine ? 'YOURS' : 'FAMILIAR'}
+                       badgeCls={v.mine ? 'bg-emerald-600/90 text-white' : 'bg-indigo-500/80 text-white'}
+                       labelCls={v.mine ? 'text-emerald-300 group-hover:text-emerald-200' : 'text-indigo-200 group-hover:text-white'}
                        lastSeen={v.last_seen}
                        sub={v.seen_recently
                          ? `seen ${v.passes ?? v.count}× · ${v.cameras.join(', ')}`
